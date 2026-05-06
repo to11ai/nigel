@@ -27,6 +27,8 @@ import {
   MANAGED_TEMPLATE_TRIAL_SESSION_LIMIT,
   MANAGED_TEMPLATE_TRIAL_SESSION_LIMIT_ERROR,
 } from "@/lib/managed-template-trial";
+import { startSandboxProvisioningWorkflow } from "@/lib/sandbox/provisioning-kick";
+import { getSessionSandboxName } from "@/lib/sandbox/utils";
 import {
   isVercelInvalidTokenError,
   listMatchingVercelProjects,
@@ -373,9 +375,10 @@ export async function POST(req: Request) {
     const effectiveAutoCommitPush =
       autoCommitPush ?? preferences.autoCommitPush;
     const effectiveAutoCreatePr = autoCreatePr ?? preferences.autoCreatePr;
+    const sessionId = nanoid();
     const result = await createSessionWithInitialChat({
       session: {
-        id: nanoid(),
+        id: sessionId,
         userId: session.user.id,
         title,
         status: "running",
@@ -393,7 +396,10 @@ export async function POST(req: Request) {
           ? effectiveAutoCreatePr
           : false,
         globalSkillRefs: preferences.globalSkillRefs,
-        sandboxState: { type: sandboxType },
+        sandboxState: {
+          type: sandboxType,
+          sandboxName: getSessionSandboxName(sessionId),
+        },
         lifecycleState: "provisioning",
         lifecycleVersion: 0,
       },
@@ -402,6 +408,11 @@ export async function POST(req: Request) {
         title: "New chat",
         modelId: preferences.defaultModelId,
       },
+    });
+
+    await startSandboxProvisioningWorkflow({
+      userId: session.user.id,
+      sessionId: result.session.id,
     });
 
     return Response.json(result);

@@ -23,6 +23,7 @@ let matchingProjects: VercelProjectSelection[] = [];
 let matchingProjectsError: Error | null = null;
 const createCalls: Array<Record<string, unknown>> = [];
 const upsertCalls: Array<Record<string, unknown>> = [];
+const provisioningCalls: Array<Record<string, string>> = [];
 
 const originalNodeEnv = process.env.NODE_ENV;
 
@@ -99,6 +100,14 @@ mock.module("@/lib/db/sessions", () => ({
   getArchivedSessionCountByUserId: async () => 0,
   getSessionsWithUnreadByUserId: async () => [],
   getUsedSessionTitles: async () => new Set<string>(),
+  setSessionSandboxProvisioningRunId: async () => true,
+}));
+
+mock.module("@/lib/sandbox/provisioning-kick", () => ({
+  startSandboxProvisioningWorkflow: async (input: Record<string, string>) => {
+    provisioningCalls.push(input);
+    return "provision-run-1";
+  },
 }));
 
 const routeModulePromise = import("./route");
@@ -134,6 +143,7 @@ describe("/api/sessions POST vercel project linking", () => {
     matchingProjectsError = null;
     createCalls.length = 0;
     upsertCalls.length = 0;
+    provisioningCalls.length = 0;
   });
 
   test("blocks additional sessions for managed template trial users", async () => {
@@ -249,6 +259,9 @@ describe("/api/sessions POST vercel project linking", () => {
       vercelTeamId: "team-1",
       vercelTeamSlug: "acme",
     });
+    expect(provisioningCalls).toEqual([
+      { userId: "user-1", sessionId: body.session.id as string },
+    ]);
     expect(body.session.vercelProjectId).toBe("project-1");
     expect(body.session.vercelProjectName).toBe("app");
   });

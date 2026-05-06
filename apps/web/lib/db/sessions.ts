@@ -328,6 +328,24 @@ export async function claimSessionLifecycleRunId(
   return Boolean(updated);
 }
 
+export async function setSessionSandboxProvisioningRunId(
+  sessionId: string,
+  runId: string,
+) {
+  const [updated] = await db
+    .update(sessions)
+    .set({ sandboxProvisioningRunId: runId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.lifecycleState, "provisioning"),
+      ),
+    )
+    .returning({ id: sessions.id });
+
+  return Boolean(updated);
+}
+
 export async function deleteSession(sessionId: string) {
   await db.delete(sessions).where(eq(sessions.id, sessionId));
 }
