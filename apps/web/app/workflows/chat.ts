@@ -11,6 +11,10 @@ import {
 import type { OpenAgentCallOptions } from "@nigel/agent";
 import { getWorkflowMetadata, getWritable } from "workflow";
 import { getRun } from "workflow/api";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { agentRuns } from "@/lib/db/schema";
+import { isRunsEnabled, updateRunStatus } from "@/lib/runs";
 import { assistantFileLinkPrompt } from "@/lib/assistant-file-links";
 import { addLanguageModelUsage } from "./usage-utils";
 import { extractGatewayCost } from "./gateway-metadata";
@@ -72,6 +76,7 @@ type Options = {
   maxSteps?: number;
   autoCommitEnabled?: boolean;
   autoCreatePrEnabled?: boolean;
+  agentRunId?: string | null;
 };
 
 type ChatModelRuntime = {
@@ -621,7 +626,28 @@ export async function runAgentWorkflow(options: Options) {
     // Exit before emitting chunks or persisting messages so only the owning
     // workflow can mutate this chat.
     await closeStream(writable);
+    if (isRunsEnabled() && options.agentRunId) {
+      try {
+        await updateRunStatus(options.agentRunId, "cancelled");
+      } catch {
+        // best-effort
+      }
+    }
     return;
+  }
+
+  const agentRunId: string | null = options.agentRunId ?? null;
+
+  if (isRunsEnabled() && agentRunId) {
+    await db
+      .update(agentRuns)
+      .set({ workflowRunId })
+      .where(eq(agentRuns.id, agentRunId));
+    try {
+      await updateRunStatus(agentRunId, "running");
+    } catch {
+      // already running (workflow re-activation) — ignore
+    }
   }
 
   const modelMessagesPromise = convertMessages(options.messages);
@@ -979,6 +1005,22 @@ export async function runAgentWorkflow(options: Options) {
           stepTimings,
         },
       );
+      if (isRunsEnabled() && agentRunId) {
+        const next =
+          workflowStatus === "completed"
+            ? "completed"
+            : workflowStatus === "failed"
+              ? "failed"
+              : "cancelled";
+        try {
+          await updateRunStatus(agentRunId, next);
+        } catch (err) {
+          // status-machine rejects the transition (e.g., already terminal).
+          // Don't fail the workflow over a bookkeeping error.
+          // biome-ignore lint/suspicious/noConsole: phase-1 instrumentation
+          console.error("agent_run status update failed", { agentRunId, err });
+        }
+      }
     }
   }
 

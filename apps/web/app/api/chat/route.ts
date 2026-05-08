@@ -2,6 +2,7 @@ import { createUIMessageStreamResponse, type InferUIMessageChunk } from "ai";
 import { checkBotProtection } from "@/lib/botid";
 import { start } from "workflow/api";
 import type { WebAgentUIMessage } from "@/app/types";
+import { isRunsEnabled, Run } from "@/lib/runs";
 import {
   claimChatActiveStreamId,
   compareAndSetChatActiveStreamId,
@@ -134,6 +135,20 @@ export async function POST(req: Request) {
     persistAssistantMessagesWithToolResults(chatId, messages),
   ]);
 
+  // Create an agent_run record before starting the workflow so we always have
+  // a bookkeeping row even if the Workflow SDK never activates the function.
+  let agentRunId: string | null = null;
+  if (isRunsEnabled()) {
+    const agentRun = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: userId,
+      chatId,
+      sandboxPolicy: "inherit",
+      budgetUsdCapMicros: 0,
+    });
+    agentRunId = agentRun.id;
+  }
+
   // Start the durable workflow
   const run = await start(runAgentWorkflow, [
     {
@@ -144,6 +159,7 @@ export async function POST(req: Request) {
       requestUrl: req.url,
       authSession: session ?? null,
       maxSteps: 500,
+      agentRunId,
     },
   ]);
 
