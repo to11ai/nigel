@@ -19,7 +19,7 @@ const tags = {
 const provider = new aws.Provider("managementProvider", { region });
 
 const zone = new aws.route53.Zone(
-  "nigel-zone-prod",
+  "nigel-zone-root",
   {
     name: zoneName,
     comment: `Subdomain zone for Nigel (${zoneName}). Delegated from to11.ai.`,
@@ -29,11 +29,12 @@ const zone = new aws.route53.Zone(
   {
     provider,
     protect: true,
+    aliases: [{ name: "nigel-zone-prod" }],
   },
 );
 
 new aws.route53.Record(
-  "nigel-app-cname-prod",
+  "nigel-app-cname-root",
   {
     zoneId: zone.zoneId,
     name: appHost,
@@ -44,6 +45,7 @@ new aws.route53.Record(
   {
     provider,
     parent: zone,
+    aliases: [{ name: "nigel-app-cname-prod" }],
   },
 );
 

@@ -1746,7 +1746,7 @@ Pulumi project that owns the `nigel.to11.ai` Route53 hosted zone and DNS records
 
 ## Stacks
 
-- `to11/nigel-aws-dns/prod` — production zone.
+- `to11/nigel-aws-dns/root` — production zone.
 
 ## Resources
 
@@ -1783,7 +1783,7 @@ Expected: install succeeds; typecheck passes.
 
 ```bash
 cd infra/aws-dns
-pulumi stack init to11/nigel-aws-dns/prod
+pulumi stack init to11/nigel-aws-dns/root
 pulumi preview
 ```
 
@@ -1816,7 +1816,7 @@ git commit -m "infra(aws-dns): scaffold Pulumi project for nigel.to11.ai zone"
 This task is performed in the **`to11ai/platform`** repository, not nigel. It is included here so the cross-repo dependency is explicit and tracked.
 
 **Files (in `to11ai/platform`):**
-- Modify: `infra/aws-root-dns/index.ts` — add a `pulumi.StackReference` to `to11/nigel-aws-dns/prod` and an `aws.route53.Record` of type `NS` delegating `nigel.to11.ai` from the `to11.ai` zone.
+- Modify: `infra/aws-root-dns/index.ts` — add a `pulumi.StackReference` to `to11/nigel-aws-dns/root` and an `aws.route53.Record` of type `NS` delegating `nigel.to11.ai` from the `to11.ai` zone.
 - Modify: `infra/aws-root-dns/Pulumi.root.yaml` — add a `nigelAwsDnsStackRef` config entry.
 
 The pattern mirrors the existing `stgDelegation` block in `infra/aws-root-dns/index.ts` which delegates `stg.to11.ai` to the staging foundation stack.
@@ -1826,7 +1826,7 @@ The pattern mirrors the existing `stgDelegation` block in `infra/aws-root-dns/in
 Add the stack reference under `config:`:
 
 ```yaml
-  aws-root-dns:nigelAwsDnsStackRef: to11/nigel-aws-dns/prod
+  aws-root-dns:nigelAwsDnsStackRef: to11/nigel-aws-dns/root
 ```
 
 - [ ] **Step 2: In `to11ai/platform`, edit `infra/aws-root-dns/index.ts`**
@@ -2084,7 +2084,7 @@ dig +short app.nigel.to11.ai
 
 Expected: `cname.vercel-dns.com.` followed by Vercel A records. If empty:
 
-- Confirm the `nigel-aws-dns` Pulumi stack was applied (`pulumi stack output -s to11/nigel-aws-dns/prod hostedZoneNameServers`).
+- Confirm the `nigel-aws-dns` Pulumi stack was applied (`pulumi stack output -s to11/nigel-aws-dns/root hostedZoneNameServers`).
 - Confirm the platform-side delegation PR is merged and `aws-root-dns/root` was applied (Task 16).
 - Wait up to 30 minutes for DNS propagation.
 
@@ -2186,7 +2186,7 @@ Paste the preview URL into the PR description. If `app.nigel.to11.ai` is reachab
 7. `OPEN_AGENTS_RESOURCE_PROFILE` is renamed to `NIGEL_RESOURCE_PROFILE` everywhere in code and docs (excluding `.agents/skills/**`).
 8. The sign-in UI shows only a GitHub button.
 9. `bun run check` and `bun run typecheck` both pass.
-10. Pulumi stacks `to11/nigel-aws-dns/prod`, `to11/nigel-data-neon/prod`, and `to11/nigel-vercel/prod` exist and have been successfully `pulumi up`-ed at least once.
+10. Pulumi stacks `to11/nigel-aws-dns/root`, `to11/nigel-data-neon/prod`, and `to11/nigel-vercel/prod` exist and have been successfully `pulumi up`-ed at least once.
 11. Route53 hosted zone for `nigel.to11.ai` exists, is delegated from the `to11.ai` zone (via a platform-side change in `to11ai/platform/infra/aws-root-dns/root`), and `dig +short app.nigel.to11.ai` returns `cname.vercel-dns.com.` plus Vercel-assigned IPs.
 12. The Vercel project `nigel-prod` exists, is linked to `to11ai/nigel`, has all required Phase 0 env vars (`POSTGRES_URL`, `BETTER_AUTH_SECRET`, and the six GitHub App env vars) set via Pulumi, and auto-deploys on push.
 13. A Vercel preview deploy of the `phase-0-fork-and-rebrand` branch builds and serves the rebranded site at the auto-generated `*.vercel.app` URL; the production deploy is reachable at `https://app.nigel.to11.ai`.

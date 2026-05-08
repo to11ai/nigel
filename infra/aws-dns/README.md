@@ -8,7 +8,7 @@ Runs against the **management (root) AWS account** with ambient identity (SSO ad
 
 ## Stacks
 
-- `to11/nigel-aws-dns/prod` — production zone.
+- `to11/nigel-aws-dns/root` — production zone.
 
 ## Resources
 
