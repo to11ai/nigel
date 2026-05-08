@@ -19,7 +19,7 @@ Runs against the **management (root) AWS account** with ambient identity (SSO ad
 
 - `hostedZoneId`
 - `hostedZoneNameServers` — consumed by `to11ai/platform/infra/aws-root-dns/root` to delegate from `to11.ai`.
-- `zoneNameOutput`, `appHostOutput`
+- `hostedZoneName`, `appHostOutput`
 
 ## Delegation (one-time, in platform repo)
 

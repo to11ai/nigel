@@ -51,5 +51,5 @@ new aws.route53.Record(
 
 export const hostedZoneId: pulumi.Output<string> = zone.zoneId;
 export const hostedZoneNameServers: pulumi.Output<string[]> = zone.nameServers;
-export const zoneNameOutput: pulumi.Output<string> = pulumi.output(zoneName);
+export const hostedZoneName: pulumi.Output<string> = pulumi.output(zoneName);
 export const appHostOutput: pulumi.Output<string> = pulumi.output(appHost);
