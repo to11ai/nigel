@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
+import { onRunStatusChange } from "./lifecycle";
 import { assertValidTransition, type RunStatus } from "./state-machine";
 import type { AgentRun, SandboxPolicy, TriggerSource } from "./types";
 
@@ -79,6 +80,17 @@ export async function updateRunStatus(
   }
 
   await db.update(agentRuns).set(patch).where(eq(agentRuns.id, id));
+
+  // Fire-and-forget; never let a handler failure roll back the transition.
+  void onRunStatusChange({
+    runId: id,
+    rootRunId: current.rootRunId,
+    from: current.status,
+    to: next,
+  }).catch((err) => {
+    // biome-ignore lint/suspicious/noConsole: lifecycle hook errors must surface
+    console.error("onRunStatusChange handler failed", { runId: id, err });
+  });
 }
 
 export async function addCostMicros(
