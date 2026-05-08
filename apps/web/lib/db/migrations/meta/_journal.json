@@ -260,6 +260,13 @@
       "when": 1778274735140,
       "tag": "0036_late_the_hood",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1778274736000,
+      "tag": "0037_cost_rollup_trigger",
+      "breakpoints": false
     }
   ]
 }
