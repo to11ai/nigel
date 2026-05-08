@@ -4,45 +4,61 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as utilities from "./utilities";
 
-export function getProject(args: GetProjectArgs, opts?: pulumi.InvokeOptions): Promise<GetProjectResult> {
-    opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
-    return pulumi.runtime.invoke("neon:index/getProject:getProject", {
-        "id": args.id,
-    }, opts, utilities.getPackage());
+export function getProject(
+  args: GetProjectArgs,
+  opts?: pulumi.InvokeOptions,
+): Promise<GetProjectResult> {
+  opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
+  return pulumi.runtime.invoke(
+    "neon:index/getProject:getProject",
+    {
+      id: args.id,
+    },
+    opts,
+    utilities.getPackage(),
+  );
 }
 
 /**
  * A collection of arguments for invoking getProject.
  */
 export interface GetProjectArgs {
-    id: string;
+  id: string;
 }
 
 /**
  * A collection of values returned by getProject.
  */
 export interface GetProjectResult {
-    readonly connectionUri: string;
-    readonly connectionUriPooler: string;
-    readonly databaseHost: string;
-    readonly databaseHostPooler: string;
-    readonly databaseName: string;
-    readonly databasePassword: string;
-    readonly databaseUser: string;
-    readonly defaultBranchId: string;
-    readonly id: string;
-    readonly name: string;
+  readonly connectionUri: string;
+  readonly connectionUriPooler: string;
+  readonly databaseHost: string;
+  readonly databaseHostPooler: string;
+  readonly databaseName: string;
+  readonly databasePassword: string;
+  readonly databaseUser: string;
+  readonly defaultBranchId: string;
+  readonly id: string;
+  readonly name: string;
 }
-export function getProjectOutput(args: GetProjectOutputArgs, opts?: pulumi.InvokeOutputOptions): pulumi.Output<GetProjectResult> {
-    opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
-    return pulumi.runtime.invokeOutput("neon:index/getProject:getProject", {
-        "id": args.id,
-    }, opts, utilities.getPackage());
+export function getProjectOutput(
+  args: GetProjectOutputArgs,
+  opts?: pulumi.InvokeOutputOptions,
+): pulumi.Output<GetProjectResult> {
+  opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
+  return pulumi.runtime.invokeOutput(
+    "neon:index/getProject:getProject",
+    {
+      id: args.id,
+    },
+    opts,
+    utilities.getPackage(),
+  );
 }
 
 /**
  * A collection of arguments for invoking getProject.
  */
 export interface GetProjectOutputArgs {
-    id: pulumi.Input<string>;
+  id: pulumi.Input<string>;
 }

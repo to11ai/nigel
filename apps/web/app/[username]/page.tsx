@@ -306,13 +306,13 @@ export default async function PublicUsagePage({
         {/* Footer */}
         <div className="mt-16 flex items-center justify-between gap-4 border-t border-border/50 pt-6">
           <span className="font-mono text-xs text-muted-foreground">
-            open-agents.dev{publicProfilePath}
+            app.nigel.to11.ai{publicProfilePath}
             {profile.dateSelection.value
               ? `?date=${profile.dateSelection.value}`
               : ""}
           </span>
           <a
-            href="https://open-agents.dev"
+            href="https://app.nigel.to11.ai"
             className="text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             Nigel ↗

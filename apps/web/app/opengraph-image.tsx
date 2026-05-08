@@ -170,7 +170,7 @@ export default function OgImage() {
                 letterSpacing: "0.01em",
               }}
             >
-              open-agents.dev
+              app.nigel.to11.ai
             </span>
           </div>
         </div>

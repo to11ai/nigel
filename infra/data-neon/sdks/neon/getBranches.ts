@@ -6,42 +6,58 @@ import * as inputs from "./types/input";
 import * as outputs from "./types/output";
 import * as utilities from "./utilities";
 
-export function getBranches(args: GetBranchesArgs, opts?: pulumi.InvokeOptions): Promise<GetBranchesResult> {
-    opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
-    return pulumi.runtime.invoke("neon:index/getBranches:getBranches", {
-        "id": args.id,
-        "projectId": args.projectId,
-    }, opts, utilities.getPackage());
+export function getBranches(
+  args: GetBranchesArgs,
+  opts?: pulumi.InvokeOptions,
+): Promise<GetBranchesResult> {
+  opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
+  return pulumi.runtime.invoke(
+    "neon:index/getBranches:getBranches",
+    {
+      id: args.id,
+      projectId: args.projectId,
+    },
+    opts,
+    utilities.getPackage(),
+  );
 }
 
 /**
  * A collection of arguments for invoking getBranches.
  */
 export interface GetBranchesArgs {
-    id?: string;
-    projectId: string;
+  id?: string;
+  projectId: string;
 }
 
 /**
  * A collection of values returned by getBranches.
  */
 export interface GetBranchesResult {
-    readonly branches: outputs.GetBranchesBranch[];
-    readonly id: string;
-    readonly projectId: string;
+  readonly branches: outputs.GetBranchesBranch[];
+  readonly id: string;
+  readonly projectId: string;
 }
-export function getBranchesOutput(args: GetBranchesOutputArgs, opts?: pulumi.InvokeOutputOptions): pulumi.Output<GetBranchesResult> {
-    opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
-    return pulumi.runtime.invokeOutput("neon:index/getBranches:getBranches", {
-        "id": args.id,
-        "projectId": args.projectId,
-    }, opts, utilities.getPackage());
+export function getBranchesOutput(
+  args: GetBranchesOutputArgs,
+  opts?: pulumi.InvokeOutputOptions,
+): pulumi.Output<GetBranchesResult> {
+  opts = pulumi.mergeOptions(utilities.resourceOptsDefaults(), opts || {});
+  return pulumi.runtime.invokeOutput(
+    "neon:index/getBranches:getBranches",
+    {
+      id: args.id,
+      projectId: args.projectId,
+    },
+    opts,
+    utilities.getPackage(),
+  );
 }
 
 /**
  * A collection of arguments for invoking getBranches.
  */
 export interface GetBranchesOutputArgs {
-    id?: pulumi.Input<string>;
-    projectId: pulumi.Input<string>;
+  id?: pulumi.Input<string>;
+  projectId: pulumi.Input<string>;
 }

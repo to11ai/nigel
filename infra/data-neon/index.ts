@@ -84,7 +84,12 @@ export const database = neonDatabase.name;
 export const user = neonRole.name;
 export const postgresUrl = pulumi.secret(
   pulumi
-    .all([neonRole.name, neonRole.password, neonEndpoint.host, neonDatabase.name])
+    .all([
+      neonRole.name,
+      neonRole.password,
+      neonEndpoint.host,
+      neonDatabase.name,
+    ])
     .apply(([dbUser, dbPassword, dbHost, dbName]) => {
       if (!dbPassword) {
         throw new Error(

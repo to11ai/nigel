@@ -25,30 +25,73 @@ export type Endpoint = import("./endpoint").Endpoint;
 export const Endpoint: typeof import("./endpoint").Endpoint = null as any;
 utilities.lazyLoad(exports, ["Endpoint"], () => require("./endpoint"));
 
-export { GetBranchEndpointsArgs, GetBranchEndpointsResult, GetBranchEndpointsOutputArgs } from "./getBranchEndpoints";
-export const getBranchEndpoints: typeof import("./getBranchEndpoints").getBranchEndpoints = null as any;
-export const getBranchEndpointsOutput: typeof import("./getBranchEndpoints").getBranchEndpointsOutput = null as any;
-utilities.lazyLoad(exports, ["getBranchEndpoints","getBranchEndpointsOutput"], () => require("./getBranchEndpoints"));
+export {
+  GetBranchEndpointsArgs,
+  GetBranchEndpointsResult,
+  GetBranchEndpointsOutputArgs,
+} from "./getBranchEndpoints";
+export const getBranchEndpoints: typeof import("./getBranchEndpoints").getBranchEndpoints =
+  null as any;
+export const getBranchEndpointsOutput: typeof import("./getBranchEndpoints").getBranchEndpointsOutput =
+  null as any;
+utilities.lazyLoad(
+  exports,
+  ["getBranchEndpoints", "getBranchEndpointsOutput"],
+  () => require("./getBranchEndpoints"),
+);
 
-export { GetBranchRolePasswordArgs, GetBranchRolePasswordResult, GetBranchRolePasswordOutputArgs } from "./getBranchRolePassword";
-export const getBranchRolePassword: typeof import("./getBranchRolePassword").getBranchRolePassword = null as any;
-export const getBranchRolePasswordOutput: typeof import("./getBranchRolePassword").getBranchRolePasswordOutput = null as any;
-utilities.lazyLoad(exports, ["getBranchRolePassword","getBranchRolePasswordOutput"], () => require("./getBranchRolePassword"));
+export {
+  GetBranchRolePasswordArgs,
+  GetBranchRolePasswordResult,
+  GetBranchRolePasswordOutputArgs,
+} from "./getBranchRolePassword";
+export const getBranchRolePassword: typeof import("./getBranchRolePassword").getBranchRolePassword =
+  null as any;
+export const getBranchRolePasswordOutput: typeof import("./getBranchRolePassword").getBranchRolePasswordOutput =
+  null as any;
+utilities.lazyLoad(
+  exports,
+  ["getBranchRolePassword", "getBranchRolePasswordOutput"],
+  () => require("./getBranchRolePassword"),
+);
 
-export { GetBranchRolesArgs, GetBranchRolesResult, GetBranchRolesOutputArgs } from "./getBranchRoles";
-export const getBranchRoles: typeof import("./getBranchRoles").getBranchRoles = null as any;
-export const getBranchRolesOutput: typeof import("./getBranchRoles").getBranchRolesOutput = null as any;
-utilities.lazyLoad(exports, ["getBranchRoles","getBranchRolesOutput"], () => require("./getBranchRoles"));
+export {
+  GetBranchRolesArgs,
+  GetBranchRolesResult,
+  GetBranchRolesOutputArgs,
+} from "./getBranchRoles";
+export const getBranchRoles: typeof import("./getBranchRoles").getBranchRoles =
+  null as any;
+export const getBranchRolesOutput: typeof import("./getBranchRoles").getBranchRolesOutput =
+  null as any;
+utilities.lazyLoad(exports, ["getBranchRoles", "getBranchRolesOutput"], () =>
+  require("./getBranchRoles"),
+);
 
-export { GetBranchesArgs, GetBranchesResult, GetBranchesOutputArgs } from "./getBranches";
-export const getBranches: typeof import("./getBranches").getBranches = null as any;
-export const getBranchesOutput: typeof import("./getBranches").getBranchesOutput = null as any;
-utilities.lazyLoad(exports, ["getBranches","getBranchesOutput"], () => require("./getBranches"));
+export {
+  GetBranchesArgs,
+  GetBranchesResult,
+  GetBranchesOutputArgs,
+} from "./getBranches";
+export const getBranches: typeof import("./getBranches").getBranches =
+  null as any;
+export const getBranchesOutput: typeof import("./getBranches").getBranchesOutput =
+  null as any;
+utilities.lazyLoad(exports, ["getBranches", "getBranchesOutput"], () =>
+  require("./getBranches"),
+);
 
-export { GetProjectArgs, GetProjectResult, GetProjectOutputArgs } from "./getProject";
+export {
+  GetProjectArgs,
+  GetProjectResult,
+  GetProjectOutputArgs,
+} from "./getProject";
 export const getProject: typeof import("./getProject").getProject = null as any;
-export const getProjectOutput: typeof import("./getProject").getProjectOutput = null as any;
-utilities.lazyLoad(exports, ["getProject","getProjectOutput"], () => require("./getProject"));
+export const getProjectOutput: typeof import("./getProject").getProjectOutput =
+  null as any;
+utilities.lazyLoad(exports, ["getProject", "getProjectOutput"], () =>
+  require("./getProject"),
+);
 
 export { JwksUrlArgs, JwksUrlState } from "./jwksUrl";
 export type JwksUrl = import("./jwksUrl").JwksUrl;
@@ -65,10 +108,16 @@ export type Project = import("./project").Project;
 export const Project: typeof import("./project").Project = null as any;
 utilities.lazyLoad(exports, ["Project"], () => require("./project"));
 
-export { ProjectPermissionArgs, ProjectPermissionState } from "./projectPermission";
+export {
+  ProjectPermissionArgs,
+  ProjectPermissionState,
+} from "./projectPermission";
 export type ProjectPermission = import("./projectPermission").ProjectPermission;
-export const ProjectPermission: typeof import("./projectPermission").ProjectPermission = null as any;
-utilities.lazyLoad(exports, ["ProjectPermission"], () => require("./projectPermission"));
+export const ProjectPermission: typeof import("./projectPermission").ProjectPermission =
+  null as any;
+utilities.lazyLoad(exports, ["ProjectPermission"], () =>
+  require("./projectPermission"),
+);
 
 export * from "./provider";
 import { Provider } from "./provider";
@@ -78,74 +127,100 @@ export type Role = import("./role").Role;
 export const Role: typeof import("./role").Role = null as any;
 utilities.lazyLoad(exports, ["Role"], () => require("./role"));
 
-export { VpcEndpointAssignmentArgs, VpcEndpointAssignmentState } from "./vpcEndpointAssignment";
-export type VpcEndpointAssignment = import("./vpcEndpointAssignment").VpcEndpointAssignment;
-export const VpcEndpointAssignment: typeof import("./vpcEndpointAssignment").VpcEndpointAssignment = null as any;
-utilities.lazyLoad(exports, ["VpcEndpointAssignment"], () => require("./vpcEndpointAssignment"));
+export {
+  VpcEndpointAssignmentArgs,
+  VpcEndpointAssignmentState,
+} from "./vpcEndpointAssignment";
+export type VpcEndpointAssignment =
+  import("./vpcEndpointAssignment").VpcEndpointAssignment;
+export const VpcEndpointAssignment: typeof import("./vpcEndpointAssignment").VpcEndpointAssignment =
+  null as any;
+utilities.lazyLoad(exports, ["VpcEndpointAssignment"], () =>
+  require("./vpcEndpointAssignment"),
+);
 
-export { VpcEndpointRestrictionArgs, VpcEndpointRestrictionState } from "./vpcEndpointRestriction";
-export type VpcEndpointRestriction = import("./vpcEndpointRestriction").VpcEndpointRestriction;
-export const VpcEndpointRestriction: typeof import("./vpcEndpointRestriction").VpcEndpointRestriction = null as any;
-utilities.lazyLoad(exports, ["VpcEndpointRestriction"], () => require("./vpcEndpointRestriction"));
-
+export {
+  VpcEndpointRestrictionArgs,
+  VpcEndpointRestrictionState,
+} from "./vpcEndpointRestriction";
+export type VpcEndpointRestriction =
+  import("./vpcEndpointRestriction").VpcEndpointRestriction;
+export const VpcEndpointRestriction: typeof import("./vpcEndpointRestriction").VpcEndpointRestriction =
+  null as any;
+utilities.lazyLoad(exports, ["VpcEndpointRestriction"], () =>
+  require("./vpcEndpointRestriction"),
+);
 
 // Export sub-modules:
 import * as config from "./config";
 import * as types from "./types";
 
-export {
-    config,
-    types,
-};
+export { config, types };
 
 const _module = {
-    version: utilities.getVersion(),
-    construct: (name: string, type: string, urn: string): pulumi.Resource => {
-        switch (type) {
-            case "neon:index/apiKey:ApiKey":
-                return new ApiKey(name, <any>undefined, { urn })
-            case "neon:index/branch:Branch":
-                return new Branch(name, <any>undefined, { urn })
-            case "neon:index/database:Database":
-                return new Database(name, <any>undefined, { urn })
-            case "neon:index/endpoint:Endpoint":
-                return new Endpoint(name, <any>undefined, { urn })
-            case "neon:index/jwksUrl:JwksUrl":
-                return new JwksUrl(name, <any>undefined, { urn })
-            case "neon:index/orgApiKey:OrgApiKey":
-                return new OrgApiKey(name, <any>undefined, { urn })
-            case "neon:index/project:Project":
-                return new Project(name, <any>undefined, { urn })
-            case "neon:index/projectPermission:ProjectPermission":
-                return new ProjectPermission(name, <any>undefined, { urn })
-            case "neon:index/role:Role":
-                return new Role(name, <any>undefined, { urn })
-            case "neon:index/vpcEndpointAssignment:VpcEndpointAssignment":
-                return new VpcEndpointAssignment(name, <any>undefined, { urn })
-            case "neon:index/vpcEndpointRestriction:VpcEndpointRestriction":
-                return new VpcEndpointRestriction(name, <any>undefined, { urn })
-            default:
-                throw new Error(`unknown resource type ${type}`);
-        }
-    },
+  version: utilities.getVersion(),
+  construct: (name: string, type: string, urn: string): pulumi.Resource => {
+    switch (type) {
+      case "neon:index/apiKey:ApiKey":
+        return new ApiKey(name, undefined as any, { urn });
+      case "neon:index/branch:Branch":
+        return new Branch(name, undefined as any, { urn });
+      case "neon:index/database:Database":
+        return new Database(name, undefined as any, { urn });
+      case "neon:index/endpoint:Endpoint":
+        return new Endpoint(name, undefined as any, { urn });
+      case "neon:index/jwksUrl:JwksUrl":
+        return new JwksUrl(name, undefined as any, { urn });
+      case "neon:index/orgApiKey:OrgApiKey":
+        return new OrgApiKey(name, undefined as any, { urn });
+      case "neon:index/project:Project":
+        return new Project(name, undefined as any, { urn });
+      case "neon:index/projectPermission:ProjectPermission":
+        return new ProjectPermission(name, undefined as any, { urn });
+      case "neon:index/role:Role":
+        return new Role(name, undefined as any, { urn });
+      case "neon:index/vpcEndpointAssignment:VpcEndpointAssignment":
+        return new VpcEndpointAssignment(name, undefined as any, { urn });
+      case "neon:index/vpcEndpointRestriction:VpcEndpointRestriction":
+        return new VpcEndpointRestriction(name, undefined as any, { urn });
+      default:
+        throw new Error(`unknown resource type ${type}`);
+    }
+  },
 };
-pulumi.runtime.registerResourceModule("neon", "index/apiKey", _module)
-pulumi.runtime.registerResourceModule("neon", "index/branch", _module)
-pulumi.runtime.registerResourceModule("neon", "index/database", _module)
-pulumi.runtime.registerResourceModule("neon", "index/endpoint", _module)
-pulumi.runtime.registerResourceModule("neon", "index/jwksUrl", _module)
-pulumi.runtime.registerResourceModule("neon", "index/orgApiKey", _module)
-pulumi.runtime.registerResourceModule("neon", "index/project", _module)
-pulumi.runtime.registerResourceModule("neon", "index/projectPermission", _module)
-pulumi.runtime.registerResourceModule("neon", "index/role", _module)
-pulumi.runtime.registerResourceModule("neon", "index/vpcEndpointAssignment", _module)
-pulumi.runtime.registerResourceModule("neon", "index/vpcEndpointRestriction", _module)
+pulumi.runtime.registerResourceModule("neon", "index/apiKey", _module);
+pulumi.runtime.registerResourceModule("neon", "index/branch", _module);
+pulumi.runtime.registerResourceModule("neon", "index/database", _module);
+pulumi.runtime.registerResourceModule("neon", "index/endpoint", _module);
+pulumi.runtime.registerResourceModule("neon", "index/jwksUrl", _module);
+pulumi.runtime.registerResourceModule("neon", "index/orgApiKey", _module);
+pulumi.runtime.registerResourceModule("neon", "index/project", _module);
+pulumi.runtime.registerResourceModule(
+  "neon",
+  "index/projectPermission",
+  _module,
+);
+pulumi.runtime.registerResourceModule("neon", "index/role", _module);
+pulumi.runtime.registerResourceModule(
+  "neon",
+  "index/vpcEndpointAssignment",
+  _module,
+);
+pulumi.runtime.registerResourceModule(
+  "neon",
+  "index/vpcEndpointRestriction",
+  _module,
+);
 pulumi.runtime.registerResourcePackage("neon", {
-    version: utilities.getVersion(),
-    constructProvider: (name: string, type: string, urn: string): pulumi.ProviderResource => {
-        if (type !== "pulumi:providers:neon") {
-            throw new Error(`unknown provider type ${type}`);
-        }
-        return new Provider(name, <any>undefined, { urn });
-    },
+  version: utilities.getVersion(),
+  constructProvider: (
+    name: string,
+    type: string,
+    urn: string,
+  ): pulumi.ProviderResource => {
+    if (type !== "pulumi:providers:neon") {
+      throw new Error(`unknown provider type ${type}`);
+    }
+    return new Provider(name, undefined as any, { urn });
+  },
 });

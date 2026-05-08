@@ -79,17 +79,13 @@ envVar("GITHUB_CLIENT_SECRET", config.requireSecret("githubClientSecret"), {
   sensitive: true,
 });
 envVar("GITHUB_APP_ID", config.require("githubAppId"));
-envVar(
-  "GITHUB_APP_PRIVATE_KEY",
-  config.requireSecret("githubAppPrivateKey"),
-  { sensitive: true },
-);
+envVar("GITHUB_APP_PRIVATE_KEY", config.requireSecret("githubAppPrivateKey"), {
+  sensitive: true,
+});
 envVar("NEXT_PUBLIC_GITHUB_APP_SLUG", config.require("githubAppSlug"));
-envVar(
-  "GITHUB_WEBHOOK_SECRET",
-  config.requireSecret("githubWebhookSecret"),
-  { sensitive: true },
-);
+envVar("GITHUB_WEBHOOK_SECRET", config.requireSecret("githubWebhookSecret"), {
+  sensitive: true,
+});
 
 export const projectId: pulumi.Output<string> = project.id;
 export const projectNameOutput: pulumi.Output<string> = pulumi.output(

@@ -1,6 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": [".agents/skills/**", "apps/web/components/ui/**"],
+  "ignorePatterns": [
+    ".agents/skills/**",
+    "apps/web/components/ui/**",
+    "infra/**/sdks/**"
+  ],
   "rules": {
     "arrow-body-style": "off",
     "complexity": "off",
@@ -21,6 +25,7 @@
     "no-eq-null": "off",
     "no-inline-comments": "off",
     "no-lonely-if": "off",
+    "no-new": "off",
     "no-negated-condition": "off",
     "no-promise-executor-return": "off",
     "no-shadow": "off",

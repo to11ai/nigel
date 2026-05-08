@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "sdks/**/*.ts"]
+  "include": ["index.ts"]
 }

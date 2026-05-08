@@ -4,7 +4,7 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as utilities from "../utilities";
 
-declare var exports: any;
+declare let exports: any;
 const __config = new pulumi.Config("neon");
 
 /**
@@ -12,9 +12,8 @@ const __config = new pulumi.Config("neon");
  */
 export declare const apiKey: string | undefined;
 Object.defineProperty(exports, "apiKey", {
-    get() {
-        return __config.get("apiKey");
-    },
-    enumerable: true,
+  get() {
+    return __config.get("apiKey");
+  },
+  enumerable: true,
 });
-
