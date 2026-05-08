@@ -1,0 +1,8 @@
+name: nigel-meta
+runtime:
+  name: nodejs
+  options:
+    packagemanager: bun
+    nodeargs: "--import tsx"
+description: Meta stack — configures Pulumi Cloud Deployments for all Nigel infra stacks
+main: index.ts

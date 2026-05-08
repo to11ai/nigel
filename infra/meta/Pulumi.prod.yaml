@@ -1,0 +1,5 @@
+config:
+  pulumi:tags:
+    Environment: production
+  nigel-meta:repo: to11ai/nigel
+  nigel-meta:branch: refs/heads/main
