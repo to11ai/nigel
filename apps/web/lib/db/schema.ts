@@ -542,6 +542,25 @@ export const specialists = pgTable(
   ],
 );
 
+// repo_configs — DB fallback for repos without a .nigel.yaml committed.
+// Populated either by admin via UI ('db' source) or auto-inferred from
+// package.json / turbo.json on first encounter ('inferred' source).
+// The resolver always prefers a checked-in `.nigel.yaml` over either DB row.
+export const repoConfigs = pgTable(
+  "repo_configs",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    configJson: jsonb("config_json").$type<unknown>().notNull(),
+    source: text("source", { enum: ["file", "db", "inferred"] }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("repo_configs_repo_full_name_idx").on(table.repoFullName),
+  ],
+);
+
 // User preferences for settings
 export const userPreferences = pgTable("user_preferences", {
   id: text("id").primaryKey(),
