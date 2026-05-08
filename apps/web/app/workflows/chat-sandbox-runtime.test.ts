@@ -12,18 +12,35 @@ let returnValueAwaited = false;
 let runExists = true;
 let runReturnValueError: Error | null = null;
 
+type TestLifecycleState = "provisioning" | "active" | "archived";
+type TestSessionRecord = {
+  id: string;
+  userId: string;
+  title: string;
+  status: "running" | "archived";
+  lifecycleState: TestLifecycleState;
+  sandboxProvisioningRunId: string | null;
+  sandboxState: {
+    type: "vercel";
+    sandboxName: string;
+    expiresAt?: number;
+  };
+  repoOwner: string | null;
+  repoName: string | null;
+};
+
 const sandbox = {
   workingDirectory: "/vercel/sandbox",
   currentBranch: "main",
   environmentDetails: "test sandbox",
 };
 
-let sessionRecord = {
+let sessionRecord: TestSessionRecord = {
   id: "session-1",
   userId: "user-1",
   title: "Test session",
   status: "running" as const,
-  lifecycleState: "provisioning" as const,
+  lifecycleState: "provisioning" as TestLifecycleState,
   sandboxProvisioningRunId: "provision-run-1",
   sandboxState: { type: "vercel" as const, sandboxName: "session_session-1" },
   repoOwner: null as string | null,
@@ -41,7 +58,13 @@ const provisionSessionSandboxMock = mock(async () => ({
   didSetupWorkspace: true,
 }));
 
+const connectSandboxMock = mock(async () => ({
+  ...sandbox,
+  getState: () => sessionRecord.sandboxState,
+}));
+
 mock.module("workflow", () => ({
+  getWorkflowMetadata: () => ({ workflowRunId: "workflow-run-1" }),
   getWritable: () => {
     const writable = new WritableStream<UIMessageChunk>({
       write(chunk) {
@@ -83,6 +106,10 @@ mock.module("@/lib/sandbox/provision-session-sandbox", () => ({
   provisionSessionSandbox: provisionSessionSandboxMock,
 }));
 
+mock.module("@open-agents/sandbox", () => ({
+  connectSandbox: connectSandboxMock,
+}));
+
 mock.module("@/lib/skills/directories", () => ({
   getSandboxSkillDirectories: async () => [],
 }));
@@ -105,6 +132,7 @@ describe("resolveChatSandboxRuntime provisioning coordination", () => {
     returnValueAwaited = false;
     runExists = true;
     runReturnValueError = null;
+    connectSandboxMock.mockClear();
     provisionSessionSandboxMock.mockClear();
     sessionRecord = {
       id: "session-1",
@@ -159,5 +187,36 @@ describe("resolveChatSandboxRuntime provisioning coordination", () => {
       },
     });
     expect(provisionSessionSandboxMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("connects to active sessions without reprovisioning", async () => {
+    sessionRecord = {
+      ...sessionRecord,
+      lifecycleState: "active",
+      sandboxProvisioningRunId: null,
+      sandboxState: {
+        type: "vercel",
+        sandboxName: "session_session-1",
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+    const { resolveChatSandboxRuntime } = await runtimeModulePromise;
+
+    const result = await resolveChatSandboxRuntime({
+      userId: "user-1",
+      sessionId: "session-1",
+      assistantId: "assistant-1",
+    });
+
+    expect(returnValueAwaited).toBe(false);
+    expect(provisionSessionSandboxMock).not.toHaveBeenCalled();
+    expect(connectSandboxMock).toHaveBeenCalledWith(
+      sessionRecord.sandboxState,
+      {
+        ports: [3000, 5173, 4321, 8000],
+      },
+    );
+    expect(result.workingDirectory).toBe("/vercel/sandbox");
+    expect(result.didSetupWorkspace).toBe(false);
   });
 });

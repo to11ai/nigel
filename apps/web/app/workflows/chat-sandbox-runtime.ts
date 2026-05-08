@@ -1,10 +1,15 @@
 import { discoverSkills } from "@open-agents/agent";
-import { type Sandbox, type SandboxState } from "@open-agents/sandbox";
+import {
+  connectSandbox,
+  type Sandbox,
+  type SandboxState,
+} from "@open-agents/sandbox";
 import type { UIMessageChunk } from "ai";
 import { getWritable } from "workflow";
 import { getRun } from "workflow/api";
 import type { WebAgentWorkspaceStatusData } from "@/app/types";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
+import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 import { provisionSessionSandbox } from "@/lib/sandbox/provision-session-sandbox";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 import { getSandboxSkillDirectories } from "@/lib/skills/directories";
@@ -102,6 +107,37 @@ async function awaitProvisioningRunIfNeeded(
   }
 }
 
+async function getRunnableSession(sessionId: string, userId: string) {
+  const session = await getSessionById(sessionId);
+  if (!session) {
+    throw new Error("Session not found");
+  }
+  if (session.userId !== userId) {
+    throw new Error("Unauthorized");
+  }
+  if (session.status === "archived" || session.lifecycleState === "archived") {
+    throw new Error("Session is archived");
+  }
+
+  return session;
+}
+
+async function resolveActiveSessionSandbox(session: SessionRecord) {
+  if (!isSandboxActive(session.sandboxState)) {
+    return null;
+  }
+
+  const sandbox = await connectSandbox(session.sandboxState, {
+    ports: DEFAULT_SANDBOX_PORTS,
+  });
+  const rawSandboxState = sandbox.getState?.() as SandboxState | undefined;
+  const sandboxState = isSandboxActive(rawSandboxState)
+    ? rawSandboxState
+    : session.sandboxState;
+
+  return { sandbox, sandboxState };
+}
+
 export async function resolveChatSandboxRuntime(params: {
   userId: string;
   sessionId: string;
@@ -111,16 +147,7 @@ export async function resolveChatSandboxRuntime(params: {
 
   await sendStart(params.assistantId);
 
-  const session = await getSessionById(params.sessionId);
-  if (!session) {
-    throw new Error("Session not found");
-  }
-  if (session.userId !== params.userId) {
-    throw new Error("Unauthorized");
-  }
-  if (session.status === "archived") {
-    throw new Error("Session is archived");
-  }
+  const session = await getRunnableSession(params.sessionId, params.userId);
 
   const didSetupWorkspace = !isSandboxActive(session.sandboxState);
   if (didSetupWorkspace) {
@@ -131,6 +158,32 @@ export async function resolveChatSandboxRuntime(params: {
   }
 
   await awaitProvisioningRunIfNeeded(session);
+
+  const runnableSession = await getRunnableSession(
+    params.sessionId,
+    params.userId,
+  );
+
+  const activeSandbox = await resolveActiveSessionSandbox(runnableSession);
+  if (activeSandbox) {
+    const skills = await loadSessionSkills({
+      sessionId: params.sessionId,
+      sandboxState: activeSandbox.sandboxState,
+      sandbox: activeSandbox.sandbox,
+    });
+
+    return {
+      sandboxState: activeSandbox.sandboxState,
+      workingDirectory: activeSandbox.sandbox.workingDirectory,
+      currentBranch: activeSandbox.sandbox.currentBranch,
+      environmentDetails: activeSandbox.sandbox.environmentDetails,
+      skills,
+      didSetupWorkspace,
+      sessionTitle: runnableSession.title,
+      repoOwner: runnableSession.repoOwner ?? undefined,
+      repoName: runnableSession.repoName ?? undefined,
+    };
+  }
 
   const provisioned = await provisionSessionSandbox({
     userId: params.userId,

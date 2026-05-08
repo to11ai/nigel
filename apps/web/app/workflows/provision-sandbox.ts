@@ -1,5 +1,9 @@
 import { getWorkflowMetadata } from "workflow";
-import { getSessionById, updateSession } from "@/lib/db/sessions";
+import {
+  getSessionById,
+  updateProvisioningSession,
+  updateSession,
+} from "@/lib/db/sessions";
 import { provisionSessionSandbox } from "@/lib/sandbox/provision-session-sandbox";
 
 export type ProvisionSandboxWorkflowResult = {
@@ -16,12 +20,28 @@ async function provisionSandboxStep(params: {
   "use step";
 
   try {
-    await updateSession(params.sessionId, {
+    const claimedSession = await updateProvisioningSession(params.sessionId, {
       sandboxProvisioningRunId: params.runId,
-      lifecycleState: "provisioning",
       lifecycleError: null,
     });
-    const result = await provisionSessionSandbox(params);
+    if (!claimedSession) {
+      const session = await getSessionById(params.sessionId);
+      if (!session) {
+        throw new Error("Session not found");
+      }
+      if (
+        session.status === "archived" ||
+        session.lifecycleState === "archived"
+      ) {
+        throw new Error("Session is archived");
+      }
+      throw new Error("Session is no longer provisioning");
+    }
+
+    const result = await provisionSessionSandbox({
+      userId: params.userId,
+      sessionId: params.sessionId,
+    });
     return { sandboxState: result.sandboxState };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
