@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { specialists } from "@/lib/db/schema";
+import { PRESETS } from "./presets";
 import type { SpecialistOverrideFields, SpecialistRow } from "./types";
 
 export type CustomSpecialistInput = {
@@ -20,6 +21,11 @@ export type CustomSpecialistInput = {
 export async function upsertCustomSpecialist(
   input: CustomSpecialistInput,
 ): Promise<SpecialistRow> {
+  if (PRESETS[input.name]) {
+    throw new Error(
+      `specialist '${input.name}' is a code preset and cannot be created as a custom specialist; use upsertOverride instead`,
+    );
+  }
   const existing = await db
     .select()
     .from(specialists)
@@ -76,6 +82,11 @@ export async function upsertOverride(
   name: string,
   fields: SpecialistOverrideFields,
 ): Promise<SpecialistRow> {
+  if (!PRESETS[name]) {
+    throw new Error(
+      `specialist '${name}' is not a code preset; overrides only apply to preset names. Use upsertCustomSpecialist for new specialists.`,
+    );
+  }
   const existing = await db
     .select()
     .from(specialists)

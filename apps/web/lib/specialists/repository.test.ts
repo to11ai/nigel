@@ -65,6 +65,28 @@ describe("specialists repository", () => {
     expect(all.find((s) => s.name === "echo")).toBeUndefined();
   });
 
+  test("upsertCustomSpecialist rejects names that collide with a code preset", async () => {
+    await expect(
+      upsertCustomSpecialist({
+        name: "echo",
+        systemPrompt: "x",
+        model: "anthropic/claude-haiku-4-5",
+        toolAllowlist: [],
+        sandboxPolicy: "fresh",
+        mayRecurse: false,
+        maxChildren: 0,
+        budgetUsdDefaultMicros: 0,
+        needsLocalStack: false,
+      }),
+    ).rejects.toThrow(/code preset/i);
+  });
+
+  test("upsertOverride rejects names that are not code presets", async () => {
+    await expect(
+      upsertOverride("not-a-preset", { sandboxPolicy: "inherit" }),
+    ).rejects.toThrow(/not a code preset/i);
+  });
+
   test("listSpecialists returns rows in name order", async () => {
     await upsertOverride("echo", { sandboxPolicy: "inherit" });
     await upsertCustomSpecialist({
