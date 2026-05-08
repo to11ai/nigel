@@ -503,6 +503,45 @@ export const webhookEvents = pgTable(
   ],
 );
 
+// specialists — admin-managed registry. Two kinds:
+//   - "custom": admin-created role with no code counterpart. All fields
+//     populated.
+//   - "override": admin tweak to a code preset (lib/specialists/presets.ts).
+//     Only `fields` populated — non-null entries override the preset.
+// Resolution order at runtime: code preset > override (merged) > custom.
+// `name` must match the code preset's name when kind='override'.
+export const specialists = pgTable(
+  "specialists",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["custom", "override"] }).notNull(),
+
+    systemPrompt: text("system_prompt"),
+    model: text("model"),
+    toolAllowlist: jsonb("tool_allowlist").$type<string[]>(),
+    sandboxPolicy: text("sandbox_policy", {
+      enum: ["inherit", "fresh", "fresh_clean"],
+    }),
+    mayRecurse: boolean("may_recurse"),
+    maxChildren: integer("max_children"),
+    budgetUsdDefaultMicros: bigint("budget_usd_default_micros", {
+      mode: "number",
+    }),
+    needsLocalStack: boolean("needs_local_stack"),
+
+    createdBy: text("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("specialists_name_idx").on(table.name),
+    index("specialists_kind_idx").on(table.kind),
+  ],
+);
+
 // User preferences for settings
 export const userPreferences = pgTable("user_preferences", {
   id: text("id").primaryKey(),
