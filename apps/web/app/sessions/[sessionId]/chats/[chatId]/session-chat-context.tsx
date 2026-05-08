@@ -1,7 +1,7 @@
 "use client";
 
 import type { UseChatHelpers } from "@ai-sdk/react";
-import type { SandboxState } from "@open-agents/sandbox";
+import type { SandboxState } from "@nigel/sandbox";
 import {
   createContext,
   type ReactNode,

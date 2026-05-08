@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Sandbox } from "@open-agents/sandbox";
+import type { Sandbox } from "@nigel/sandbox";
 import { createDownloadDiff, DownloadDiffError } from "./download-diff";
 
 type ExecResult = {

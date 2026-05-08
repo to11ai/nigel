@@ -159,7 +159,7 @@ mock.module("@nigel/agent", () => ({
   gateway: () => "mock-model",
 }));
 
-mock.module("@open-agents/sandbox", () => ({
+mock.module("@nigel/sandbox", () => ({
   connectSandbox: async () => ({
     workingDirectory: "/vercel/sandbox",
     exec: async () => ({ success: true, stdout: "", stderr: "" }),

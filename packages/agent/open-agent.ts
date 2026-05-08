@@ -1,4 +1,4 @@
-import type { SandboxState } from "@open-agents/sandbox";
+import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent, type ToolSet } from "ai";
 import { z } from "zod";
 import { addCacheControl } from "./context-management";

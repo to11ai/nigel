@@ -1,5 +1,5 @@
 import { discoverSkills } from "@nigel/agent";
-import { connectSandbox } from "@open-agents/sandbox";
+import { connectSandbox } from "@nigel/sandbox";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 import { getSandboxSkillDirectories } from "@/lib/skills/directories";
 import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";

@@ -3,7 +3,7 @@ import {
   connectSandbox,
   type Sandbox,
   type SandboxState,
-} from "@open-agents/sandbox";
+} from "@nigel/sandbox";
 import type { UIMessageChunk } from "ai";
 import { getWritable } from "workflow";
 import type { WebAgentWorkspaceStatusData } from "@/app/types";

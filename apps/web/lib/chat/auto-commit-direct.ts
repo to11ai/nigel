@@ -1,4 +1,4 @@
-import type { Sandbox } from "@open-agents/sandbox";
+import type { Sandbox } from "@nigel/sandbox";
 import {
   hasUncommittedChanges,
   stageAll,
@@ -6,7 +6,7 @@ import {
   getStagedDiff,
   syncToRemote,
   withTemporaryGitHubAuth,
-} from "@open-agents/sandbox";
+} from "@nigel/sandbox";
 import { generateText } from "ai";
 import { gateway } from "@nigel/agent";
 import { updateSession } from "@/lib/db/sessions";

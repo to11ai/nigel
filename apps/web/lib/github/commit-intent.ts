@@ -1,10 +1,10 @@
-import type { FileChangeStatus, Sandbox } from "@open-agents/sandbox";
+import type { FileChangeStatus, Sandbox } from "@nigel/sandbox";
 import {
   detectBinaryFiles,
   getChangedFiles,
   getFileModes,
   getHeadSha,
-} from "@open-agents/sandbox";
+} from "@nigel/sandbox";
 import type { GitIdentity } from "./commit";
 
 const MAX_COMMIT_FILES = 500;

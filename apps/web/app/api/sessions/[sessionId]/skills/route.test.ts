@@ -130,7 +130,7 @@ function registerRouteMocks() {
     isSandboxUnavailableError: () => false,
   }));
 
-  mock.module("@open-agents/sandbox", () => ({
+  mock.module("@nigel/sandbox", () => ({
     connectSandbox: async (sandboxState: TestSandboxState) => {
       connectCalls.push(sandboxState);
       return {

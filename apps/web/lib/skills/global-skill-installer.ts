@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Sandbox } from "@open-agents/sandbox";
+import type { Sandbox } from "@nigel/sandbox";
 import {
   type GlobalSkillRef,
   globalSkillRefsSchema,
