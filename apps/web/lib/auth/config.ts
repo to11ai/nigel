@@ -78,6 +78,43 @@ function mapGitHubProfileToUser(profile: GithubProfile): { username: string } {
   };
 }
 
+// When NIGEL_ALLOWED_GITHUB_ORG is set, sign-in is restricted to active
+// members of that org. The user's OAuth access token (with read:org scope)
+// is used to query GET /user/memberships/orgs/{org}, which returns the
+// caller's own membership regardless of visibility (so private members are
+// admitted). 200 + state="active" → allowed; anything else → rejected.
+async function assertGithubOrgMembership(
+  accessToken: string,
+  org: string,
+): Promise<void> {
+  const res = await fetch(
+    `https://api.github.com/user/memberships/orgs/${encodeURIComponent(org)}`,
+    {
+      headers: {
+        Authorization: `token ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "nigel",
+      },
+    },
+  );
+
+  if (res.status === 404) {
+    throw new Error(`Sign-in restricted to members of the ${org} GitHub org.`);
+  }
+  if (!res.ok) {
+    throw new Error(
+      `GitHub org membership check failed: ${res.status} ${res.statusText}`,
+    );
+  }
+  const body = (await res.json()) as { state?: string };
+  if (body.state !== "active") {
+    throw new Error(
+      `GitHub org membership for ${org} is not active (state=${body.state ?? "unknown"}).`,
+    );
+  }
+}
+
 const authBaseURLFallback = getAuthBaseURLFallback();
 const authAllowedHosts = getAllowedAuthHosts();
 
@@ -119,6 +156,34 @@ export const auth = betterAuth({
         }),
       },
     },
+    session: {
+      // Runs on every sign-in (each fresh OAuth completion creates a new
+      // session row). account.create.before would only fire on the user's
+      // very first sign-in — once an account row exists, subsequent logins
+      // would skip the check, allowing a user removed from the org to keep
+      // signing in.
+      create: {
+        before: async (session) => {
+          const allowedOrg = process.env.NIGEL_ALLOWED_GITHUB_ORG?.trim();
+          if (!allowedOrg) {
+            return { data: session };
+          }
+          // getAccessToken returns null when the user has no linked github
+          // account (e.g., signed in via a different provider). In that case
+          // we have nothing to check — pass through. When the user does have
+          // a github account, validate org membership against the decrypted
+          // access token.
+          const tokenResult = await auth.api.getAccessToken({
+            body: { providerId: "github", userId: session.userId },
+          });
+          if (!tokenResult?.accessToken) {
+            return { data: session };
+          }
+          await assertGithubOrgMembership(tokenResult.accessToken, allowedOrg);
+          return { data: session };
+        },
+      },
+    },
   },
 
   session: {
@@ -138,6 +203,9 @@ export const auth = betterAuth({
     github: {
       clientId: process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID ?? "",
       clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+      // read:org is required for the org-membership check in the
+      // account.create.before hook above.
+      scope: ["read:user", "user:email", "read:org"],
       mapProfileToUser: mapGitHubProfileToUser,
     },
   },

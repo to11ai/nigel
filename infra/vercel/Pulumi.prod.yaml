@@ -3,6 +3,7 @@ config:
     Environment: production
   nigel-vercel:projectName: nigel
   nigel-vercel:appDomain: app.nigel.to11.ai
+  nigel-vercel:allowedGithubOrg: to11ai
   nigel-vercel:neonStackRef: to11/nigel-data-neon/prod
   vercel:team: terramate
   # All required config + secrets are set in Task 18 before the first `pulumi up`:
