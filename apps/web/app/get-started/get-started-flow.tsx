@@ -82,7 +82,7 @@ export function GetStartedFlow() {
   };
 
   const steps: { id: StepId; title: string }[] = [
-    { id: 1, title: "Vercel Account" },
+    { id: 1, title: "GitHub Account" },
     { id: 2, title: "Connect GitHub" },
   ];
 
@@ -165,7 +165,7 @@ export function GetStartedFlow() {
                     <div className="overflow-hidden">
                       <div className="pb-5">
                         {step.id === 1 && (
-                          <VercelAccountStep
+                          <GitHubAccountStep
                             session={session}
                             loading={sessionLoading}
                             onComplete={() => markComplete(1)}
@@ -199,9 +199,9 @@ export function GetStartedFlow() {
   );
 }
 
-// step 1: vercel account (display only)
+// step 1: github account (display only)
 
-function VercelAccountStep({
+function GitHubAccountStep({
   session,
   loading,
   onComplete,
@@ -217,7 +217,7 @@ function VercelAccountStep({
   return (
     <div className="space-y-3">
       <p className="text-xs text-zinc-500">
-        Signed in via Vercel. This account is used for authentication.
+        Signed in via GitHub. This account is used for authentication.
       </p>
       <div className="flex items-center justify-between rounded-lg border border-white/10 px-3 py-2.5">
         <div className="flex items-center gap-3">
@@ -234,7 +234,7 @@ function VercelAccountStep({
           )}
           <div>
             <p className="text-sm font-medium text-zinc-200">
-              {session?.user?.name ?? session?.user?.username ?? "Vercel"}
+              {session?.user?.name ?? session?.user?.username ?? "GitHub"}
             </p>
             {session?.user?.email && (
               <p className="text-xs text-zinc-600">{session.user.email}</p>
