@@ -11,10 +11,7 @@ import {
 import type { OpenAgentCallOptions } from "@nigel/agent";
 import { getWorkflowMetadata, getWritable } from "workflow";
 import { getRun } from "workflow/api";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { agentRuns } from "@/lib/db/schema";
-import { isRunsEnabled, updateRunStatus } from "@/lib/runs";
+import { isRunsEnabled } from "@/lib/runs";
 import { assistantFileLinkPrompt } from "@/lib/assistant-file-links";
 import { addLanguageModelUsage } from "./usage-utils";
 import { extractGatewayCost } from "./gateway-metadata";
@@ -112,6 +109,46 @@ function shouldRefreshDiffCacheForParts(
       (part.state === "output-available" || part.state === "output-error"),
   );
 }
+
+// Phase 1: agent_run state mutations are wrapped in step functions because
+// the Workflow SDK forbids Node.js modules (postgres client) at workflow scope.
+const linkAgentRunWorkflowAndStart = async (
+  agentRunId: string,
+  workflowRunId: string,
+): Promise<void> => {
+  "use step";
+  const { eq } = await import("drizzle-orm");
+  const { db } = await import("@/lib/db/client");
+  const { agentRuns } = await import("@/lib/db/schema");
+  const { updateRunStatus } = await import("@/lib/runs");
+
+  await db
+    .update(agentRuns)
+    .set({ workflowRunId })
+    .where(eq(agentRuns.id, agentRunId));
+  try {
+    await updateRunStatus(agentRunId, "running");
+  } catch {
+    // already running (workflow re-activation) — ignore
+  }
+};
+
+type AgentRunTerminalStatus = "completed" | "failed" | "cancelled";
+const tryUpdateAgentRunStatus = async (
+  agentRunId: string,
+  next: AgentRunTerminalStatus,
+): Promise<void> => {
+  "use step";
+  const { updateRunStatus } = await import("@/lib/runs");
+  try {
+    await updateRunStatus(agentRunId, next);
+  } catch (err) {
+    // status-machine rejects the transition (e.g., already terminal).
+    // Don't fail the workflow over a bookkeeping error.
+    // biome-ignore lint/suspicious/noConsole: phase-1 instrumentation
+    console.error("agent_run status update failed", { agentRunId, err });
+  }
+};
 
 const convertMessages = async (
   messages: WebAgentUIMessage[],
@@ -627,11 +664,7 @@ export async function runAgentWorkflow(options: Options) {
     // workflow can mutate this chat.
     await closeStream(writable);
     if (isRunsEnabled() && options.agentRunId) {
-      try {
-        await updateRunStatus(options.agentRunId, "cancelled");
-      } catch {
-        // best-effort
-      }
+      await tryUpdateAgentRunStatus(options.agentRunId, "cancelled");
     }
     return;
   }
@@ -639,15 +672,7 @@ export async function runAgentWorkflow(options: Options) {
   const agentRunId: string | null = options.agentRunId ?? null;
 
   if (isRunsEnabled() && agentRunId) {
-    await db
-      .update(agentRuns)
-      .set({ workflowRunId })
-      .where(eq(agentRuns.id, agentRunId));
-    try {
-      await updateRunStatus(agentRunId, "running");
-    } catch {
-      // already running (workflow re-activation) — ignore
-    }
+    await linkAgentRunWorkflowAndStart(agentRunId, workflowRunId);
   }
 
   const modelMessagesPromise = convertMessages(options.messages);
@@ -1006,20 +1031,13 @@ export async function runAgentWorkflow(options: Options) {
         },
       );
       if (isRunsEnabled() && agentRunId) {
-        const next =
+        const next: AgentRunTerminalStatus =
           workflowStatus === "completed"
             ? "completed"
             : workflowStatus === "failed"
               ? "failed"
               : "cancelled";
-        try {
-          await updateRunStatus(agentRunId, next);
-        } catch (err) {
-          // status-machine rejects the transition (e.g., already terminal).
-          // Don't fail the workflow over a bookkeeping error.
-          // biome-ignore lint/suspicious/noConsole: phase-1 instrumentation
-          console.error("agent_run status update failed", { agentRunId, err });
-        }
+        await tryUpdateAgentRunStatus(agentRunId, next);
       }
     }
   }
