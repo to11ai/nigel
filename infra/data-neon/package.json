@@ -11,11 +11,13 @@
     "destroy": "pulumi destroy --yes"
   },
   "dependencies": {
-    "@pulumi/pulumi": "^3.231.0"
+    "@pulumi/pulumi": "^3.231.0",
+    "@pulumi/neon": "file:sdks/neon"
   },
   "devDependencies": {
     "@types/node": "^22",
     "tsx": "^4.21.0",
     "typescript": "^5"
-  }
+  },
+  "trustedDependencies": ["@pulumi/neon"]
 }

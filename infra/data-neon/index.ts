@@ -25,6 +25,10 @@ const neonProject = new neon.Project(
 
 const neonBranchId = neonProject.defaultBranchId;
 
+// Neon auto-creates a default read_write endpoint when the project is
+// provisioned. We import it (rather than try to create a second one, which the
+// API blocks with ENDPOINTS_LIMIT_EXCEEDED) so we can manage suspendTimeoutSeconds.
+const importedEndpointId = config.get("importedEndpointId");
 const neonEndpoint = new neon.Endpoint(
   "nigel-neon-endpoint-prod",
   {
@@ -38,6 +42,7 @@ const neonEndpoint = new neon.Endpoint(
     dependsOn: [neonProject],
     protect: true,
     replaceOnChanges: ["projectId", "branchId", "type"],
+    ...(importedEndpointId ? { import: importedEndpointId } : {}),
   },
 );
 

@@ -8,3 +8,7 @@ config:
   nigel-data-neon:historyRetentionSeconds: "2592000"
   # Set the Neon API key (reused from the platform deployment if available):
   #   pulumi config set -s to11/nigel-data-neon/prod --secret neon:apiKey <key>
+
+  neon:apiKey:
+    secure: AAABALn4ilzUElYEt+nMmIN37W2N8eGk1XkUPaRay5LTLlRu7p2vVPOJe/S6ebFdgupAYqD1mbb6LLhD5A2yNbxHwUA28AbXBDdY7CRdhIJdo/KvYIvQFYnV6oPtvz1idCnwTe4=
+  nigel-data-neon:importedEndpointId: hidden-pine-49566135/ep-rough-bird-aqc9ybfk
