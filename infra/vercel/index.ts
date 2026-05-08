@@ -102,6 +102,13 @@ envVar("GITHUB_WEBHOOK_SECRET", config.requireSecret("githubWebhookSecret"), {
   sensitive: true,
 });
 
+// Restrict sign-in to active members of this GitHub org. Unset on a stack
+// disables the check (useful for staging/dev branches without a paired org).
+const allowedGithubOrg = config.get("allowedGithubOrg");
+if (allowedGithubOrg) {
+  envVar("NIGEL_ALLOWED_GITHUB_ORG", allowedGithubOrg);
+}
+
 export const projectId: pulumi.Output<string> = project.id;
 export const projectNameOutput: pulumi.Output<string> = pulumi.output(
   project.name,
