@@ -353,7 +353,7 @@ export async function recordWorkflowUsage(
 
   try {
     const { collectTaskToolUsageEvents, sumLanguageModelUsage } =
-      await import("@open-agents/agent");
+      await import("@nigel/agent");
 
     if (workflowRun) {
       try {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { SkillMetadata } from "@open-agents/agent";
+import type { SkillMetadata } from "@nigel/agent";
 
 mock.module("server-only", () => ({}));
 
@@ -146,7 +146,7 @@ function registerRouteMocks() {
     },
   }));
 
-  mock.module("@open-agents/agent", () => ({
+  mock.module("@nigel/agent", () => ({
     discoverSkills: async (_sandbox: unknown, skillDirs: string[]) => {
       discoverCalls.push({ skillDirs });
       return discoveredSkills;

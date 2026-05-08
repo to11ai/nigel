@@ -1,4 +1,4 @@
-import { discoverSkills } from "@open-agents/agent";
+import { discoverSkills } from "@nigel/agent";
 import {
   connectSandbox,
   type Sandbox,

@@ -151,7 +151,7 @@ mock.module("@/lib/chat/create-cancelable-readable-stream", () => ({
   createCancelableReadableStream: (stream: ReadableStream) => stream,
 }));
 
-mock.module("@open-agents/agent", () => ({
+mock.module("@nigel/agent", () => ({
   discoverSkills: async (_sandbox: unknown, skillDirs: string[]) => {
     discoverSkillDirsCalls.push(skillDirs);
     return [];

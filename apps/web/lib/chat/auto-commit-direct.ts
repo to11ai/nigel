@@ -8,7 +8,7 @@ import {
   withTemporaryGitHubAuth,
 } from "@open-agents/sandbox";
 import { generateText } from "ai";
-import { gateway } from "@open-agents/agent";
+import { gateway } from "@nigel/agent";
 import { updateSession } from "@/lib/db/sessions";
 import { generateBranchName, isSafeBranchName } from "@/lib/git/helpers";
 import {

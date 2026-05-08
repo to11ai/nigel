@@ -320,7 +320,7 @@ mock.module("ai", () => ({
     }),
 }));
 
-mock.module("@open-agents/agent", () => ({}));
+mock.module("@nigel/agent", () => ({}));
 
 mock.module("@/lib/db/sessions", () => ({
   getChatById: async () => testChatRecord,

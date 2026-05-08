@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillOptions } from "@open-agents/agent";
+import type { SkillMetadata, SkillOptions } from "@nigel/agent";
 import type { SandboxState } from "@open-agents/sandbox";
 import { createRedisClient, isRedisConfigured } from "./redis";
 

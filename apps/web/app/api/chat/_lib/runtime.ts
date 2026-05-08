@@ -1,4 +1,4 @@
-import { discoverSkills } from "@open-agents/agent";
+import { discoverSkills } from "@nigel/agent";
 import { connectSandbox } from "@open-agents/sandbox";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 import { getSandboxSkillDirectories } from "@/lib/skills/directories";

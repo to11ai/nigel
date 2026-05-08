@@ -18,9 +18,9 @@
       "dependencies": {
         "@ai-sdk/elevenlabs": "^2.0.29",
         "@ai-sdk/react": "catalog:",
+        "@nigel/agent": "workspace:*",
         "@octokit/auth-app": "^8.2.0",
         "@octokit/rest": "^22.0.1",
-        "@open-agents/agent": "workspace:*",
         "@open-agents/sandbox": "workspace:*",
         "@open-agents/shared": "workspace:*",
         "@pierre/diffs": "^1.0.10",
@@ -81,7 +81,7 @@
       },
     },
     "packages/agent": {
-      "name": "@open-agents/agent",
+      "name": "@nigel/agent",
       "version": "0.0.0",
       "dependencies": {
         "@ai-sdk/anthropic": "catalog:",
@@ -464,6 +464,8 @@
 
     "@next/swc-win32-x64-msvc": ["@next/swc-win32-x64-msvc@16.2.1", "", { "os": "win32", "cpu": "x64" }, "sha512-qvU+3a39Hay+ieIztkGSbF7+mccbbg1Tk25hc4JDylf8IHjYmY/Zm64Qq1602yPyQqvie+vf5T/uPwNxDNIoeg=="],
 
+    "@nigel/agent": ["@nigel/agent@workspace:packages/agent"],
+
     "@noble/ciphers": ["@noble/ciphers@2.2.0", "", {}, "sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA=="],
 
     "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
@@ -511,8 +513,6 @@
     "@octokit/rest": ["@octokit/rest@22.0.1", "", { "dependencies": { "@octokit/core": "^7.0.6", "@octokit/plugin-paginate-rest": "^14.0.0", "@octokit/plugin-request-log": "^6.0.0", "@octokit/plugin-rest-endpoint-methods": "^17.0.0" } }, "sha512-Jzbhzl3CEexhnivb1iQ0KJ7s5vvjMWcmRtq5aUsKmKDrRW6z3r84ngmiFKFvpZjpiU/9/S6ITPFRpn5s/3uQJw=="],
 
     "@octokit/types": ["@octokit/types@16.0.0", "", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg=="],
-
-    "@open-agents/agent": ["@open-agents/agent@workspace:packages/agent"],
 
     "@open-agents/sandbox": ["@open-agents/sandbox@workspace:packages/sandbox"],
 
