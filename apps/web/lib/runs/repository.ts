@@ -35,8 +35,8 @@ export async function insertRun(input: InsertRunInput): Promise<void> {
     repoRef: input.repoRef ?? null,
     workflowRunId: input.workflowRunId ?? null,
     chatId: input.chatId ?? null,
-    budgetUsdCap: input.budgetUsdCapMicros,
-    costUsdActual: 0,
+    budgetUsdCapMicros: input.budgetUsdCapMicros,
+    costUsdActualMicros: 0,
     status: "pending",
   });
 }
@@ -106,7 +106,7 @@ export async function addCostMicros(
   const result = await db
     .update(agentRuns)
     .set({
-      costUsdActual: sql`${agentRuns.costUsdActual} + ${deltaMicros}`,
+      costUsdActualMicros: sql`${agentRuns.costUsdActualMicros} + ${deltaMicros}`,
     })
     .where(eq(agentRuns.id, id))
     .returning({ id: agentRuns.id });

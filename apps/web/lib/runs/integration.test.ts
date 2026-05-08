@@ -46,7 +46,7 @@ describe("runs end-to-end", () => {
     await updateRunStatus(root.id, "completed");
     const rootAfter = await getRun(root.id);
     expect(rootAfter?.status).toBe("completed");
-    expect(rootAfter?.costUsdActual).toBe(750_000);
+    expect(rootAfter?.costUsdActualMicros).toBe(750_000);
   });
 
   test("blocked → resume cycle", async () => {

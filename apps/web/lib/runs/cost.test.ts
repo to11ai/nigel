@@ -89,7 +89,7 @@ describe("cost rollup trigger", () => {
     await addCostMicros(child.id, 250_000);
 
     const rootAfter = await getRun(root.id);
-    expect(rootAfter?.costUsdActual).toBe(250_000);
+    expect(rootAfter?.costUsdActualMicros).toBe(250_000);
   });
 
   test("multiple children sum on root", async () => {
@@ -115,7 +115,7 @@ describe("cost rollup trigger", () => {
     await addCostMicros(c2.id, 200_000);
 
     const rootAfter = await getRun(root.id);
-    expect(rootAfter?.costUsdActual).toBe(300_000);
+    expect(rootAfter?.costUsdActualMicros).toBe(300_000);
   });
 
   test("grandchild cost reaches root via single hop (root_run_id is denormalized)", async () => {
@@ -140,7 +140,7 @@ describe("cost rollup trigger", () => {
     await addCostMicros(grandchild.id, 500_000);
 
     const rootAfter = await getRun(root.id);
-    expect(rootAfter?.costUsdActual).toBe(500_000);
+    expect(rootAfter?.costUsdActualMicros).toBe(500_000);
   });
 
   test("self-update on root row does not double-count", async () => {
@@ -153,6 +153,6 @@ describe("cost rollup trigger", () => {
     await addCostMicros(root.id, 1_000_000);
 
     const rootAfter = await getRun(root.id);
-    expect(rootAfter?.costUsdActual).toBe(1_000_000);
+    expect(rootAfter?.costUsdActualMicros).toBe(1_000_000);
   });
 });

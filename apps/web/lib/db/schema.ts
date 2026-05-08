@@ -368,8 +368,8 @@ export const agentRuns = pgTable(
       onDelete: "set null",
     }),
 
-    budgetUsdCap: integer("budget_usd_cap_micros").notNull().default(0),
-    costUsdActual: integer("cost_usd_actual_micros").notNull().default(0),
+    budgetUsdCapMicros: integer("budget_usd_cap_micros").notNull().default(0),
+    costUsdActualMicros: integer("cost_usd_actual_micros").notNull().default(0),
 
     status: text("status", {
       enum: [

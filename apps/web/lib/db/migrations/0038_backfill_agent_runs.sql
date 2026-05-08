@@ -41,11 +41,13 @@ SELECT
   wr.chat_id                                              AS chat_id,
   0                                                       AS budget_usd_cap_micros,
   0                                                       AS cost_usd_actual_micros,
+  -- workflow_runs.status enum is ('completed', 'aborted', 'failed'); no
+  -- ELSE clause — let the insert fail loudly if a new value appears, rather
+  -- than silently mapping unknown states to 'completed'.
   CASE wr.status
     WHEN 'completed' THEN 'completed'
     WHEN 'failed'    THEN 'failed'
     WHEN 'aborted'   THEN 'cancelled'
-    ELSE 'completed'
   END                                                     AS status,
   NULL                                                    AS blocked_reason,
   FALSE                                                   AS approval_required,
