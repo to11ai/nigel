@@ -11,7 +11,7 @@ import {
 import type { OpenAgentCallOptions } from "@nigel/agent";
 import { getWorkflowMetadata, getWritable } from "workflow";
 import { getRun } from "workflow/api";
-import { isRunsEnabled } from "@/lib/runs";
+import { isRunsEnabled } from "@/lib/runs/feature-flag";
 import { assistantFileLinkPrompt } from "@/lib/assistant-file-links";
 import { addLanguageModelUsage } from "./usage-utils";
 import { extractGatewayCost } from "./gateway-metadata";
@@ -120,7 +120,7 @@ const linkAgentRunWorkflowAndStart = async (
   const { eq } = await import("drizzle-orm");
   const { db } = await import("@/lib/db/client");
   const { agentRuns } = await import("@/lib/db/schema");
-  const { updateRunStatus } = await import("@/lib/runs");
+  const { updateRunStatus } = await import("@/lib/runs/repository");
 
   await db
     .update(agentRuns)
@@ -139,7 +139,7 @@ const tryUpdateAgentRunStatus = async (
   next: AgentRunTerminalStatus,
 ): Promise<void> => {
   "use step";
-  const { updateRunStatus } = await import("@/lib/runs");
+  const { updateRunStatus } = await import("@/lib/runs/repository");
   try {
     await updateRunStatus(agentRunId, next);
   } catch (err) {
