@@ -25,7 +25,7 @@ export async function getSessionFromReq(
 
   return {
     created: baSession.session.createdAt.getTime(),
-    authProvider: "vercel",
+    authProvider: "github",
     user: {
       id: baSession.user.id,
       username: extractUsername(baSession.user),
