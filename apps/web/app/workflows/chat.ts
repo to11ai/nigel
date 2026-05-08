@@ -128,11 +128,18 @@ const linkAgentRunWorkflowAndStart = async (
     .where(eq(agentRuns.id, agentRunId));
 
   // Workflow re-activation can call this step a second time after the run
-  // already reached `running`. Skip the no-op transition rather than catching
-  // a state-machine error (which would also mask genuinely problematic
-  // transitions like completed/failed → running).
+  // already reached `running` (skip silently). If the run reached a terminal
+  // state out-of-band (e.g., a prior conflict path cancelled it, or it was
+  // failed by the lifecycle hook), don't crash — the workflow body should
+  // exit on its own elsewhere; just no-op here. Anything else (pending,
+  // blocked, awaiting_approval) is a valid source for the running transition.
   const current = await getRun(agentRunId);
-  if (current?.status === "running") {
+  if (
+    current?.status === "running" ||
+    current?.status === "completed" ||
+    current?.status === "failed" ||
+    current?.status === "cancelled"
+  ) {
     return;
   }
   await updateRunStatus(agentRunId, "running");
