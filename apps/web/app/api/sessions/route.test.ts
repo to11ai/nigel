@@ -158,7 +158,7 @@ describe("/api/sessions POST vercel project linking", () => {
           repoOwner: "vercel-labs",
           repoName: "open-agents",
         },
-        "https://open-agents.dev/api/sessions",
+        "https://app.nigel.to11.ai/api/sessions",
       ),
     );
     const body = (await response.json()) as { error: string };

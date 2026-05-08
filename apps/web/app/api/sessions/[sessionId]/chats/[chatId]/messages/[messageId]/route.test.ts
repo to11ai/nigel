@@ -171,7 +171,7 @@ describe("/api/sessions/[sessionId]/chats/[chatId]/messages/[messageId]", () => 
 
     const response = await DELETE(
       new Request(
-        "https://open-agents.dev/api/sessions/session-1/chats/chat-1/messages/message-2",
+        "https://app.nigel.to11.ai/api/sessions/session-1/chats/chat-1/messages/message-2",
         {
           method: "DELETE",
         },
