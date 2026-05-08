@@ -83,6 +83,13 @@ const authAllowedHosts = getAllowedAuthHosts();
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
+  logger: {
+    level: "debug",
+    log: (level, message, ...args) => {
+      // biome-ignore lint/suspicious/noConsole: temporary debug logging for Phase 0 sign-in issue
+      console.log(`[better-auth:${level}]`, message, ...args);
+    },
+  },
   baseURL: {
     allowedHosts: authAllowedHosts,
     ...(authBaseURLFallback ? { fallback: authBaseURLFallback } : {}),
