@@ -381,7 +381,7 @@ describe("/api/chat route", () => {
 
     expect(response.status).toBe(403);
     expect(body.error).toBe(
-      "This hosted demo has a 5 message limit. Deploy your own copy to unlock the full Open Agents template.",
+      "This hosted demo has a 5 message limit. Deploy your own copy to unlock the full Nigel template.",
     );
     expect(startCalls).toHaveLength(0);
   });

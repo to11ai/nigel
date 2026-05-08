@@ -36,7 +36,7 @@ export async function generateMetadata({
   if (!profile) {
     return {
       title: "Public profile",
-      description: "Public Open Agents usage profile.",
+      description: "Public Nigel usage profile.",
     };
   }
 
@@ -315,7 +315,7 @@ export default async function PublicUsagePage({
             href="https://open-agents.dev"
             className="text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
-            Open Agents ↗
+            Nigel ↗
           </a>
         </div>
       </div>

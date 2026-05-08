@@ -7,10 +7,10 @@ export function LandingFooter() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4">
           <div className="px-6 pt-14 md:px-10 md:py-18">
             <div className="font-mono text-xs uppercase tracking-widest text-(--l-fg-3)">
-              Open Agents
+              Nigel
             </div>
             <div className="mt-3 text-sm text-(--l-fg-2)">
-              Open Agents for
+              Nigel for
               <br />
               shipping code.
             </div>

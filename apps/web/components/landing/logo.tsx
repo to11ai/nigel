@@ -5,7 +5,7 @@ export function Logo({ className }: { readonly className?: string }) {
       viewBox="0 0 118 18"
       fill="none"
       className={className}
-      aria-label="Open Agents"
+      aria-label="Nigel"
     >
       <path
         fill="currentColor"

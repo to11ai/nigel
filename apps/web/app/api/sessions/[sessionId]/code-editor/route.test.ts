@@ -260,7 +260,7 @@ describe("/api/sessions/[sessionId]/code-editor", () => {
     };
     const { POST } = await routeModulePromise;
     const expectedError =
-      "The code editor is disabled in the hosted demo. Deploy your own copy to unlock the full Open Agents template.";
+      "The code editor is disabled in the hosted demo. Deploy your own copy to unlock the full Nigel template.";
 
     const response = await POST(
       new Request(
