@@ -9,7 +9,6 @@ export {
 
 export {
   type AgentRun,
-  DEFAULT_MAX_CHILDREN,
   MAX_DEPTH,
   type SandboxPolicy,
   sandboxPolicySchema,

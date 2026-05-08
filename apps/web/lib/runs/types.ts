@@ -29,4 +29,3 @@ export type SandboxPolicy = z.infer<typeof sandboxPolicySchema>;
 export type AgentRun = InferSelectModel<typeof agentRuns>;
 
 export const MAX_DEPTH = 5;
-export const DEFAULT_MAX_CHILDREN = 10;

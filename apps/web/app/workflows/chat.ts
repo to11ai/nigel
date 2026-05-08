@@ -120,27 +120,22 @@ const linkAgentRunWorkflowAndStart = async (
   const { eq } = await import("drizzle-orm");
   const { db } = await import("@/lib/db/client");
   const { agentRuns } = await import("@/lib/db/schema");
-  const { updateRunStatus } = await import("@/lib/runs/repository");
+  const { getRun, updateRunStatus } = await import("@/lib/runs/repository");
 
   await db
     .update(agentRuns)
     .set({ workflowRunId })
     .where(eq(agentRuns.id, agentRunId));
-  try {
-    await updateRunStatus(agentRunId, "running");
-  } catch (err) {
-    // Workflow may re-activate after it's already running — that case
-    // raises an "invalid run status transition" error from the state
-    // machine and is benign. Anything else (DB outage, schema mismatch,
-    // etc.) must propagate so the run isn't stranded in `pending`.
-    if (
-      err instanceof Error &&
-      err.message.includes("invalid run status transition")
-    ) {
-      return;
-    }
-    throw err;
+
+  // Workflow re-activation can call this step a second time after the run
+  // already reached `running`. Skip the no-op transition rather than catching
+  // a state-machine error (which would also mask genuinely problematic
+  // transitions like completed/failed → running).
+  const current = await getRun(agentRunId);
+  if (current?.status === "running") {
+    return;
   }
+  await updateRunStatus(agentRunId, "running");
 };
 
 type AgentRunTerminalStatus = "completed" | "failed" | "cancelled";
