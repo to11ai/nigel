@@ -74,6 +74,13 @@ envVar("BETTER_AUTH_SECRET", config.requireSecret("betterAuthSecret"), {
   sensitive: true,
 });
 
+// Better Auth's allowed-hosts list pulls from BETTER_AUTH_URL +
+// VERCEL_PROJECT_PRODUCTION_URL. Without these the custom domain isn't on the
+// trust list and the OAuth callback silently drops the session.
+envVar("BETTER_AUTH_URL", `https://${appDomain}`);
+envVar("VERCEL_PROJECT_PRODUCTION_URL", appDomain);
+envVar("NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", appDomain);
+
 envVar("NEXT_PUBLIC_GITHUB_CLIENT_ID", config.require("githubClientId"));
 envVar("GITHUB_CLIENT_SECRET", config.requireSecret("githubClientSecret"), {
   sensitive: true,
