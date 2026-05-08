@@ -333,6 +333,166 @@ export type NewWorkflowRunStep = typeof workflowRunSteps.$inferInsert;
 export type GitHubInstallation = typeof githubInstallations.$inferSelect;
 export type NewGitHubInstallation = typeof githubInstallations.$inferInsert;
 
+// agent_runs — the unifying execution primitive (Phase 1).
+// One row per agent execution: top-level (chat, linear-triggered, cron) or
+// chained sub-agent. Tree structure via parent_run_id; root_run_id is
+// denormalized for cost-rollup queries.
+export const agentRuns = pgTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    parentRunId: text("parent_run_id"),
+    rootRunId: text("root_run_id").notNull(),
+    depth: integer("depth").notNull().default(0),
+
+    triggerSource: text("trigger_source", {
+      enum: ["chat", "linear", "chained", "cron"],
+    }).notNull(),
+    triggerRef: text("trigger_ref"),
+
+    specialistId: text("specialist_id"),
+    sandboxPolicy: text("sandbox_policy", {
+      enum: ["inherit", "fresh", "fresh_clean"],
+    })
+      .notNull()
+      .default("inherit"),
+
+    humanOwnerId: text("human_owner_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    repoRef: text("repo_ref"),
+    sandboxId: text("sandbox_id"),
+    workflowRunId: text("workflow_run_id"),
+    chatId: text("chat_id").references(() => chats.id, {
+      onDelete: "set null",
+    }),
+
+    budgetUsdCap: integer("budget_usd_cap_micros").notNull().default(0),
+    costUsdActual: integer("cost_usd_actual_micros").notNull().default(0),
+
+    status: text("status", {
+      enum: [
+        "pending",
+        "running",
+        "blocked",
+        "awaiting_approval",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    blockedReason: text("blocked_reason"),
+
+    approvalRequired: boolean("approval_required").notNull().default(false),
+    approvedBy: text("approved_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at"),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    startedAt: timestamp("started_at"),
+    endedAt: timestamp("ended_at"),
+  },
+  (table) => [
+    index("agent_runs_parent_idx").on(table.parentRunId),
+    index("agent_runs_root_idx").on(table.rootRunId),
+    index("agent_runs_owner_idx").on(table.humanOwnerId),
+    index("agent_runs_chat_idx").on(table.chatId),
+    index("agent_runs_workflow_idx").on(table.workflowRunId),
+    index("agent_runs_status_idx").on(table.status),
+    index("agent_runs_trigger_idx").on(table.triggerSource),
+  ],
+);
+
+// run_messages — chat/conversation messages owned by a Run.
+// In Phase 1 the chat path keeps writing to chat_messages; this table is the
+// landing zone for messages emitted by sub-agents and future trigger sources.
+export const runMessages = pgTable(
+  "run_messages",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+    parts: jsonb("parts").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("run_messages_run_idx").on(table.runId)],
+);
+
+// run_tool_calls — record of every tool invocation under a Run, with its
+// cost and outcome. Phase 1 writes are limited to the new chat path when
+// the feature flag is on; Phase 2+ adds the dispatch_specialist tool.
+export const runToolCalls = pgTable(
+  "run_tool_calls",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    toolKind: text("tool_kind").notNull(),
+    toolName: text("tool_name").notNull(),
+    input: jsonb("input"),
+    output: jsonb("output"),
+    success: boolean("success"),
+    costUsdMicros: integer("cost_usd_micros").notNull().default(0),
+    latencyMs: integer("latency_ms"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("run_tool_calls_run_idx").on(table.runId)],
+);
+
+// run_artifacts — files, screenshots, logs, pulumi previews, etc. produced
+// by a Run. Phase 1 is the table only; producers come in later phases.
+export const runArtifacts = pgTable(
+  "run_artifacts",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    rootRunId: text("root_run_id").notNull(),
+    kind: text("kind", {
+      enum: ["screenshot", "html", "log", "file", "pulumi_preview"],
+    }).notNull(),
+    path: text("path").notNull(),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("run_artifacts_run_idx").on(table.runId),
+    index("run_artifacts_root_idx").on(table.rootRunId),
+    index("run_artifacts_kind_idx").on(table.kind),
+  ],
+);
+
+// webhook_events — idempotency log for inbound webhooks (Linear in Phase 6,
+// reserved here so the schema is stable). Unique constraint on (source,
+// external_id) prevents double-processing.
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(),
+    externalId: text("external_id").notNull(),
+    receivedAt: timestamp("received_at").defaultNow().notNull(),
+    processedAt: timestamp("processed_at"),
+    runId: text("run_id").references(() => agentRuns.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    uniqueIndex("webhook_events_source_external_idx").on(
+      table.source,
+      table.externalId,
+    ),
+  ],
+);
+
 // User preferences for settings
 export const userPreferences = pgTable("user_preferences", {
   id: text("id").primaryKey(),
