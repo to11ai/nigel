@@ -1,0 +1,4 @@
+node_modules/
+sdks/*/node_modules/
+sdks/*/bin/
+.pulumi/
