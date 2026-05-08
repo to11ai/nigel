@@ -1,0 +1,17 @@
+config:
+  pulumi:tags:
+    Environment: production
+  nigel-vercel:projectName: nigel-prod
+  nigel-vercel:appDomain: app.nigel.to11.ai
+  nigel-vercel:neonStackRef: to11/nigel-data-neon/prod
+  vercel:team: terramate
+  # All required config + secrets are set in Task 18 before the first `pulumi up`:
+  #   pulumi config set -s to11/nigel-vercel/prod --secret vercel:apiToken <token>
+  #   pulumi config set -s to11/nigel-vercel/prod nigel-vercel:teamId team_<ID>
+  #   pulumi config set -s to11/nigel-vercel/prod --secret nigel-vercel:betterAuthSecret <generated 32-byte base64>
+  #   pulumi config set -s to11/nigel-vercel/prod nigel-vercel:githubClientId <client_id>
+  #   pulumi config set -s to11/nigel-vercel/prod --secret nigel-vercel:githubClientSecret <client_secret>
+  #   pulumi config set -s to11/nigel-vercel/prod nigel-vercel:githubAppId <app_id>
+  #   pulumi config set -s to11/nigel-vercel/prod --secret nigel-vercel:githubAppPrivateKey <pem>
+  #   pulumi config set -s to11/nigel-vercel/prod nigel-vercel:githubAppSlug <app_slug>
+  #   pulumi config set -s to11/nigel-vercel/prod --secret nigel-vercel:githubWebhookSecret <secret>
