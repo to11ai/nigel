@@ -75,8 +75,11 @@ export async function updateRunStatus(
   if (next === "completed" || next === "failed" || next === "cancelled") {
     patch.endedAt = now;
   }
-  if (next === "blocked" && opts?.blockedReason) {
-    patch.blockedReason = opts.blockedReason;
+  if (next === "blocked") {
+    patch.blockedReason = opts?.blockedReason ?? null;
+  } else if (current.status === "blocked") {
+    // Clear the stale reason when leaving blocked.
+    patch.blockedReason = null;
   }
 
   await db.update(agentRuns).set(patch).where(eq(agentRuns.id, id));
