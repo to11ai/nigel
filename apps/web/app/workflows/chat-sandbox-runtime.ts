@@ -10,8 +10,13 @@ import { getRun } from "workflow/api";
 import type { WebAgentWorkspaceStatusData } from "@/app/types";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
+import {
+  buildActiveLifecycleUpdate,
+  getNextLifecycleVersion,
+} from "@/lib/sandbox/lifecycle";
+import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
 import { provisionSessionSandbox } from "@/lib/sandbox/provision-session-sandbox";
-import { isSandboxActive } from "@/lib/sandbox/utils";
+import { hasPausedSandboxState, isSandboxActive } from "@/lib/sandbox/utils";
 import { getSandboxSkillDirectories } from "@/lib/skills/directories";
 import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";
 
@@ -138,6 +143,42 @@ async function resolveActiveSessionSandbox(session: SessionRecord) {
   return { sandbox, sandboxState };
 }
 
+async function resumePausedSessionSandbox(session: SessionRecord) {
+  if (
+    session.lifecycleState === "provisioning" ||
+    !hasPausedSandboxState(session.sandboxState)
+  ) {
+    return null;
+  }
+
+  const sandbox = await connectSandbox(session.sandboxState, {
+    ports: DEFAULT_SANDBOX_PORTS,
+    resume: true,
+  });
+  const rawSandboxState = sandbox.getState?.() as SandboxState | undefined;
+  const sandboxState = rawSandboxState ?? session.sandboxState;
+
+  const updatedSession = await updateSession(session.id, {
+    sandboxState,
+    snapshotUrl: null,
+    snapshotCreatedAt: null,
+    lifecycleVersion: getNextLifecycleVersion(session.lifecycleVersion),
+    ...buildActiveLifecycleUpdate(sandboxState),
+  });
+
+  if (!updatedSession) {
+    await sandbox.stop();
+    throw new Error("Session not found");
+  }
+
+  kickSandboxLifecycleWorkflow({
+    sessionId: session.id,
+    reason: "snapshot-restored",
+  });
+
+  return { sandbox, sandboxState, session: updatedSession };
+}
+
 export async function resolveChatSandboxRuntime(params: {
   userId: string;
   sessionId: string;
@@ -182,6 +223,27 @@ export async function resolveChatSandboxRuntime(params: {
       sessionTitle: runnableSession.title,
       repoOwner: runnableSession.repoOwner ?? undefined,
       repoName: runnableSession.repoName ?? undefined,
+    };
+  }
+
+  const resumedSandbox = await resumePausedSessionSandbox(runnableSession);
+  if (resumedSandbox) {
+    const skills = await loadSessionSkills({
+      sessionId: params.sessionId,
+      sandboxState: resumedSandbox.sandboxState,
+      sandbox: resumedSandbox.sandbox,
+    });
+
+    return {
+      sandboxState: resumedSandbox.sandboxState,
+      workingDirectory: resumedSandbox.sandbox.workingDirectory,
+      currentBranch: resumedSandbox.sandbox.currentBranch,
+      environmentDetails: resumedSandbox.sandbox.environmentDetails,
+      skills,
+      didSetupWorkspace,
+      sessionTitle: resumedSandbox.session.title,
+      repoOwner: resumedSandbox.session.repoOwner ?? undefined,
+      repoName: resumedSandbox.session.repoName ?? undefined,
     };
   }
 

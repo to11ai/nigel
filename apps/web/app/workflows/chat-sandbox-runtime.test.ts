@@ -8,11 +8,12 @@ const updateCalls: Array<{
   sessionId: string;
   patch: Record<string, unknown>;
 }> = [];
+const lifecycleKickCalls: Array<{ sessionId: string; reason: string }> = [];
 let returnValueAwaited = false;
 let runExists = true;
 let runReturnValueError: Error | null = null;
 
-type TestLifecycleState = "provisioning" | "active" | "archived";
+type TestLifecycleState = "provisioning" | "active" | "hibernated" | "archived";
 type TestSessionRecord = {
   id: string;
   userId: string;
@@ -20,6 +21,7 @@ type TestSessionRecord = {
   status: "running" | "archived";
   lifecycleState: TestLifecycleState;
   sandboxProvisioningRunId: string | null;
+  lifecycleVersion: number;
   sandboxState: {
     type: "vercel";
     sandboxName: string;
@@ -42,6 +44,7 @@ let sessionRecord: TestSessionRecord = {
   status: "running" as const,
   lifecycleState: "provisioning" as TestLifecycleState,
   sandboxProvisioningRunId: "provision-run-1",
+  lifecycleVersion: 0,
   sandboxState: { type: "vercel" as const, sandboxName: "session_session-1" },
   repoOwner: null as string | null,
   repoName: null as string | null,
@@ -106,6 +109,27 @@ mock.module("@/lib/sandbox/provision-session-sandbox", () => ({
   provisionSessionSandbox: provisionSessionSandboxMock,
 }));
 
+mock.module("@/lib/sandbox/lifecycle", () => ({
+  buildActiveLifecycleUpdate: () => ({
+    lifecycleState: "active",
+    lifecycleError: null,
+    lastActivityAt: new Date("2025-01-01T00:00:00.000Z"),
+    hibernateAfter: new Date("2025-01-01T00:30:00.000Z"),
+    sandboxExpiresAt: new Date("2025-01-01T01:00:00.000Z"),
+  }),
+  getNextLifecycleVersion: (currentVersion: number | null | undefined) =>
+    (currentVersion ?? 0) + 1,
+}));
+
+mock.module("@/lib/sandbox/lifecycle-kick", () => ({
+  kickSandboxLifecycleWorkflow: (input: {
+    sessionId: string;
+    reason: string;
+  }) => {
+    lifecycleKickCalls.push(input);
+  },
+}));
+
 mock.module("@open-agents/sandbox", () => ({
   connectSandbox: connectSandboxMock,
 }));
@@ -129,6 +153,7 @@ describe("resolveChatSandboxRuntime provisioning coordination", () => {
   beforeEach(() => {
     writtenChunks.length = 0;
     updateCalls.length = 0;
+    lifecycleKickCalls.length = 0;
     returnValueAwaited = false;
     runExists = true;
     runReturnValueError = null;
@@ -141,6 +166,7 @@ describe("resolveChatSandboxRuntime provisioning coordination", () => {
       status: "running",
       lifecycleState: "provisioning",
       sandboxProvisioningRunId: "provision-run-1",
+      lifecycleVersion: 0,
       sandboxState: { type: "vercel", sandboxName: "session_session-1" },
       repoOwner: null,
       repoName: null,
@@ -218,5 +244,59 @@ describe("resolveChatSandboxRuntime provisioning coordination", () => {
     );
     expect(result.workingDirectory).toBe("/vercel/sandbox");
     expect(result.didSetupWorkspace).toBe(false);
+  });
+
+  test("resumes hibernated sessions without using provisioning-only update path", async () => {
+    sessionRecord = {
+      ...sessionRecord,
+      lifecycleState: "hibernated",
+      sandboxProvisioningRunId: null,
+      lifecycleVersion: 7,
+      sandboxState: {
+        type: "vercel",
+        sandboxName: "session_session-1",
+      },
+    };
+    const resumedState = {
+      ...sessionRecord.sandboxState,
+      expiresAt: Date.now() + 60_000,
+    };
+    connectSandboxMock.mockImplementationOnce(async () => ({
+      ...sandbox,
+      getState: () => resumedState,
+      stop: mock(async () => {}),
+    }));
+    const { resolveChatSandboxRuntime } = await runtimeModulePromise;
+
+    const result = await resolveChatSandboxRuntime({
+      userId: "user-1",
+      sessionId: "session-1",
+      assistantId: "assistant-1",
+    });
+
+    expect(provisionSessionSandboxMock).not.toHaveBeenCalled();
+    expect(connectSandboxMock).toHaveBeenCalledWith(
+      { type: "vercel", sandboxName: "session_session-1" },
+      {
+        ports: [3000, 5173, 4321, 8000],
+        resume: true,
+      },
+    );
+    expect(updateCalls[0]).toMatchObject({
+      sessionId: "session-1",
+      patch: {
+        sandboxState: resumedState,
+        snapshotUrl: null,
+        snapshotCreatedAt: null,
+        lifecycleVersion: 8,
+        lifecycleState: "active",
+        lifecycleError: null,
+      },
+    });
+    expect(lifecycleKickCalls).toEqual([
+      { sessionId: "session-1", reason: "snapshot-restored" },
+    ]);
+    expect(result.sandboxState).toBe(resumedState);
+    expect(result.didSetupWorkspace).toBe(true);
   });
 });
