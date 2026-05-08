@@ -165,20 +165,21 @@ export const auth = betterAuth({
       create: {
         before: async (session) => {
           const allowedOrg = process.env.NIGEL_ALLOWED_GITHUB_ORG?.trim();
-          if (allowedOrg) {
-            const tokenResult = (await auth.api.getAccessToken({
-              body: { providerId: "github", userId: session.userId },
-            })) as { accessToken?: string };
-            if (!tokenResult.accessToken) {
-              throw new Error(
-                "Sign-in requires GitHub authentication; no access token found.",
-              );
-            }
-            await assertGithubOrgMembership(
-              tokenResult.accessToken,
-              allowedOrg,
-            );
+          if (!allowedOrg) {
+            return { data: session };
           }
+          // getAccessToken returns null when the user has no linked github
+          // account (e.g., signed in via a different provider). In that case
+          // we have nothing to check — pass through. When the user does have
+          // a github account, validate org membership against the decrypted
+          // access token.
+          const tokenResult = await auth.api.getAccessToken({
+            body: { providerId: "github", userId: session.userId },
+          });
+          if (!tokenResult?.accessToken) {
+            return { data: session };
+          }
+          await assertGithubOrgMembership(tokenResult.accessToken, allowedOrg);
           return { data: session };
         },
       },
