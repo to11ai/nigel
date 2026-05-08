@@ -156,18 +156,30 @@ export const auth = betterAuth({
         }),
       },
     },
-    account: {
+    session: {
+      // Runs on every sign-in (each fresh OAuth completion creates a new
+      // session row). account.create.before would only fire on the user's
+      // very first sign-in — once an account row exists, subsequent logins
+      // would skip the check, allowing a user removed from the org to keep
+      // signing in.
       create: {
-        before: async (account) => {
+        before: async (session) => {
           const allowedOrg = process.env.NIGEL_ALLOWED_GITHUB_ORG?.trim();
-          if (
-            allowedOrg &&
-            account.providerId === "github" &&
-            account.accessToken
-          ) {
-            await assertGithubOrgMembership(account.accessToken, allowedOrg);
+          if (allowedOrg) {
+            const tokenResult = (await auth.api.getAccessToken({
+              body: { providerId: "github", userId: session.userId },
+            })) as { accessToken?: string };
+            if (!tokenResult.accessToken) {
+              throw new Error(
+                "Sign-in requires GitHub authentication; no access token found.",
+              );
+            }
+            await assertGithubOrgMembership(
+              tokenResult.accessToken,
+              allowedOrg,
+            );
           }
-          return { data: account };
+          return { data: session };
         },
       },
     },
