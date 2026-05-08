@@ -21,7 +21,7 @@
     "@octokit/rest": "^22.0.1",
     "@nigel/agent": "workspace:*",
     "@nigel/sandbox": "workspace:*",
-    "@open-agents/shared": "workspace:*",
+    "@nigel/shared": "workspace:*",
     "@pierre/diffs": "^1.0.10",
     "@pierre/trees": "^1.0.0-beta.3",
     "@radix-ui/react-avatar": "^1.1.11",
