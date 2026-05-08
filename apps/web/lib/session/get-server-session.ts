@@ -25,7 +25,7 @@ export const getServerSession = cache(
 
     return {
       created: baSession.session.createdAt.getTime(),
-      authProvider: "vercel",
+      authProvider: "github",
       user: {
         id: baSession.user.id,
         username: extractUsername(baSession.user),

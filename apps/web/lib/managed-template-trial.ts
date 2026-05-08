@@ -1,6 +1,13 @@
 import type { Session } from "@/lib/session/types";
 
 const ALLOWED_VERCEL_EMAIL_DOMAIN = "vercel.com";
+// Upstream feature flag: the managed-template trial path activates only for
+// requests served from open-agents.dev (the upstream hosted demo). Nigel's prod
+// deploy is app.nigel.to11.ai, which never matches — so trial limits never
+// apply to Nigel users. With Vercel OAuth removed, every session has
+// authProvider === "github", so the trial-user check is also doubly disabled
+// (host doesn't match AND provider isn't "vercel"). Stripping this feature
+// entirely is deferred to a later phase.
 const MANAGED_TEMPLATE_HOSTS = new Set([
   "open-agents.dev",
   "www.open-agents.dev",
@@ -10,13 +17,13 @@ const LOCAL_DEVELOPMENT_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 export const MANAGED_TEMPLATE_TRIAL_MESSAGE_LIMIT = 5;
 export const MANAGED_TEMPLATE_TRIAL_SESSION_LIMIT = 1;
 export const MANAGED_TEMPLATE_TRIAL_MESSAGE_LIMIT_ERROR =
-  "This hosted demo has a 5 message limit. Deploy your own copy to unlock the full Open Agents template.";
+  "This hosted demo has a 5 message limit. Deploy your own copy to unlock the full Nigel template.";
 export const MANAGED_TEMPLATE_TRIAL_SESSION_LIMIT_ERROR =
-  "This hosted demo includes 1 trial session. Deploy your own copy to unlock the full Open Agents template.";
+  "This hosted demo includes 1 trial session. Deploy your own copy to unlock the full Nigel template.";
 export const MANAGED_TEMPLATE_TRIAL_DELETE_MESSAGE_ERROR =
   "Message deletion is disabled in the hosted demo. Deploy your own copy to unlock full controls.";
 export const MANAGED_TEMPLATE_TRIAL_CODE_EDITOR_ERROR =
-  "The code editor is disabled in the hosted demo. Deploy your own copy to unlock the full Open Agents template.";
+  "The code editor is disabled in the hosted demo. Deploy your own copy to unlock the full Nigel template.";
 export const MANAGED_TEMPLATE_TRIAL_GITHUB_SESSION_ERROR =
   "GitHub-backed sessions are disabled in the hosted demo. Deploy your own copy to unlock repository support, or start a new chat without a repository.";
 

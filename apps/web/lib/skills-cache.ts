@@ -1,5 +1,5 @@
-import type { SkillMetadata, SkillOptions } from "@open-agents/agent";
-import type { SandboxState } from "@open-agents/sandbox";
+import type { SkillMetadata, SkillOptions } from "@nigel/agent";
+import type { SandboxState } from "@nigel/sandbox";
 import { createRedisClient, isRedisConfigured } from "./redis";
 
 const SKILLS_CACHE_PREFIX = "skills:v1";

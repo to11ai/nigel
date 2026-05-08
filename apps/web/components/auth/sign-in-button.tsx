@@ -1,22 +1,9 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Github, Loader2 } from "lucide-react";
 import { useState, type ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth/client";
-
-function VercelIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path d="M12 1L24 22H0L12 1Z" />
-    </svg>
-  );
-}
 
 function resolveRedirectPath(value: string): string {
   if (value.startsWith("/") && !value.startsWith("//")) {
@@ -56,7 +43,7 @@ export function SignInButton({
 
     setIsLoading(true);
     authClient.signIn.social({
-      provider: "vercel",
+      provider: "github",
       callbackURL: redirectPath,
     });
   }
@@ -68,8 +55,8 @@ export function SignInButton({
       disabled={disabled || isLoading}
       onClick={handleSignIn}
     >
-      {isLoading ? <Loader2 className="animate-spin" /> : <VercelIcon />}
-      {isLoading ? "Signing in..." : "Sign in with Vercel"}
+      {isLoading ? <Loader2 className="animate-spin" /> : <Github />}
+      {isLoading ? "Signing in..." : "Sign in with GitHub"}
     </Button>
   );
 }

@@ -3,7 +3,7 @@ import { PreferencesSection } from "../preferences-section";
 
 export const metadata: Metadata = {
   title: "Preferences",
-  description: "Adjust Open Agents preferences and behavior.",
+  description: "Adjust Nigel preferences and behavior.",
 };
 
 export default function PreferencesPage() {

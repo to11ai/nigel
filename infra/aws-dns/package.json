@@ -1,0 +1,22 @@
+{
+  "name": "@nigel-infra/aws-dns",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "pulumi:preview": "pulumi preview",
+    "pulumi:up": "pulumi up --yes",
+    "destroy": "pulumi destroy --yes"
+  },
+  "dependencies": {
+    "@pulumi/aws": "^7.26.0",
+    "@pulumi/pulumi": "^3.231.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

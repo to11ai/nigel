@@ -1,10 +1,11 @@
 {
-  "name": "open-agents",
+  "name": "nigel",
   "private": true,
   "workspaces": {
     "packages": [
       "apps/*",
-      "packages/*"
+      "packages/*",
+      "infra/*"
     ],
     "catalog": {
       "ai": "^6.0.165",

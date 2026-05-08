@@ -1,0 +1,22 @@
+{
+  "name": "@nigel-infra/meta",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "pulumi:preview": "pulumi preview",
+    "pulumi:up": "pulumi up --yes"
+  },
+  "dependencies": {
+    "@pulumi/auto-deploy": "^0.0.4",
+    "@pulumi/pulumi": "^3.231.0",
+    "@pulumi/pulumiservice": "^0.36.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}

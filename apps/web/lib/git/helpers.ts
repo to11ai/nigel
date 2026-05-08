@@ -1,5 +1,5 @@
 import { generateText } from "ai";
-import { gateway } from "@open-agents/agent";
+import { gateway } from "@nigel/agent";
 
 export const SAFE_BRANCH_PATTERN = /^[\w\-/.]+$/;
 

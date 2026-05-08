@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { AskUserQuestionInput } from "@open-agents/agent";
+import type { AskUserQuestionInput } from "@nigel/agent";
 
 type Question = AskUserQuestionInput["questions"][number];
 

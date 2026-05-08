@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { connectSandbox } from "@open-agents/sandbox";
+import { connectSandbox } from "@nigel/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionWithSandboxGuard,

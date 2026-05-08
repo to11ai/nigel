@@ -8,7 +8,7 @@ import {
   getShareByIdCached,
 } from "@/lib/db/sessions-cache";
 
-export const alt = "Shared Open Agents session";
+export const alt = "Shared Nigel session";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -187,7 +187,7 @@ export default async function Image({
                 color: "rgba(255, 255, 255, 0.45)",
               }}
             >
-              Open Agents
+              Nigel
             </span>
           </div>
 
@@ -428,7 +428,7 @@ function fallbackImage() {
           'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
     >
-      Shared Open Agents session
+      Shared Nigel session
     </div>,
     { ...size },
   );

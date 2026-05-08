@@ -144,7 +144,7 @@ mock.module("@/app/api/sessions/_lib/session-context", () => ({
   requireOwnedSessionWithSandboxGuard: requireOwnedSessionWithSandboxGuardMock,
 }));
 
-mock.module("@open-agents/sandbox", () => ({
+mock.module("@nigel/sandbox", () => ({
   connectSandbox: connectSandboxMock,
 }));
 
@@ -260,7 +260,7 @@ describe("/api/sessions/[sessionId]/code-editor", () => {
     };
     const { POST } = await routeModulePromise;
     const expectedError =
-      "The code editor is disabled in the hosted demo. Deploy your own copy to unlock the full Open Agents template.";
+      "The code editor is disabled in the hosted demo. Deploy your own copy to unlock the full Nigel template.";
 
     const response = await POST(
       new Request(

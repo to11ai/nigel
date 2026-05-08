@@ -1,7 +1,7 @@
 "use client";
 
-import type { AskUserQuestionInput } from "@open-agents/agent";
-import { formatTokens } from "@open-agents/shared";
+import type { AskUserQuestionInput } from "@nigel/agent";
+import { formatTokens } from "@nigel/shared";
 import {
   isReasoningUIPart,
   isToolUIPart,

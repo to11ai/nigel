@@ -1,0 +1,8 @@
+name: nigel-vercel
+runtime:
+  name: nodejs
+  options:
+    packagemanager: bun
+    nodeargs: "--import tsx"
+description: Pulumi project for Nigel's Vercel project, domain, and env vars (prod-only)
+main: index.ts

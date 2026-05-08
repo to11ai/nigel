@@ -8,7 +8,7 @@ import { GetStartedFlow } from "./get-started-flow";
 
 export const metadata: Metadata = {
   title: "Get Started",
-  description: "Set up your Open Agents workspace.",
+  description: "Set up your Nigel workspace.",
 };
 
 interface GetStartedPageProps {

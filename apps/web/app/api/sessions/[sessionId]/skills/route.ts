@@ -1,5 +1,5 @@
-import { discoverSkills } from "@open-agents/agent";
-import { connectSandbox } from "@open-agents/sandbox";
+import { discoverSkills } from "@nigel/agent";
+import { connectSandbox } from "@nigel/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,

@@ -17,7 +17,7 @@ import { GitHubReconnectGate } from "@/components/github-reconnect-gate";
 import { authClient } from "@/lib/auth/client";
 import { FetchError } from "@/lib/swr";
 
-const THEME_STORAGE_KEY = "open-agents-theme";
+const THEME_STORAGE_KEY = "nigel-theme";
 const DARK_MODE_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
 export type ThemePreference = "light" | "dark" | "system";

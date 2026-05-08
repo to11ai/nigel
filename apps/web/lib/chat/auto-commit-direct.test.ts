@@ -46,11 +46,11 @@ mock.module("ai", () => ({
   generateText: async () => generateTextResult,
 }));
 
-mock.module("@open-agents/agent", () => ({
+mock.module("@nigel/agent", () => ({
   gateway: () => "mock-model",
 }));
 
-mock.module("@open-agents/sandbox", () => ({
+mock.module("@nigel/sandbox", () => ({
   connectSandbox: async () => ({}),
   hasUncommittedChanges: async () => hasChanges,
   stageAll: async () => {

@@ -1,4 +1,4 @@
-import { connectSandbox, type SandboxState } from "@open-agents/sandbox";
+import { connectSandbox, type SandboxState } from "@nigel/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,

@@ -5,6 +5,7 @@
   "ignorePatterns": [
     ".agents/skills/**",
     "apps/web/components/ui/**",
+    "infra/**/sdks/**",
     "**/*.md",
   ],
   "arrowParens": "always",

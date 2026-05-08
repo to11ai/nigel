@@ -151,7 +151,7 @@ mock.module("@/lib/chat/create-cancelable-readable-stream", () => ({
   createCancelableReadableStream: (stream: ReadableStream) => stream,
 }));
 
-mock.module("@open-agents/agent", () => ({
+mock.module("@nigel/agent", () => ({
   discoverSkills: async (_sandbox: unknown, skillDirs: string[]) => {
     discoverSkillDirsCalls.push(skillDirs);
     return [];
@@ -159,7 +159,7 @@ mock.module("@open-agents/agent", () => ({
   gateway: () => "mock-model",
 }));
 
-mock.module("@open-agents/sandbox", () => ({
+mock.module("@nigel/sandbox", () => ({
   connectSandbox: async () => ({
     workingDirectory: "/vercel/sandbox",
     exec: async () => ({ success: true, stdout: "", stderr: "" }),
@@ -381,7 +381,7 @@ describe("/api/chat route", () => {
 
     expect(response.status).toBe(403);
     expect(body.error).toBe(
-      "This hosted demo has a 5 message limit. Deploy your own copy to unlock the full Open Agents template.",
+      "This hosted demo has a 5 message limit. Deploy your own copy to unlock the full Nigel template.",
     );
     expect(startCalls).toHaveLength(0);
   });

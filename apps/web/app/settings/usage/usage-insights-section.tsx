@@ -1,4 +1,4 @@
-import { formatTokens } from "@open-agents/shared/lib/tool-state";
+import { formatTokens } from "@nigel/shared/lib/tool-state";
 import type { UsageInsights } from "@/lib/usage/types";
 
 interface UsageInsightsSectionProps {
