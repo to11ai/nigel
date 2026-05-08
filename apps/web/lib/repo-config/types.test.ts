@@ -1,0 +1,71 @@
+import { describe, expect, test } from "bun:test";
+import { RepoConfigSchema } from "./types";
+
+describe("RepoConfigSchema", () => {
+  test("accepts a minimal config", () => {
+    const parsed = RepoConfigSchema.parse({ version: 1 });
+    expect(parsed.version).toBe(1);
+  });
+
+  test("accepts the full spec example", () => {
+    const parsed = RepoConfigSchema.parse({
+      version: 1,
+      setup: ["bun install --frozen-lockfile"],
+      dev_server: { command: "bun run dev", port: 3000 },
+      turbo: { enabled: true, affected: true, task_map: { lint: "lint" } },
+      checks: {
+        lint: { command: "bun run lint" },
+        e2e_test: {
+          command: "bun run test:e2e",
+          local_stack_profile: "bare",
+          needs: ["dev_server"],
+        },
+      },
+      local_stack: {
+        compose_file: "docker-compose.yaml",
+        wait_for: [{ service: "db", cmd: "pg_isready -h db" }],
+        profiles: {
+          bare: { description: "x", post_up: ["bun run db:migrate"] },
+        },
+        default_profile: "bare",
+      },
+      routes_for_visual_prover: [{ path: "/", auth: "none" }],
+      frontend_globs: ["apps/web/**/*.tsx"],
+      monorepo: { workspaces: ["apps/web"], default_workspace: "apps/web" },
+    });
+    expect(parsed.checks?.e2e_test?.local_stack_profile).toBe("bare");
+  });
+
+  test("rejects unknown version", () => {
+    expect(() => RepoConfigSchema.parse({ version: 2 })).toThrow();
+  });
+
+  test("rejects unknown check key", () => {
+    expect(() =>
+      RepoConfigSchema.parse({
+        version: 1,
+        checks: { bogus: { command: "x" } },
+      }),
+    ).toThrow();
+  });
+
+  test("accepts post_up entries as either string or object", () => {
+    const parsed = RepoConfigSchema.parse({
+      version: 1,
+      local_stack: {
+        compose_file: "docker-compose.yaml",
+        profiles: {
+          full: {
+            description: "full",
+            post_up: [
+              "bun run db:migrate",
+              { cmd: "bun run db:warm-cache", timeout_seconds: 30, retry: 2 },
+            ],
+          },
+        },
+        default_profile: "full",
+      },
+    });
+    expect(parsed.local_stack?.profiles.full?.post_up).toHaveLength(2);
+  });
+});
