@@ -374,7 +374,7 @@ describe("/api/chat route", () => {
             },
           ],
         }),
-        "https://app.nigel.to11.ai/api/chat",
+        "https://open-agents.dev/api/chat",
       ),
     );
     const body = (await response.json()) as { error: string };
@@ -412,7 +412,7 @@ describe("/api/chat route", () => {
             },
           ],
         }),
-        "https://app.nigel.to11.ai/api/chat",
+        "https://open-agents.dev/api/chat",
       ),
     );
 

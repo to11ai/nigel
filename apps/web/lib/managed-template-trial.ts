@@ -1,7 +1,17 @@
 import type { Session } from "@/lib/session/types";
 
 const ALLOWED_VERCEL_EMAIL_DOMAIN = "vercel.com";
-const MANAGED_TEMPLATE_HOSTS = new Set(["app.nigel.to11.ai"]);
+// Upstream feature flag: the managed-template trial path activates only for
+// requests served from open-agents.dev (the upstream hosted demo). Nigel's prod
+// deploy is app.nigel.to11.ai, which never matches — so trial limits never
+// apply to Nigel users. Do NOT add Nigel's hostname here: the trial check
+// gates on `authProvider === "vercel"`, which is hardcoded for every session
+// regardless of actual provider, so any matched host immediately throttles
+// every user. Stripping this feature entirely is deferred to a later phase.
+const MANAGED_TEMPLATE_HOSTS = new Set([
+  "open-agents.dev",
+  "www.open-agents.dev",
+]);
 const LOCAL_DEVELOPMENT_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export const MANAGED_TEMPLATE_TRIAL_MESSAGE_LIMIT = 5;

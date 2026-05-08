@@ -264,7 +264,7 @@ describe("/api/sessions/[sessionId]/code-editor", () => {
 
     const response = await POST(
       new Request(
-        "https://app.nigel.to11.ai/api/sessions/session-1/code-editor",
+        "https://open-agents.dev/api/sessions/session-1/code-editor",
         {
           method: "POST",
         },

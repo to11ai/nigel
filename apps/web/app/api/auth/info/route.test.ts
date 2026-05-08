@@ -131,7 +131,7 @@ describe("GET /api/auth/info", () => {
     const { GET } = await routeModulePromise;
 
     const response = await GET(
-      createRequest("https://app.nigel.to11.ai/api/auth/info"),
+      createRequest("https://open-agents.dev/api/auth/info"),
     );
 
     expect(response.status).toBe(200);
