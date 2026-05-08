@@ -128,8 +128,18 @@ const linkAgentRunWorkflowAndStart = async (
     .where(eq(agentRuns.id, agentRunId));
   try {
     await updateRunStatus(agentRunId, "running");
-  } catch {
-    // already running (workflow re-activation) — ignore
+  } catch (err) {
+    // Workflow may re-activate after it's already running — that case
+    // raises an "invalid run status transition" error from the state
+    // machine and is benign. Anything else (DB outage, schema mismatch,
+    // etc.) must propagate so the run isn't stranded in `pending`.
+    if (
+      err instanceof Error &&
+      err.message.includes("invalid run status transition")
+    ) {
+      return;
+    }
+    throw err;
   }
 };
 

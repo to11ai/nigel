@@ -2,6 +2,7 @@ import type { SandboxState } from "@nigel/sandbox";
 import type { ModelVariant } from "@/lib/model-variants";
 import type { GlobalSkillRef } from "@/lib/skills/global-skill-refs";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -368,8 +369,15 @@ export const agentRuns = pgTable(
       onDelete: "set null",
     }),
 
-    budgetUsdCapMicros: integer("budget_usd_cap_micros").notNull().default(0),
-    costUsdActualMicros: integer("cost_usd_actual_micros").notNull().default(0),
+    // bigint to allow >$2k caps; mode:"number" keeps the JS surface as
+    // `number` since per-run costs comfortably fit in a double's 53-bit
+    // safe-integer range (max safe int ≈ $9 quadrillion micros).
+    budgetUsdCapMicros: bigint("budget_usd_cap_micros", { mode: "number" })
+      .notNull()
+      .default(0),
+    costUsdActualMicros: bigint("cost_usd_actual_micros", { mode: "number" })
+      .notNull()
+      .default(0),
 
     status: text("status", {
       enum: [
@@ -439,7 +447,9 @@ export const runToolCalls = pgTable(
     input: jsonb("input"),
     output: jsonb("output"),
     success: boolean("success"),
-    costUsdMicros: integer("cost_usd_micros").notNull().default(0),
+    costUsdMicros: bigint("cost_usd_micros", { mode: "number" })
+      .notNull()
+      .default(0),
     latencyMs: integer("latency_ms"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

@@ -274,6 +274,20 @@
       "when": 1778274737000,
       "tag": "0038_backfill_agent_runs",
       "breakpoints": false
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1778277031115,
+      "tag": "0039_exotic_impossible_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1778277032000,
+      "tag": "0040_widen_cost_rollup_trigger",
+      "breakpoints": false
     }
   ]
 }
