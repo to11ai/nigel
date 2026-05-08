@@ -5,7 +5,7 @@ import {
   type Sandbox,
   type SandboxState,
 } from "@open-agents/sandbox";
-import { getSessionById, updateSession } from "@/lib/db/sessions";
+import { getSessionById, updateProvisioningSession } from "@/lib/db/sessions";
 import {
   getRepoAccessErrorMessage,
   verifyRepoAccess,
@@ -149,6 +149,20 @@ async function installSessionGlobalSkills(params: {
   }
 }
 
+async function stopSandboxAfterProvisioningAbort(params: {
+  sessionId: string;
+  sandbox: Sandbox;
+}): Promise<void> {
+  try {
+    await params.sandbox.stop();
+  } catch (error) {
+    console.error(
+      `Failed to stop sandbox after provisioning was aborted for session ${params.sessionId}:`,
+      error,
+    );
+  }
+}
+
 export async function provisionSessionSandbox(params: {
   userId: string;
   sessionId: string;
@@ -197,21 +211,54 @@ export async function provisionSessionSandbox(params: {
     ? rawSandboxState
     : buildSessionSandboxState(session);
 
-  await Promise.all([
-    updateSession(params.sessionId, {
+  const currentSession = await getSessionById(params.sessionId);
+  if (!currentSession) {
+    await stopSandboxAfterProvisioningAbort({
+      sessionId: params.sessionId,
+      sandbox,
+    });
+    throw new Error("Session not found");
+  }
+  if (currentSession.userId !== params.userId) {
+    await stopSandboxAfterProvisioningAbort({
+      sessionId: params.sessionId,
+      sandbox,
+    });
+    throw new Error("Unauthorized");
+  }
+  if (currentSession.status === "archived") {
+    await stopSandboxAfterProvisioningAbort({
+      sessionId: params.sessionId,
+      sandbox,
+    });
+    throw new Error("Session is archived");
+  }
+
+  const [updatedSession] = await Promise.all([
+    updateProvisioningSession(params.sessionId, {
       sandboxState,
       sandboxProvisioningRunId: null,
       snapshotUrl: null,
       snapshotCreatedAt: null,
-      lifecycleVersion: getNextLifecycleVersion(session.lifecycleVersion),
+      lifecycleVersion: getNextLifecycleVersion(
+        currentSession.lifecycleVersion,
+      ),
       ...buildActiveLifecycleUpdate(sandboxState),
     }),
     installSessionGlobalSkills({
-      session,
+      session: currentSession,
       sandbox,
       didSetupWorkspace,
     }),
   ]);
+
+  if (!updatedSession) {
+    await stopSandboxAfterProvisioningAbort({
+      sessionId: params.sessionId,
+      sandbox,
+    });
+    throw new Error("Session is no longer provisioning");
+  }
 
   kickSandboxLifecycleWorkflow({
     sessionId: params.sessionId,
@@ -219,7 +266,7 @@ export async function provisionSessionSandbox(params: {
   });
 
   return {
-    session,
+    session: updatedSession,
     sandbox,
     sandboxState,
     didSetupWorkspace,

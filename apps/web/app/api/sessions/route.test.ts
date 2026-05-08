@@ -387,6 +387,19 @@ describe("/api/sessions POST vercel project linking", () => {
     });
   });
 
+  test("does not save a resumable sandbox name before provisioning creates a sandbox", async () => {
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(createJsonRequest({}));
+
+    expect(response.status).toBe(200);
+    expect(createCalls[0]?.sandboxState).toEqual({ type: "vercel" });
+    expect(createCalls[0]).toMatchObject({
+      lifecycleState: "provisioning",
+      lifecycleVersion: 0,
+    });
+  });
+
   test("rejects invalid repository owners", async () => {
     const { POST } = await routeModulePromise;
 

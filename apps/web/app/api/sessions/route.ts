@@ -28,7 +28,6 @@ import {
   MANAGED_TEMPLATE_TRIAL_SESSION_LIMIT_ERROR,
 } from "@/lib/managed-template-trial";
 import { startSandboxProvisioningWorkflow } from "@/lib/sandbox/provisioning-kick";
-import { getSessionSandboxName } from "@/lib/sandbox/utils";
 import {
   isVercelInvalidTokenError,
   listMatchingVercelProjects,
@@ -398,7 +397,6 @@ export async function POST(req: Request) {
         globalSkillRefs: preferences.globalSkillRefs,
         sandboxState: {
           type: sandboxType,
-          sandboxName: getSessionSandboxName(sessionId),
         },
         lifecycleState: "provisioning",
         lifecycleVersion: 0,
