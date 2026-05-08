@@ -288,6 +288,13 @@
       "when": 1778277032000,
       "tag": "0040_widen_cost_rollup_trigger",
       "breakpoints": false
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1778282016452,
+      "tag": "0041_cuddly_roulette",
+      "breakpoints": true
     }
   ]
 }
