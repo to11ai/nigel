@@ -1,0 +1,7 @@
+config:
+  pulumi:tags:
+    Environment: production
+  aws:region: us-east-1
+  nigel-aws-dns:zoneName: nigel.to11.ai
+  nigel-aws-dns:appHost: app.nigel.to11.ai
+  nigel-aws-dns:vercelCnameTarget: cname.vercel-dns.com
