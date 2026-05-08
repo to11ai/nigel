@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { specialists } from "@/lib/db/schema";
@@ -114,7 +114,9 @@ export async function upsertOverride(
 }
 
 export async function deleteOverride(name: string): Promise<void> {
-  await db.delete(specialists).where(eq(specialists.name, name));
+  await db
+    .delete(specialists)
+    .where(and(eq(specialists.name, name), eq(specialists.kind, "override")));
 }
 
 export async function listSpecialists(): Promise<SpecialistRow[]> {

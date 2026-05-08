@@ -48,7 +48,12 @@ export async function dispatchSpecialist(
   // dispatch children. Top-level chat (no specialist) can always dispatch.
   if (parent.specialistId) {
     const parentSpecialist = await getSpecialist(parent.specialistId);
-    if (parentSpecialist && !parentSpecialist.mayRecurse) {
+    if (!parentSpecialist) {
+      throw new SpecialistDispatchError(
+        `parent specialist '${parent.specialistId}' not found in registry; recursion constraints cannot be enforced`,
+      );
+    }
+    if (!parentSpecialist.mayRecurse) {
       throw new SpecialistDispatchError(
         `parent specialist '${parent.specialistId}' does not allow recursion`,
       );
@@ -56,7 +61,6 @@ export async function dispatchSpecialist(
     // Per-specialist max-children cap.
     const siblings = await listChildren(parent.id);
     if (
-      parentSpecialist &&
       parentSpecialist.maxChildren > 0 &&
       siblings.length >= parentSpecialist.maxChildren
     ) {
