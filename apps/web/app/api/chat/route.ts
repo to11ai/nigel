@@ -2,6 +2,7 @@ import { createUIMessageStreamResponse, type InferUIMessageChunk } from "ai";
 import { checkBotProtection } from "@/lib/botid";
 import { start } from "workflow/api";
 import type { WebAgentUIMessage } from "@/app/types";
+import { isRunsEnabled, Run } from "@/lib/runs";
 import {
   claimChatActiveStreamId,
   compareAndSetChatActiveStreamId,
@@ -134,18 +135,48 @@ export async function POST(req: Request) {
     persistAssistantMessagesWithToolResults(chatId, messages),
   ]);
 
-  // Start the durable workflow
-  const run = await start(runAgentWorkflow, [
-    {
-      messages,
+  // Create an agent_run record before starting the workflow so we always have
+  // a bookkeeping row even if the Workflow SDK never activates the function.
+  let agentRunId: string | null = null;
+  if (isRunsEnabled()) {
+    const agentRun = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: userId,
       chatId,
-      sessionId,
-      userId,
-      requestUrl: req.url,
-      authSession: session ?? null,
-      maxSteps: 500,
-    },
-  ]);
+      sandboxPolicy: "inherit",
+      budgetUsdCapMicros: 0,
+    });
+    agentRunId = agentRun.id;
+  }
+
+  // Start the durable workflow. If the Workflow SDK throws (e.g., transient
+  // SDK error, DB outage) the agent_run row would otherwise be stranded in
+  // `pending` since neither linkAgentRunWorkflowAndStart nor the workflow's
+  // terminal hook will ever run. Cancel the row so the next attempt creates
+  // a clean one and the audit trail reflects what happened.
+  let run: Awaited<ReturnType<typeof start>>;
+  try {
+    run = await start(runAgentWorkflow, [
+      {
+        messages,
+        chatId,
+        sessionId,
+        userId,
+        requestUrl: req.url,
+        authSession: session ?? null,
+        maxSteps: 500,
+        agentRunId,
+      },
+    ]);
+  } catch (err) {
+    if (agentRunId) {
+      const { updateRunStatus } = await import("@/lib/runs/repository");
+      await updateRunStatus(agentRunId, "failed").catch(() => {
+        // Cleanup is best-effort; surface the original error regardless.
+      });
+    }
+    throw err;
+  }
 
   // Idempotently claim the activeStreamId slot for the workflow we just
   // started. This succeeds both when the slot is still null and when the

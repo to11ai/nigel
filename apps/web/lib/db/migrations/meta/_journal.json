@@ -253,6 +253,41 @@
       "when": 1776850100000,
       "tag": "0035_secret_peter_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1778274735140,
+      "tag": "0036_late_the_hood",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1778274736000,
+      "tag": "0037_cost_rollup_trigger",
+      "breakpoints": false
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1778274737000,
+      "tag": "0038_backfill_agent_runs",
+      "breakpoints": false
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1778277031115,
+      "tag": "0039_exotic_impossible_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1778277032000,
+      "tag": "0040_widen_cost_rollup_trigger",
+      "breakpoints": false
     }
   ]
 }

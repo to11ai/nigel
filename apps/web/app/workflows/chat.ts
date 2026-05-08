@@ -11,6 +11,7 @@ import {
 import type { OpenAgentCallOptions } from "@nigel/agent";
 import { getWorkflowMetadata, getWritable } from "workflow";
 import { getRun } from "workflow/api";
+import { isRunsEnabled } from "@/lib/runs/feature-flag";
 import { assistantFileLinkPrompt } from "@/lib/assistant-file-links";
 import { addLanguageModelUsage } from "./usage-utils";
 import { extractGatewayCost } from "./gateway-metadata";
@@ -72,6 +73,7 @@ type Options = {
   maxSteps?: number;
   autoCommitEnabled?: boolean;
   autoCreatePrEnabled?: boolean;
+  agentRunId?: string | null;
 };
 
 type ChatModelRuntime = {
@@ -107,6 +109,58 @@ function shouldRefreshDiffCacheForParts(
       (part.state === "output-available" || part.state === "output-error"),
   );
 }
+
+// Phase 1: agent_run state mutations are wrapped in step functions because
+// the Workflow SDK forbids Node.js modules (postgres client) at workflow scope.
+const linkAgentRunWorkflowAndStart = async (
+  agentRunId: string,
+  workflowRunId: string,
+): Promise<void> => {
+  "use step";
+  const { eq } = await import("drizzle-orm");
+  const { db } = await import("@/lib/db/client");
+  const { agentRuns } = await import("@/lib/db/schema");
+  const { getRun, updateRunStatus } = await import("@/lib/runs/repository");
+
+  await db
+    .update(agentRuns)
+    .set({ workflowRunId })
+    .where(eq(agentRuns.id, agentRunId));
+
+  // Workflow re-activation can call this step a second time after the run
+  // already reached `running` (skip silently). If the run reached a terminal
+  // state out-of-band (e.g., a prior conflict path cancelled it, or it was
+  // failed by the lifecycle hook), don't crash — the workflow body should
+  // exit on its own elsewhere; just no-op here. Anything else (pending,
+  // blocked, awaiting_approval) is a valid source for the running transition.
+  const current = await getRun(agentRunId);
+  if (
+    current?.status === "running" ||
+    current?.status === "completed" ||
+    current?.status === "failed" ||
+    current?.status === "cancelled"
+  ) {
+    return;
+  }
+  await updateRunStatus(agentRunId, "running");
+};
+
+type AgentRunTerminalStatus = "completed" | "failed" | "cancelled";
+const tryUpdateAgentRunStatus = async (
+  agentRunId: string,
+  next: AgentRunTerminalStatus,
+): Promise<void> => {
+  "use step";
+  const { updateRunStatus } = await import("@/lib/runs/repository");
+  try {
+    await updateRunStatus(agentRunId, next);
+  } catch (err) {
+    // status-machine rejects the transition (e.g., already terminal).
+    // Don't fail the workflow over a bookkeeping error.
+    // biome-ignore lint/suspicious/noConsole: phase-1 instrumentation
+    console.error("agent_run status update failed", { agentRunId, err });
+  }
+};
 
 const convertMessages = async (
   messages: WebAgentUIMessage[],
@@ -621,7 +675,16 @@ export async function runAgentWorkflow(options: Options) {
     // Exit before emitting chunks or persisting messages so only the owning
     // workflow can mutate this chat.
     await closeStream(writable);
+    if (isRunsEnabled() && options.agentRunId) {
+      await tryUpdateAgentRunStatus(options.agentRunId, "cancelled");
+    }
     return;
+  }
+
+  const agentRunId: string | null = options.agentRunId ?? null;
+
+  if (isRunsEnabled() && agentRunId) {
+    await linkAgentRunWorkflowAndStart(agentRunId, workflowRunId);
   }
 
   const modelMessagesPromise = convertMessages(options.messages);
@@ -979,6 +1042,15 @@ export async function runAgentWorkflow(options: Options) {
           stepTimings,
         },
       );
+      if (isRunsEnabled() && agentRunId) {
+        const next: AgentRunTerminalStatus =
+          workflowStatus === "completed"
+            ? "completed"
+            : workflowStatus === "failed"
+              ? "failed"
+              : "cancelled";
+        await tryUpdateAgentRunStatus(agentRunId, next);
+      }
     }
   }
 
