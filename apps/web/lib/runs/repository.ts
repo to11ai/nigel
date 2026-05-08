@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
 import { onRunStatusChange } from "./lifecycle";
@@ -100,12 +100,17 @@ export async function addCostMicros(
   if (deltaMicros === 0) {
     return;
   }
-  const current = await getRun(id);
-  if (!current) {
+  // Atomic SQL increment — avoids the read-modify-write race that drops
+  // updates under concurrent calls. The cost-rollup trigger computes its
+  // delta from OLD vs NEW, which works correctly with this increment too.
+  const result = await db
+    .update(agentRuns)
+    .set({
+      costUsdActual: sql`${agentRuns.costUsdActual} + ${deltaMicros}`,
+    })
+    .where(eq(agentRuns.id, id))
+    .returning({ id: agentRuns.id });
+  if (result.length === 0) {
     throw new Error(`run not found: ${id}`);
   }
-  await db
-    .update(agentRuns)
-    .set({ costUsdActual: current.costUsdActual + deltaMicros })
-    .where(eq(agentRuns.id, id));
 }
