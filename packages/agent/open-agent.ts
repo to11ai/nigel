@@ -62,7 +62,10 @@ function normalizeAgentModelSelection(
   return typeof selection === "string" ? { id: selection } : selection;
 }
 
-const tools = {
+// Canonical tool set Nigel specialists draw from. Phase 4b's
+// `executeSpecialistViaLLM` filters this map by each specialist's
+// allowlist; the chat path's shared `openAgent` consumes the full set.
+export const nigelTools = {
   todo_write: todoWriteTool,
   read: readFileTool(),
   write: writeFileTool(),
@@ -79,7 +82,7 @@ const tools = {
 export const openAgent = new ToolLoopAgent({
   model: defaultModel,
   instructions: buildSystemPrompt({}),
-  tools,
+  tools: nigelTools,
   stopWhen: stepCountIs(1),
   callOptionsSchema,
   prepareStep: ({ messages, model, steps: _steps }) => {
@@ -128,7 +131,7 @@ export const openAgent = new ToolLoopAgent({
       ...settings,
       model: callModel,
       tools: addCacheControl({
-        tools: settings.tools ?? tools,
+        tools: settings.tools ?? nigelTools,
         model: callModel,
       }),
       instructions,
