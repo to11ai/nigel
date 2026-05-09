@@ -96,7 +96,7 @@ const fakeSpecialist = (
   name: "coder",
   kind: "preset",
   systemPrompt: "You are coder.",
-  model: "anthropic/claude-sonnet-4-6",
+  model: "anthropic/claude-sonnet-4.6",
   toolAllowlist: ["file", "search", "shell", "git"],
   sandboxPolicy: "inherit",
   mayRecurse: false,

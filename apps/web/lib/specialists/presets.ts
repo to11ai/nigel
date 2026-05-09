@@ -41,7 +41,7 @@ const coderPreset: CodePreset = {
     "- If the task is ambiguous or you cannot complete it safely, return an explicit",
     "  description of what you tried and what blocks you — do not invent an outcome.",
   ].join("\n"),
-  model: "anthropic/claude-sonnet-4-6",
+  model: "anthropic/claude-sonnet-4.6",
   toolAllowlist: ["file", "search", "shell", "git"],
   sandboxPolicy: "inherit",
   mayRecurse: false,

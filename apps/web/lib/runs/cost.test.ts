@@ -7,9 +7,11 @@ import { addCostMicros, getRun } from "./repository";
 
 describe("PRICING table", () => {
   test("contains the three current Anthropic models", () => {
-    expect(PRICING).toHaveProperty("anthropic/claude-opus-4-7");
-    expect(PRICING).toHaveProperty("anthropic/claude-sonnet-4-6");
-    expect(PRICING).toHaveProperty("anthropic/claude-haiku-4-5");
+    // Array-form path so the dots in model ids aren't interpreted as
+    // nested-property separators.
+    expect(PRICING).toHaveProperty(["anthropic/claude-opus-4.7"]);
+    expect(PRICING).toHaveProperty(["anthropic/claude-sonnet-4.6"]);
+    expect(PRICING).toHaveProperty(["anthropic/claude-haiku-4.5"]);
   });
 });
 
@@ -20,7 +22,7 @@ describe("computeCostMicros", () => {
     // output: 500 * 4.00 = 2000 micros
     // total: 2800 micros
     expect(
-      computeCostMicros("anthropic/claude-haiku-4-5", {
+      computeCostMicros("anthropic/claude-haiku-4.5", {
         inputTokens: 1000,
         outputTokens: 500,
       }),
@@ -31,7 +33,7 @@ describe("computeCostMicros", () => {
     // haiku: cache_read 0.08 per 1M tokens
     // 10000 cache reads * 0.08 = 800 micros
     expect(
-      computeCostMicros("anthropic/claude-haiku-4-5", {
+      computeCostMicros("anthropic/claude-haiku-4.5", {
         inputTokens: 0,
         outputTokens: 0,
         cacheReadTokens: 10000,
@@ -50,7 +52,7 @@ describe("computeCostMicros", () => {
 
   test("zero tokens returns zero", () => {
     expect(
-      computeCostMicros("anthropic/claude-haiku-4-5", {
+      computeCostMicros("anthropic/claude-haiku-4.5", {
         inputTokens: 0,
         outputTokens: 0,
       }),

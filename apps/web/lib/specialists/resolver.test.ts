@@ -39,7 +39,7 @@ describe("getSpecialist", () => {
       name: "my-custom-role",
       kind: "custom",
       systemPrompt: "Be helpful.",
-      model: "anthropic/claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4.5",
       toolAllowlist: ["file", "search"],
       sandboxPolicy: "inherit",
       mayRecurse: false,
