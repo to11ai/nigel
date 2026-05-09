@@ -168,9 +168,9 @@ Note dash-form model id matches Phase 1+2 convention (`PRICING` keys, existing t
 
 - [ ] **Step 1: Export**
 
-In `packages/agent/open-agent.ts`, change the local `const tools = { ... }` to `export const openAgentTools = { ... }` (rename for clarity since `tools` is too generic). The existing `tools` reference inside `prepareCall` becomes `openAgentTools`.
+In `packages/agent/open-agent.ts`, change the local `const tools = { ... }` to `export const nigelTools = { ... }` (rename for clarity since `tools` is too generic). The existing `tools` reference inside `prepareCall` becomes `nigelTools`.
 
-In `packages/agent/index.ts`, re-export: `export { openAgentTools } from "./open-agent";`.
+In `packages/agent/index.ts`, re-export: `export { nigelTools } from "./open-agent";`.
 
 - [ ] **Step 2: Quality gates**
 
@@ -186,7 +186,7 @@ Both must pass.
 
 ```bash
 git add packages/agent/open-agent.ts packages/agent/index.ts
-git commit -m "feat(agent): export openAgentTools so specialist execution can filter them"
+git commit -m "feat(agent): export nigelTools so specialist execution can filter them"
 ```
 
 ---
@@ -277,10 +277,10 @@ mock.module("ai", () => ({
   stepCountIs: (n: number) => ({ kind: "stepCountIs", n }),
 }));
 
-// Mock @nigel/agent to provide a deterministic openAgentTools.
+// Mock @nigel/agent to provide a deterministic nigelTools.
 mock.module("@nigel/agent", () => ({
   gateway: (id: string) => ({ id, _kind: "model" }),
-  openAgentTools: {
+  nigelTools: {
     read: { _kind: "tool" },
     write: { _kind: "tool" },
     edit: { _kind: "tool" },
@@ -454,7 +454,7 @@ Expected: module not found.
 - [ ] **Step 3: Implement `apps/web/lib/runs/specialist-execution.ts`**
 
 ```ts
-import { gateway, openAgentTools } from "@nigel/agent";
+import { gateway, nigelTools } from "@nigel/agent";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
@@ -495,7 +495,7 @@ export async function executeSpecialistViaLLM(
   }
   const filteredTools = filterAgentTools(
     specialist.toolAllowlist,
-    openAgentTools,
+    nigelTools,
   );
 
   const agent = new ToolLoopAgent({
