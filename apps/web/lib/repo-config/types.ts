@@ -87,6 +87,16 @@ export const RepoConfigSchema = z.object({
       workspaces: z.array(z.string()),
       default_workspace: z.string().optional(),
     })
+    .refine(
+      (m) =>
+        m.default_workspace === undefined ||
+        m.workspaces.includes(m.default_workspace),
+      {
+        message:
+          "monorepo.default_workspace must reference an entry in monorepo.workspaces",
+        path: ["default_workspace"],
+      },
+    )
     .optional(),
 });
 

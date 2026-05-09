@@ -49,6 +49,26 @@ describe("RepoConfigSchema", () => {
     ).toThrow();
   });
 
+  test("rejects monorepo.default_workspace that is not in workspaces", () => {
+    expect(() =>
+      RepoConfigSchema.parse({
+        version: 1,
+        monorepo: {
+          workspaces: ["apps/web"],
+          default_workspace: "apps/missing",
+        },
+      }),
+    ).toThrow(/default_workspace/);
+  });
+
+  test("accepts monorepo without default_workspace", () => {
+    const parsed = RepoConfigSchema.parse({
+      version: 1,
+      monorepo: { workspaces: ["apps/web", "apps/api"] },
+    });
+    expect(parsed.monorepo?.default_workspace).toBeUndefined();
+  });
+
   test("rejects local_stack.default_profile that is not a key in profiles", () => {
     expect(() =>
       RepoConfigSchema.parse({
