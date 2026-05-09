@@ -29,11 +29,12 @@ export type DispatchSpecialistInput = {
   task: string;
   sandboxPolicyOverride?: SandboxPolicy;
   budgetUsdMicros?: number;
-  // Required for LLM-driven specialists (Phase 4b). The agent_runs table
-  // stores only a sandbox id, not the full SandboxState needed to
-  // reconnect — so the dispatch caller (chat path / Linear webhook /
-  // etc.) supplies the parent session's SandboxState. Scripted
-  // specialists ignore this field.
+  // Optional in the type, required at runtime for LLM specialists. The
+  // agent_runs table stores only a sandbox id, not the full SandboxState
+  // needed to reconnect — so the dispatch caller (chat path / Linear
+  // webhook / etc.) supplies the parent session's SandboxState. If
+  // omitted for an LLM specialist, `provisionSandboxForRun` throws
+  // `SandboxNotProvisionedError`. Scripted specialists ignore this field.
   inheritSandboxState?: SandboxState;
   // Test-only injection seam (same pattern as ExecuteSpecialistInput.deps).
   deps?: {
@@ -168,7 +169,17 @@ export async function dispatchSpecialist(
     throw err;
   } finally {
     if (provisioned) {
-      await teardownSandboxForRun(provisioned).catch(() => undefined);
+      // Don't let teardown failure mask the original outcome (success or
+      // the original throw). But do log — silent failure here can leak
+      // sandboxes that hold quota and writable repo access.
+      try {
+        await teardownSandboxForRun(provisioned);
+      } catch (teardownErr) {
+        console.error(
+          `[dispatch] sandbox teardown failed for run ${childRun.id}; sandbox may be leaked`,
+          teardownErr,
+        );
+      }
     }
   }
 }
