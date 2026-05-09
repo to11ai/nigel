@@ -29,18 +29,25 @@ export function applyTurboDerivation(
     return `turbo run ${task}`;
   };
 
-  const checks = { ...config.checks };
-  for (const key of [
-    "lint",
-    "format",
-    "type_check",
-    "unit_test",
-    "e2e_test",
-  ] as CheckKey[]) {
-    const existing = checks[key];
-    if (existing && existing.command === undefined) {
-      checks[key] = { ...existing, command: deriveCommand(key) };
+  // Only materialize a `checks` object if the input had one — otherwise
+  // preserve absence so callers checking `if (config.checks)` see the same
+  // shape they passed in.
+  let checks = config.checks;
+  if (checks) {
+    const next = { ...checks };
+    for (const key of [
+      "lint",
+      "format",
+      "type_check",
+      "unit_test",
+      "e2e_test",
+    ] as CheckKey[]) {
+      const existing = next[key];
+      if (existing && existing.command === undefined) {
+        next[key] = { ...existing, command: deriveCommand(key) };
+      }
     }
+    checks = next;
   }
 
   let devServer = config.dev_server;
@@ -52,7 +59,7 @@ export function applyTurboDerivation(
 
   return {
     ...config,
-    checks,
+    ...(checks ? { checks } : {}),
     ...(devServer ? { dev_server: devServer } : {}),
   };
 }

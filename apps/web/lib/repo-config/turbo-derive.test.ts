@@ -6,6 +6,13 @@ const base = (overrides: Partial<RepoConfig> = {}): RepoConfig =>
   ({ version: 1, setup: [], ...overrides }) as RepoConfig;
 
 describe("applyTurboDerivation", () => {
+  test("preserves absent `checks` and `dev_server` when turbo is enabled", () => {
+    const config = base();
+    const out = applyTurboDerivation(config, { turboJsonPresent: true });
+    expect(out.checks).toBeUndefined();
+    expect(out.dev_server).toBeUndefined();
+  });
+
   test("returns config unchanged when turbo is disabled and no turbo.json", () => {
     const config = base({ checks: { lint: {} } });
     const out = applyTurboDerivation(config, { turboJsonPresent: false });
