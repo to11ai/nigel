@@ -11,4 +11,3 @@ config:
 
   neon:apiKey:
     secure: AAABALn4ilzUElYEt+nMmIN37W2N8eGk1XkUPaRay5LTLlRu7p2vVPOJe/S6ebFdgupAYqD1mbb6LLhD5A2yNbxHwUA28AbXBDdY7CRdhIJdo/KvYIvQFYnV6oPtvz1idCnwTe4=
-  nigel-data-neon:importedEndpointId: hidden-pine-49566135/ep-rough-bird-aqc9ybfk

@@ -565,6 +565,39 @@ export const repoConfigs = pgTable(
   ],
 );
 
+// sandbox_snapshots — cache of local-stack bootstrap states. A row records
+// the upstream Vercel Sandbox snapshot id captured after `compose up` +
+// post-up scripts ran successfully, keyed by repo + profile + a hash over
+// the files that, if changed, force a fresh bootstrap (compose file,
+// lockfile, migration files, seed scripts). The set of files contributing
+// to `invalidation_keys` is the caller's choice; the cache lookup compares
+// the full hash, not individual entries.
+export const sandboxSnapshots = pgTable(
+  "sandbox_snapshots",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    branchOrSha: text("branch_or_sha").notNull(),
+    profile: text("profile").notNull(),
+    baseSnapshotId: text("base_snapshot_id"),
+    invalidationKeys: jsonb("invalidation_keys")
+      .$type<Record<string, string>>()
+      .notNull(),
+    keysHash: text("keys_hash").notNull(),
+    builtAt: timestamp("built_at").defaultNow().notNull(),
+    ttlUntil: timestamp("ttl_until"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+  },
+  (table) => [
+    uniqueIndex("sandbox_snapshots_lookup_idx").on(
+      table.repoFullName,
+      table.profile,
+      table.keysHash,
+    ),
+    index("sandbox_snapshots_built_at_idx").on(table.builtAt),
+  ],
+);
+
 // User preferences for settings
 export const userPreferences = pgTable("user_preferences", {
   id: text("id").primaryKey(),
