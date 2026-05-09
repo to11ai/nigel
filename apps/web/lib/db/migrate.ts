@@ -29,9 +29,13 @@ type ErrorWithCause = {
   cause?: unknown;
 };
 
-const url = process.env.POSTGRES_URL;
+// Vercel's Neon Marketplace integration provisions DATABASE_URL.
+// POSTGRES_URL is the legacy fallback for any pre-integration setups.
+const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
 if (!url) {
-  console.log("POSTGRES_URL not set — skipping migrations");
+  console.log(
+    "DATABASE_URL (or legacy POSTGRES_URL) not set — skipping migrations",
+  );
   process.exit(0);
 }
 
