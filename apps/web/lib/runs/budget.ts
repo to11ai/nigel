@@ -20,8 +20,14 @@ export class BudgetExhaustedError extends Error {
 export async function checkRootBudget(rootRunId: string): Promise<void> {
   let shouldThrow = false;
   await db.transaction(async (tx) => {
+    // hashtextextended returns int8 (64-bit), preserving the full
+    // 64 bits of advisory-lock key space. The single-arg int4
+    // hashtext form would collide ~50% at ~65k roots; a system with
+    // millions of historical roots would see frequent unrelated
+    // serialization. The seed value (0) is fixed so the same input
+    // hashes the same way across Postgres restarts.
     await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`nigel:budget:${rootRunId}`}))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`nigel:budget:${rootRunId}`}, 0))`,
     );
 
     const rows = await tx

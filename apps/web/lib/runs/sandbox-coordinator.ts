@@ -70,6 +70,8 @@ export async function teardownSandboxForRun(
   handle: ProvisionedSandbox,
 ): Promise<void> {
   if (handle.ownedByThisRun) {
-    await handle.sandbox.stop();
+    // Call through the handle so any per-instance cleanup added later
+    // (Phase 4b: cost-finalization, log flush, etc.) is honored.
+    await handle.stop();
   }
 }
