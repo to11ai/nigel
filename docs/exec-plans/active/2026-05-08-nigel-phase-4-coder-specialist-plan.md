@@ -2,6 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Phase 4 was split into 4a + 4b after Tasks 2–4 landed cleanly:**
+> - **Phase 4a** (this PR) ships Tasks 2–4 + the public-surface exports: tool-allowlist, race-fix in `checkRootBudget`, sandbox-coordinator. No actual LLM execution yet.
+> - **Phase 4b** (follow-up PR) will ship Tasks 5–8: `executeSpecialistViaLLM` wrapping `ToolLoopAgent` with budget + cost hooks, the `coder` preset registration, the dispatch wiring that replaces the "Phase 4 wires LLM-based specialists" throw, and end-to-end tests.
+>
+> The split happened because Task 5 needs precise integration with the upstream `ToolLoopAgent` API (specifically the per-step hooks where pre-call budget checks and post-call cost capture get injected). Trace that API before writing 4b's plan.
+>
+> Task 1 (a duplicate `pricing.ts` module) was reverted before merge: the existing `apps/web/lib/runs/cost.ts` already exposes `computeCostMicros` + `PRICING` with cache-read pricing support, used since Phase 1. Phase 4b will use that module directly. Lesson: search for existing modules before designing new ones.
+
 **Goal:** Land the first LLM-driven specialist (`coder`) end-to-end. Replace the "Phase 4 wires LLM-based specialists" throw in `dispatchSpecialist` with a real execution path that provisions a sandbox, runs the existing `openAgent` ToolLoop with a filtered tool allowlist, captures token usage as cost, enforces the budget at every model call, and tears down on completion.
 
 **Architecture:** All new code lives in `apps/web/lib/runs/`. The existing `packages/agent/open-agent.ts` (`ToolLoopAgent` from upstream open-agents, with `read/write/edit/grep/glob/bash/task/skill/web_fetch` tools) is the LLM execution engine — we don't reimplement it. The new code wraps it with: sandbox provisioning, tool allowlist filtering, per-model-call budget check, token-to-cost conversion, and Run lifecycle hooks. The `coder` specialist is registered as a code preset in `apps/web/lib/specialists/presets.ts`. The race condition flagged on PR #6 (parallel dispatch budget check) gets fixed via Postgres advisory locks now that we have a cost-accumulating path.
