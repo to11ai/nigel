@@ -1,7 +1,19 @@
+import type { SandboxState } from "@nigel/sandbox";
 import { getSpecialist } from "@/lib/specialists";
-import { checkRootBudget } from "./budget";
+import { BudgetExhaustedError, checkRootBudget } from "./budget";
 import { Run } from "./create";
 import { getRun, listChildren, updateRunStatus } from "./repository";
+import {
+  type ProvisionedSandbox,
+  type ProvisionInput,
+  provisionSandboxForRun as defaultProvisionSandboxForRun,
+  teardownSandboxForRun as defaultTeardownSandboxForRun,
+} from "./sandbox-coordinator";
+import {
+  type ExecuteSpecialistInput,
+  type ExecuteSpecialistResult,
+  executeSpecialistViaLLM as defaultExecuteSpecialistViaLLM,
+} from "./specialist-execution";
 import type { AgentRun, SandboxPolicy } from "./types";
 
 export class SpecialistDispatchError extends Error {
@@ -17,6 +29,22 @@ export type DispatchSpecialistInput = {
   task: string;
   sandboxPolicyOverride?: SandboxPolicy;
   budgetUsdMicros?: number;
+  // Required for LLM-driven specialists (Phase 4b). The agent_runs table
+  // stores only a sandbox id, not the full SandboxState needed to
+  // reconnect — so the dispatch caller (chat path / Linear webhook /
+  // etc.) supplies the parent session's SandboxState. Scripted
+  // specialists ignore this field.
+  inheritSandboxState?: SandboxState;
+  // Test-only injection seam (same pattern as ExecuteSpecialistInput.deps).
+  deps?: {
+    provisionSandboxForRun?: (
+      input: ProvisionInput,
+    ) => Promise<ProvisionedSandbox>;
+    teardownSandboxForRun?: (handle: ProvisionedSandbox) => Promise<void>;
+    executeSpecialistViaLLM?: (
+      input: ExecuteSpecialistInput,
+    ) => Promise<ExecuteSpecialistResult>;
+  };
 };
 
 export type DispatchSpecialistResult = {
@@ -99,12 +127,50 @@ export async function dispatchSpecialist(
     }
   }
 
-  // Phase 4 wires LLM-based specialists; until then, fail loudly so the
-  // caller knows to wait for that phase rather than getting a stuck Run.
-  await updateRunStatus(childRun.id, "failed").catch(() => undefined);
-  throw new SpecialistDispatchError(
-    `specialist '${specialist.name}' (kind=${specialist.kind}) cannot execute in Phase 2; LLM-based dispatch lands in Phase 4`,
-  );
+  // Phase 4b: LLM-driven specialists (kind = 'preset' | 'custom').
+  if (!specialist.systemPrompt || !specialist.model) {
+    await updateRunStatus(childRun.id, "failed").catch(() => undefined);
+    throw new SpecialistDispatchError(
+      `specialist '${specialist.name}' is incomplete (missing systemPrompt or model)`,
+    );
+  }
+
+  const provisionSandboxForRun =
+    input.deps?.provisionSandboxForRun ?? defaultProvisionSandboxForRun;
+  const teardownSandboxForRun =
+    input.deps?.teardownSandboxForRun ?? defaultTeardownSandboxForRun;
+  const executeSpecialistViaLLM =
+    input.deps?.executeSpecialistViaLLM ?? defaultExecuteSpecialistViaLLM;
+
+  let provisioned: ProvisionedSandbox | null = null;
+  try {
+    await updateRunStatus(childRun.id, "running");
+    provisioned = await provisionSandboxForRun({
+      inheritFrom: input.inheritSandboxState ?? null,
+    });
+    const result = await executeSpecialistViaLLM({
+      run: childRun,
+      sandbox: provisioned.toAgentContext(),
+      specialist,
+      task: input.task,
+    });
+    await updateRunStatus(childRun.id, "completed");
+    const refreshed = (await getRun(childRun.id)) ?? childRun;
+    return { childRun: refreshed, output: result.output };
+  } catch (err) {
+    if (err instanceof BudgetExhaustedError) {
+      await updateRunStatus(childRun.id, "blocked", {
+        blockedReason: "budget exhausted",
+      }).catch(() => undefined);
+    } else {
+      await updateRunStatus(childRun.id, "failed").catch(() => undefined);
+    }
+    throw err;
+  } finally {
+    if (provisioned) {
+      await teardownSandboxForRun(provisioned).catch(() => undefined);
+    }
+  }
 }
 
 export async function dispatchSpecialistsParallel(
