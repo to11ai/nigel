@@ -199,6 +199,33 @@ describe("executeSpecialistViaLLM", () => {
     expect(addCostMicrosStub).toHaveBeenCalledWith("run_abc", 1050);
   });
 
+  test("onStepFinish does not throw when addCostMicros fails (gateway path)", async () => {
+    addCostMicrosStub.mockImplementationOnce(async () => {
+      throw new Error("DB transient failure");
+    });
+    await call();
+    // The hook itself must not throw — onStepFinish failures crash the agent.
+    await expect(
+      captured().onStepFinish({
+        providerMetadata: { gateway: { cost: "0.0042" } },
+        usage: { inputTokens: 100, outputTokens: 50, inputTokenDetails: {} },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("onStepFinish does not throw when addCostMicros fails (fallback path)", async () => {
+    addCostMicrosStub.mockImplementationOnce(async () => {
+      throw new Error("DB transient failure");
+    });
+    await call();
+    await expect(
+      captured().onStepFinish({
+        providerMetadata: undefined,
+        usage: { inputTokens: 100, outputTokens: 50, inputTokenDetails: {} },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   test("onStepFinish silently skips cost when both gateway and tokens absent", async () => {
     await call();
     await captured().onStepFinish({

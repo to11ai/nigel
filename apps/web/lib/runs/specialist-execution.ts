@@ -73,25 +73,19 @@ export async function executeSpecialistViaLLM(
       return undefined;
     },
     onStepFinish: async (step) => {
-      const usd = extractGatewayCost(step.providerMetadata);
-      if (usd !== undefined) {
-        await addCostMicros(run.id, Math.round(usd * 1_000_000));
-        return;
-      }
-      const inputTokens = step.usage?.inputTokens;
-      const outputTokens = step.usage?.outputTokens;
-      if (inputTokens != null && outputTokens != null) {
-        try {
-          const micros = computeCostMicros(specialist.model as string, {
-            inputTokens,
-            outputTokens,
-            cacheReadTokens: step.usage?.inputTokenDetails?.cacheReadTokens,
-          });
-          await addCostMicros(run.id, micros);
-        } catch {
-          // Unknown model in PRICING table; don't fail the run, just
-          // under-report cost until the table is updated.
-        }
+      // Cost reporting is best-effort. A transient DB error or an
+      // unknown-model lookup must NOT crash the agent loop or fail an
+      // otherwise-successful step. Both paths log on failure so leaks
+      // are observable.
+      const micros = resolveStepCostMicros(step, specialist.model as string);
+      if (micros === null) return;
+      try {
+        await addCostMicros(run.id, micros);
+      } catch (err) {
+        console.error(
+          `[specialist-execution] addCostMicros failed for run ${run.id}; cost under-reported`,
+          err,
+        );
       }
     },
   });
@@ -101,4 +95,41 @@ export async function executeSpecialistViaLLM(
   });
 
   return { output: result.text };
+}
+
+// Resolves per-step cost in micros, preferring gateway-reported cost
+// (preferred path) and falling back to PRICING-table computation when
+// the gateway didn't attach a cost. Returns null when neither path
+// produces a value (no gateway data + missing tokens, or unknown model
+// in the PRICING table). Caller is responsible for the actual
+// addCostMicros write and its error handling.
+type StepUsage = {
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  inputTokenDetails?: { cacheReadTokens?: number | undefined } | undefined;
+};
+type StepLike = {
+  providerMetadata?: Parameters<typeof extractGatewayCost>[0];
+  usage?: StepUsage;
+};
+
+function resolveStepCostMicros(step: StepLike, modelId: string): number | null {
+  const usd = extractGatewayCost(step.providerMetadata);
+  if (usd !== undefined) {
+    return Math.round(usd * 1_000_000);
+  }
+  const inputTokens = step.usage?.inputTokens;
+  const outputTokens = step.usage?.outputTokens;
+  if (inputTokens == null || outputTokens == null) return null;
+  try {
+    return computeCostMicros(modelId, {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens: step.usage?.inputTokenDetails?.cacheReadTokens,
+    });
+  } catch {
+    // Unknown model id in the PRICING table; cost just under-reports
+    // until the table is updated. Not a run-breaking condition.
+    return null;
+  }
 }
