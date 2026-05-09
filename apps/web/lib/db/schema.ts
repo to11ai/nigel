@@ -1,5 +1,6 @@
 import type { SandboxState } from "@nigel/sandbox";
 import type { ModelVariant } from "@/lib/model-variants";
+import type { RepoConfig } from "@/lib/repo-config/types";
 import type { GlobalSkillRef } from "@/lib/skills/global-skill-refs";
 import {
   bigint,
@@ -551,8 +552,11 @@ export const repoConfigs = pgTable(
   {
     id: text("id").primaryKey(),
     repoFullName: text("repo_full_name").notNull(),
-    configJson: jsonb("config_json").$type<unknown>().notNull(),
-    source: text("source", { enum: ["file", "db", "inferred"] }).notNull(),
+    configJson: jsonb("config_json").$type<RepoConfig>().notNull(),
+    // The resolver short-circuits on a committed `.nigel.yaml` and never
+    // persists a "file" row; only `db` (admin-set) or `inferred` (auto-detected)
+    // sources are valid here.
+    source: text("source", { enum: ["db", "inferred"] }).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

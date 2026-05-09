@@ -97,6 +97,11 @@ export type TurboJsonLike = {
 
 export type RepoConfigSource = "file" | "db" | "inferred";
 
+// The DB row's `source` cannot be "file" — the resolver short-circuits on a
+// committed `.nigel.yaml` and never persists. Use this tighter type for any
+// API that touches the stored column.
+export type StoredRepoConfigSource = "db" | "inferred";
+
 export type LoadRepoConfigResult =
   | { source: "file"; config: RepoConfig }
   | { source: "db"; config: RepoConfig }

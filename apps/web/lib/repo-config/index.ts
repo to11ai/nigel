@@ -5,7 +5,11 @@ export {
   type RepoConfigRow,
   upsertRepoConfigRow,
 } from "./repository";
-export { type LoadRepoConfigInput, loadRepoConfig } from "./resolver";
+export {
+  type LoadRepoConfigInput,
+  loadRepoConfig,
+  RepoConfigCorruptError,
+} from "./resolver";
 export { applyTurboDerivation } from "./turbo-derive";
 export {
   type LoadRepoConfigResult,
@@ -13,5 +17,6 @@ export {
   type RepoConfig,
   RepoConfigSchema,
   type RepoConfigSource,
+  type StoredRepoConfigSource,
   type TurboJsonLike,
 } from "./types";

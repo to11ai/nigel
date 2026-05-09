@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { repoConfigs } from "@/lib/db/schema";
 import { upsertRepoConfigRow } from "./repository";
-import { loadRepoConfig } from "./resolver";
+import { loadRepoConfig, RepoConfigCorruptError } from "./resolver";
+import type { RepoConfig } from "./types";
 
 beforeEach(async () => {
   await db.delete(repoConfigs);
@@ -67,6 +69,25 @@ describe("loadRepoConfig", () => {
       turboJson: { tasks: {} },
     });
     expect(out2.source).toBe("inferred"); // persisted with source='inferred'
+  });
+
+  test("throws RepoConfigCorruptError when stored row fails schema validation", async () => {
+    // Insert a row whose configJson is structurally invalid (e.g., wrong
+    // version) — bypass the repository layer's typed input.
+    await db.insert(repoConfigs).values({
+      id: nanoid(),
+      repoFullName: "acme/widget",
+      configJson: { version: 99, bogus: true } as unknown as RepoConfig,
+      source: "db",
+    });
+    await expect(
+      loadRepoConfig({
+        repoFullName: "acme/widget",
+        yamlText: null,
+        packageJson: null,
+        turboJson: null,
+      }),
+    ).rejects.toThrow(RepoConfigCorruptError);
   });
 
   test("file source wins over an existing db row", async () => {

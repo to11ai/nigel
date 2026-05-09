@@ -2,11 +2,11 @@ import { autoDetectRepoConfig } from "./auto-detect";
 import { parseNigelYaml } from "./parse";
 import { getRepoConfigRow, upsertRepoConfigRow } from "./repository";
 import { applyTurboDerivation } from "./turbo-derive";
-import type {
-  LoadRepoConfigResult,
-  PackageJsonLike,
-  RepoConfig,
-  TurboJsonLike,
+import {
+  type LoadRepoConfigResult,
+  type PackageJsonLike,
+  RepoConfigSchema,
+  type TurboJsonLike,
 } from "./types";
 
 export type LoadRepoConfigInput = {
@@ -18,6 +18,16 @@ export type LoadRepoConfigInput = {
 
 const INFERRED_WARNING =
   "no .nigel.yaml found — inferred config used. Commit .nigel.yaml for canonical setup.";
+
+export class RepoConfigCorruptError extends Error {
+  constructor(repoFullName: string, options?: { cause?: unknown }) {
+    super(
+      `stored repo_configs row for '${repoFullName}' failed schema validation; the row is stale or corrupt and must be repaired before it can be used`,
+      options,
+    );
+    this.name = "RepoConfigCorruptError";
+  }
+}
 
 export async function loadRepoConfig(
   input: LoadRepoConfigInput,
@@ -32,17 +42,24 @@ export async function loadRepoConfig(
 
   const row = await getRepoConfigRow(input.repoFullName);
   if (row) {
+    // Re-validate stored config every time. A row could pre-date a schema
+    // change, or someone could have hand-edited it in the DB; either way the
+    // resolver should surface the problem rather than hand the caller a
+    // structurally invalid `RepoConfig`.
+    const validated = RepoConfigSchema.safeParse(row.configJson);
+    if (!validated.success) {
+      throw new RepoConfigCorruptError(input.repoFullName, {
+        cause: validated.error,
+      });
+    }
     if (row.source === "inferred") {
       return {
         source: "inferred",
-        config: row.configJson as RepoConfig,
+        config: validated.data,
         warning: INFERRED_WARNING,
       };
     }
-    return {
-      source: row.source,
-      config: row.configJson as RepoConfig,
-    } as const;
+    return { source: row.source, config: validated.data } as const;
   }
 
   const inferred = autoDetectRepoConfig({

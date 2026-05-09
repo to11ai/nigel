@@ -3,7 +3,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
 import { repoConfigs } from "@/lib/db/schema";
-import type { RepoConfig, RepoConfigSource } from "./types";
+import type { RepoConfig, StoredRepoConfigSource } from "./types";
 
 export type RepoConfigRow = InferSelectModel<typeof repoConfigs>;
 
@@ -21,20 +21,11 @@ export async function getRepoConfigRow(
 export async function upsertRepoConfigRow(
   repoFullName: string,
   config: RepoConfig,
-  source: RepoConfigSource,
+  source: StoredRepoConfigSource,
 ): Promise<RepoConfigRow> {
-  const existing = await getRepoConfigRow(repoFullName);
-  const now = new Date();
-
-  if (existing) {
-    const updated = await db
-      .update(repoConfigs)
-      .set({ configJson: config, source, updatedAt: now })
-      .where(eq(repoConfigs.id, existing.id))
-      .returning();
-    return updated[0];
-  }
-
+  // Single atomic INSERT...ON CONFLICT — avoids the TOCTOU window that a
+  // separate SELECT-then-INSERT/UPDATE would open under concurrent webhooks
+  // for the same repo.
   const inserted = await db
     .insert(repoConfigs)
     .values({
@@ -42,6 +33,10 @@ export async function upsertRepoConfigRow(
       repoFullName,
       configJson: config,
       source,
+    })
+    .onConflictDoUpdate({
+      target: repoConfigs.repoFullName,
+      set: { configJson: config, source, updatedAt: new Date() },
     })
     .returning();
   return inserted[0];
