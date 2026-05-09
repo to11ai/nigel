@@ -15,7 +15,6 @@ export {
   resolveProfile,
 } from "./resolve-profile";
 export type {
-  PostUpStep,
   RepoLocalStack,
   ResolvedPostUpStep,
   ResolvedProfile,

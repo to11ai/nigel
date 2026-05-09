@@ -110,4 +110,42 @@ describe("sandbox_snapshots repository", () => {
     });
     expect(other).toBeNull();
   });
+
+  test("getSandboxSnapshot skips expired rows (ttl_until in the past)", async () => {
+    const past = new Date(Date.now() - 60_000);
+    await upsertSandboxSnapshot({
+      repoFullName: "acme/widget",
+      branchOrSha: "x",
+      profile: "bare",
+      baseSnapshotId: "vsbx-stale",
+      invalidationKeys: { f: "1" },
+      keysHash: sampleHash,
+      ttlUntil: past,
+    });
+    const out = await getSandboxSnapshot({
+      repoFullName: "acme/widget",
+      profile: "bare",
+      keysHash: sampleHash,
+    });
+    expect(out).toBeNull();
+  });
+
+  test("getSandboxSnapshot returns rows whose ttl_until is in the future", async () => {
+    const future = new Date(Date.now() + 60_000);
+    await upsertSandboxSnapshot({
+      repoFullName: "acme/widget",
+      branchOrSha: "x",
+      profile: "bare",
+      baseSnapshotId: "vsbx-fresh",
+      invalidationKeys: { f: "1" },
+      keysHash: sampleHash,
+      ttlUntil: future,
+    });
+    const out = await getSandboxSnapshot({
+      repoFullName: "acme/widget",
+      profile: "bare",
+      keysHash: sampleHash,
+    });
+    expect(out?.baseSnapshotId).toBe("vsbx-fresh");
+  });
 });

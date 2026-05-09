@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/lib/db/client";
@@ -15,6 +15,10 @@ export type GetSandboxSnapshotInput = {
 export async function getSandboxSnapshot(
   input: GetSandboxSnapshotInput,
 ): Promise<SandboxSnapshotRow | null> {
+  // Filter out expired rows: a row with `ttl_until` in the past is no
+  // longer reusable. `ttl_until: null` means "no expiry" and always
+  // passes through.
+  const now = new Date();
   const rows = await db
     .select()
     .from(sandboxSnapshots)
@@ -23,6 +27,10 @@ export async function getSandboxSnapshot(
         eq(sandboxSnapshots.repoFullName, input.repoFullName),
         eq(sandboxSnapshots.profile, input.profile),
         eq(sandboxSnapshots.keysHash, input.keysHash),
+        or(
+          isNull(sandboxSnapshots.ttlUntil),
+          gt(sandboxSnapshots.ttlUntil, now),
+        ),
       ),
     )
     .limit(1);
@@ -72,5 +80,9 @@ export async function upsertSandboxSnapshot(
       },
     })
     .returning();
-  return inserted[0];
+  const row = inserted[0];
+  if (!row) {
+    throw new Error("upsertSandboxSnapshot: RETURNING produced no row");
+  }
+  return row;
 }
