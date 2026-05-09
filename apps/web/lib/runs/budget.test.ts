@@ -71,4 +71,24 @@ describe("checkRootBudget", () => {
     const blocked = await getRun(root.id);
     expect(blocked?.status).toBe("blocked");
   });
+
+  test("serializes concurrent budget checks via advisory lock", async () => {
+    const root = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      budgetUsdCapMicros: 1_000_000,
+    });
+    await updateRunStatus(root.id, "running");
+    await addCostMicros(root.id, 1_000_000);
+
+    const results = await Promise.allSettled([
+      checkRootBudget(root.id),
+      checkRootBudget(root.id),
+      checkRootBudget(root.id),
+    ]);
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+
+    const blocked = await getRun(root.id);
+    expect(blocked?.status).toBe("blocked");
+  });
 });
