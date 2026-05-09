@@ -39,7 +39,10 @@ export async function loadRepoConfig(
         warning: INFERRED_WARNING,
       };
     }
-    return { source: row.source, config: row.configJson as RepoConfig } as const;
+    return {
+      source: row.source,
+      config: row.configJson as RepoConfig,
+    } as const;
   }
 
   const inferred = autoDetectRepoConfig({
@@ -47,5 +50,9 @@ export async function loadRepoConfig(
     turboJson: input.turboJson,
   });
   await upsertRepoConfigRow(input.repoFullName, inferred, "inferred");
-  return { source: "inferred", config: inferred, warning: INFERRED_WARNING } as const;
+  return {
+    source: "inferred",
+    config: inferred,
+    warning: INFERRED_WARNING,
+  } as const;
 }
