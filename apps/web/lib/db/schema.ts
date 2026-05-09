@@ -1,5 +1,6 @@
 import type { SandboxState } from "@nigel/sandbox";
 import type { ModelVariant } from "@/lib/model-variants";
+import type { RepoConfig } from "@/lib/repo-config/types";
 import type { GlobalSkillRef } from "@/lib/skills/global-skill-refs";
 import {
   bigint,
@@ -539,6 +540,28 @@ export const specialists = pgTable(
   (table) => [
     uniqueIndex("specialists_name_idx").on(table.name),
     index("specialists_kind_idx").on(table.kind),
+  ],
+);
+
+// repo_configs — DB fallback for repos without a .nigel.yaml committed.
+// Populated either by admin via UI ('db' source) or auto-inferred from
+// package.json / turbo.json on first encounter ('inferred' source).
+// The resolver always prefers a checked-in `.nigel.yaml` over either DB row.
+export const repoConfigs = pgTable(
+  "repo_configs",
+  {
+    id: text("id").primaryKey(),
+    repoFullName: text("repo_full_name").notNull(),
+    configJson: jsonb("config_json").$type<RepoConfig>().notNull(),
+    // The resolver short-circuits on a committed `.nigel.yaml` and never
+    // persists a "file" row; only `db` (admin-set) or `inferred` (auto-detected)
+    // sources are valid here.
+    source: text("source", { enum: ["db", "inferred"] }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("repo_configs_repo_full_name_idx").on(table.repoFullName),
   ],
 );
 
