@@ -9,4 +9,7 @@ main: index.ts
 packages:
   neon:
     source: pulumi/pulumi/terraform-provider
-    version: 0.13.0
+    version: v0.13.0
+    parameters:
+      - kislerdm/neon
+      - 0.13.0
