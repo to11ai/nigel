@@ -1,0 +1,79 @@
+import { describe, expect, test } from "bun:test";
+import type { ToolSet } from "ai";
+import { filterAgentTools } from "./tool-allowlist";
+
+describe("filterAgentTools", () => {
+  const allTools = {
+    read: { _kind: "tool" },
+    write: { _kind: "tool" },
+    edit: { _kind: "tool" },
+    grep: { _kind: "tool" },
+    glob: { _kind: "tool" },
+    bash: { _kind: "tool" },
+    task: { _kind: "tool" },
+    skill: { _kind: "tool" },
+    web_fetch: { _kind: "tool" },
+    todo_write: { _kind: "tool" },
+    ask_user_question: { _kind: "tool" },
+  };
+
+  test("file expands to read+write+edit", () => {
+    const out = filterAgentTools(["file"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["edit", "read", "write"]);
+  });
+
+  test("search expands to grep+glob", () => {
+    const out = filterAgentTools(["search"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["glob", "grep"]);
+  });
+
+  test("shell expands to bash", () => {
+    const out = filterAgentTools(["shell"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["bash"]);
+  });
+
+  test("git expands to bash (no structured git tool yet)", () => {
+    const out = filterAgentTools(["git"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["bash"]);
+  });
+
+  test("web expands to web_fetch", () => {
+    const out = filterAgentTools(["web"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["web_fetch"]);
+  });
+
+  test("multiple categories deduplicate (shell+git both include bash)", () => {
+    const out = filterAgentTools(
+      ["shell", "git"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["bash"]);
+  });
+
+  test("coder allowlist [file, search, shell, git] yields six tools", () => {
+    const out = filterAgentTools(
+      ["file", "search", "shell", "git"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual([
+      "bash",
+      "edit",
+      "glob",
+      "grep",
+      "read",
+      "write",
+    ]);
+  });
+
+  test("unknown category is silently ignored", () => {
+    const out = filterAgentTools(
+      ["bogus", "shell"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["bash"]);
+  });
+
+  test("empty allowlist yields empty tool set", () => {
+    expect(filterAgentTools([], allTools as unknown as ToolSet)).toEqual({});
+  });
+});

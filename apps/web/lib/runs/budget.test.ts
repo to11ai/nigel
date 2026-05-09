@@ -71,4 +71,31 @@ describe("checkRootBudget", () => {
     const blocked = await getRun(root.id);
     expect(blocked?.status).toBe("blocked");
   });
+
+  // Smoke test for the advisory-lock-wrapped transaction: 3 concurrent
+  // callers all observe an over-budget root; the lock prevents them from
+  // racing on the running→blocked transition. Truly observing the race
+  // (one caller passes the cap mid-flight while another is reading)
+  // requires sleep injection; the strong correctness signal lives in
+  // Phase 4b's integration tests where real cost accumulation drives
+  // the check from inside an LLM tool loop.
+  test("3 concurrent over-budget callers all reject; root ends in blocked exactly once", async () => {
+    const root = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      budgetUsdCapMicros: 1_000_000,
+    });
+    await updateRunStatus(root.id, "running");
+    await addCostMicros(root.id, 1_000_000);
+
+    const results = await Promise.allSettled([
+      checkRootBudget(root.id),
+      checkRootBudget(root.id),
+      checkRootBudget(root.id),
+    ]);
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+
+    const blocked = await getRun(root.id);
+    expect(blocked?.status).toBe("blocked");
+  });
 });

@@ -39,3 +39,14 @@ export {
   dispatchSpecialistsParallel,
   SpecialistDispatchError,
 } from "./dispatch";
+
+export { filterAgentTools } from "./tool-allowlist";
+
+export {
+  type AgentSandboxContext,
+  type ProvisionedSandbox,
+  type ProvisionInput,
+  provisionSandboxForRun,
+  SandboxNotProvisionedError,
+  teardownSandboxForRun,
+} from "./sandbox-coordinator";
