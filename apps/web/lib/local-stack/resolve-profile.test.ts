@@ -87,6 +87,26 @@ describe("resolveProfile", () => {
     ).toBeNull();
   });
 
+  test("dispatch 'none' opts out even when repo has no local_stack", () => {
+    expect(
+      resolveProfile({
+        specialist: specialistNeedsStack(),
+        dispatch: { local_stack_profile: "none" },
+        localStack: null,
+      }),
+    ).toBeNull();
+  });
+
+  test("check 'none' opts out even when repo has no local_stack", () => {
+    expect(
+      resolveProfile({
+        specialist: specialistNeedsStack(),
+        check: { local_stack_profile: "none" },
+        localStack: null,
+      }),
+    ).toBeNull();
+  });
+
   test("check override wins over default when no dispatch override", () => {
     const profile = resolveProfile({
       specialist: specialistNeedsStack(),

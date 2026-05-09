@@ -34,6 +34,13 @@ export function resolveProfile(
 
   if (!specialist.needsLocalStack) return null;
 
+  // Per-call opt-out beats every other check, including a missing
+  // local_stack block. A specialist that flags `needs_local_stack: true`
+  // by default but is being dispatched with `none` must succeed even on
+  // repos that haven't (or can't) declare a stack.
+  if (dispatch?.local_stack_profile === NONE) return null;
+  if (check?.local_stack_profile === NONE) return null;
+
   if (localStack === null) {
     throw new LocalStackProfileNotResolvedError(
       specialist.name,
@@ -42,14 +49,12 @@ export function resolveProfile(
     );
   }
 
-  if (dispatch?.local_stack_profile === NONE) return null;
   if (dispatch?.local_stack_profile) {
     return lookupOrThrow(dispatch.local_stack_profile, localStack, specialist, [
       "dispatch.local_stack_profile",
     ]);
   }
 
-  if (check?.local_stack_profile === NONE) return null;
   if (check?.local_stack_profile) {
     return lookupOrThrow(check.local_stack_profile, localStack, specialist, [
       "check.local_stack_profile",
