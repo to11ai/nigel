@@ -49,6 +49,19 @@ describe("RepoConfigSchema", () => {
     ).toThrow();
   });
 
+  test("rejects local_stack.default_profile that is not a key in profiles", () => {
+    expect(() =>
+      RepoConfigSchema.parse({
+        version: 1,
+        local_stack: {
+          compose_file: "docker-compose.yaml",
+          profiles: { bare: { description: "x" } },
+          default_profile: "nonexistent",
+        },
+      }),
+    ).toThrow(/default_profile/);
+  });
+
   test("accepts post_up entries as either string or object", () => {
     const parsed = RepoConfigSchema.parse({
       version: 1,

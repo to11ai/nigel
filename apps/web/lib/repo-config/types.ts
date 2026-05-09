@@ -14,18 +14,24 @@ const ProfileSchema = z.object({
   post_up: z.array(PostUpStepSchema).optional().default([]),
 });
 
-const LocalStackSchema = z.object({
-  compose_file: z.string(),
-  wait_for: z
-    .array(z.object({ service: z.string(), cmd: z.string() }))
-    .optional()
-    .default([]),
-  env_file: z.string().optional(),
-  startup_timeout_seconds: z.number().int().positive().optional(),
-  teardown_on_exit: z.boolean().optional().default(true),
-  profiles: z.record(z.string(), ProfileSchema),
-  default_profile: z.string(),
-});
+const LocalStackSchema = z
+  .object({
+    compose_file: z.string(),
+    wait_for: z
+      .array(z.object({ service: z.string(), cmd: z.string() }))
+      .optional()
+      .default([]),
+    env_file: z.string().optional(),
+    startup_timeout_seconds: z.number().int().positive().optional(),
+    teardown_on_exit: z.boolean().optional().default(true),
+    profiles: z.record(z.string(), ProfileSchema),
+    default_profile: z.string(),
+  })
+  .refine((s) => Object.hasOwn(s.profiles, s.default_profile), {
+    message:
+      "local_stack.default_profile must reference a key in local_stack.profiles",
+    path: ["default_profile"],
+  });
 
 const CheckSchema = z.object({
   command: z.string().optional(),

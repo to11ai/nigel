@@ -52,14 +52,21 @@ export async function loadRepoConfig(
         cause: validated.error,
       });
     }
+    // Re-apply Turbo derivation on read. Stored rows may have been written
+    // before derivation was added, or admin-edited without it. Derivation is
+    // idempotent — explicit commands always win — so applying it twice is
+    // safe.
+    const derived = applyTurboDerivation(validated.data, {
+      turboJsonPresent: !!input.turboJson,
+    });
     if (row.source === "inferred") {
       return {
         source: "inferred",
-        config: validated.data,
+        config: derived,
         warning: INFERRED_WARNING,
       };
     }
-    return { source: row.source, config: validated.data } as const;
+    return { source: row.source, config: derived } as const;
   }
 
   const inferred = autoDetectRepoConfig({

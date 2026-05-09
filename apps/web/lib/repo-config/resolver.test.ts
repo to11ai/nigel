@@ -71,6 +71,27 @@ describe("loadRepoConfig", () => {
     expect(out2.source).toBe("inferred"); // persisted with source='inferred'
   });
 
+  test("db source: applies Turbo derivation on read", async () => {
+    await upsertRepoConfigRow(
+      "acme/widget",
+      {
+        version: 1,
+        setup: [],
+        turbo: { enabled: true, affected: false },
+        checks: { lint: {} },
+      },
+      "db",
+    );
+    const out = await loadRepoConfig({
+      repoFullName: "acme/widget",
+      yamlText: null,
+      packageJson: null,
+      turboJson: null,
+    });
+    expect(out.source).toBe("db");
+    expect(out.config.checks?.lint?.command).toBe("turbo run lint");
+  });
+
   test("throws RepoConfigCorruptError when stored row fails schema validation", async () => {
     // Insert a row whose configJson is structurally invalid (e.g., wrong
     // version) — bypass the repository layer's typed input.
