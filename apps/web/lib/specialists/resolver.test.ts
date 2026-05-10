@@ -83,6 +83,8 @@ describe("getSpecialist", () => {
     expect(linter?.toolAllowlist).toEqual(["file", "search", "shell"]);
     expect(linter?.sandboxPolicy).toBe("fresh");
     expect(linter?.mayRecurse).toBe(false);
+    expect(linter?.maxChildren).toBe(0);
+    expect(linter?.budgetUsdDefaultMicros).toBe(2_000_000);
     expect(linter?.needsLocalStack).toBe(false);
   });
 
