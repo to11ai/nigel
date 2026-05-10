@@ -456,9 +456,16 @@ local_stack:
   # into the command. There is no docker-compose; if a repo wants
   # Postgres, it provisions a Neon branch (or whatever it uses in prod).
   # Vercel Sandbox cannot host docker — see Phase 3b-2 followup.
+  #
+  # Each list entry is either a plain string command or an object with
+  # `cmd`, optional `timeout_seconds` (per-command cap; the outer
+  # `startup_timeout_seconds` is the total wall-clock cap), and optional
+  # `retry` count for transient failures.
   startup_commands:
     - "bun run scripts/provision-neon-branch.ts"
-    - "bun run scripts/provision-upstash.ts"
+    - cmd: "bun run scripts/provision-upstash.ts"
+      timeout_seconds: 60
+      retry: 2
     - "bun run scripts/provision-clickhouse.ts"
     - "bun run scripts/start-api &"
     - "bun run scripts/start-gateway &"
@@ -469,6 +476,7 @@ local_stack:
     - "bun run scripts/teardown-clickhouse.ts"
   env_file: .env.test
   startup_timeout_seconds: 120
+  teardown_timeout_seconds: 60
   teardown_on_exit: true
   profiles:
     bare:
