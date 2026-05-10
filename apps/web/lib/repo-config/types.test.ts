@@ -22,8 +22,8 @@ describe("RepoConfigSchema", () => {
         },
       },
       local_stack: {
-        compose_file: "docker-compose.yaml",
-        wait_for: [{ service: "db", cmd: "pg_isready -h db" }],
+        startup_commands: ["bun run scripts/provision-neon-branch.ts"],
+        teardown_commands: ["bun run scripts/teardown-neon-branch.ts"],
         profiles: {
           bare: { description: "x", post_up: ["bun run db:migrate"] },
         },
@@ -74,7 +74,6 @@ describe("RepoConfigSchema", () => {
       RepoConfigSchema.parse({
         version: 1,
         local_stack: {
-          compose_file: "docker-compose.yaml",
           profiles: { bare: { description: "x" } },
           default_profile: "nonexistent",
         },
@@ -86,7 +85,6 @@ describe("RepoConfigSchema", () => {
     const parsed = RepoConfigSchema.parse({
       version: 1,
       local_stack: {
-        compose_file: "docker-compose.yaml",
         profiles: {
           full: {
             description: "full",
@@ -100,5 +98,34 @@ describe("RepoConfigSchema", () => {
       },
     });
     expect(parsed.local_stack?.profiles.full?.post_up).toHaveLength(2);
+  });
+
+  test("startup_commands and teardown_commands accept string + object entries", () => {
+    const parsed = RepoConfigSchema.parse({
+      version: 1,
+      local_stack: {
+        startup_commands: [
+          "bun run scripts/provision-neon-branch.ts",
+          {
+            cmd: "bun run scripts/provision-upstash.ts",
+            timeout_seconds: 60,
+            retry: 2,
+          },
+        ],
+        teardown_commands: [
+          {
+            cmd: "bun run scripts/teardown-clickhouse.ts",
+            timeout_seconds: 30,
+          },
+        ],
+        startup_timeout_seconds: 120,
+        teardown_timeout_seconds: 60,
+        profiles: { bare: { description: "x" } },
+        default_profile: "bare",
+      },
+    });
+    expect(parsed.local_stack?.startup_commands).toHaveLength(2);
+    expect(parsed.local_stack?.teardown_commands).toHaveLength(1);
+    expect(parsed.local_stack?.teardown_timeout_seconds).toBe(60);
   });
 });

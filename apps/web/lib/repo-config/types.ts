@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-const PostUpStepSchema = z.union([
+// A single command in a startup_commands / teardown_commands /
+// post_up sequence. A plain string is the simple case; the object
+// form lets a repo author bound a slow or flaky command with its own
+// per-command timeout and retry count — provisioning Neon / Upstash /
+// ClickHouse / etc. has the same transient-failure characteristics
+// that motivated post_up's object shape.
+const CommandStepSchema = z.union([
   z.string(),
   z.object({
     cmd: z.string(),
@@ -11,18 +17,22 @@ const PostUpStepSchema = z.union([
 
 const ProfileSchema = z.object({
   description: z.string().optional(),
-  post_up: z.array(PostUpStepSchema).optional().default([]),
+  post_up: z.array(CommandStepSchema).optional().default([]),
 });
 
 const LocalStackSchema = z
   .object({
-    compose_file: z.string(),
-    wait_for: z
-      .array(z.object({ service: z.string(), cmd: z.string() }))
-      .optional()
-      .default([]),
+    // Commands run once per Run, before any profile's post_up, to
+    // provision the backing infra the repo needs. Each command is
+    // responsible for its own readiness (no `wait_for` step; bake it
+    // into the command). Vercel Sandbox cannot host docker, so a repo
+    // wanting Postgres provisions a Neon branch (or whatever it uses in
+    // prod) via its own script rather than spinning up a container.
+    startup_commands: z.array(CommandStepSchema).optional().default([]),
+    teardown_commands: z.array(CommandStepSchema).optional().default([]),
     env_file: z.string().optional(),
     startup_timeout_seconds: z.number().int().positive().optional(),
+    teardown_timeout_seconds: z.number().int().positive().optional(),
     teardown_on_exit: z.boolean().optional().default(true),
     profiles: z.record(z.string(), ProfileSchema),
     default_profile: z.string(),
