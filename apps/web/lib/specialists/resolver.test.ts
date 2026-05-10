@@ -102,6 +102,20 @@ describe("getSpecialist", () => {
     expect(tc?.needsLocalStack).toBe(false);
   });
 
+  test("unit-tester preset resolves with the expected shape", async () => {
+    const ut = await getSpecialist("unit-tester");
+    expect(ut).not.toBeNull();
+    expect(ut?.name).toBe("unit-tester");
+    expect(ut?.kind).toBe("preset");
+    expect(ut?.model).toBe("anthropic/claude-haiku-4.5");
+    expect(ut?.toolAllowlist).toEqual(["file", "search", "shell"]);
+    expect(ut?.sandboxPolicy).toBe("fresh");
+    expect(ut?.mayRecurse).toBe(false);
+    expect(ut?.maxChildren).toBe(0);
+    expect(ut?.budgetUsdDefaultMicros).toBe(3_000_000);
+    expect(ut?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),
