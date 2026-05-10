@@ -50,12 +50,45 @@ const coderPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven linter (Phase 4c). Runs the repo's lint command, reads
+// failures, and applies minimal fixes. Distinct from `coder`: tighter
+// scope (no git), cheaper model (haiku — most lint fixes are formulaic),
+// `fresh` sandbox so each lint run starts from a clean checkout (no
+// leftover edits from a previous specialist). may_recurse=false.
+const linterPreset: CodePreset = {
+  name: "linter",
+  kind: "preset",
+  systemPrompt: [
+    "You are `linter`, a Nigel specialist that fixes lint failures in the user's repository.",
+    "You work inside a sandboxed checkout and can read, write, search, and run shell commands.",
+    "",
+    "Working principles:",
+    "- Start by running the repo's lint command (typically `bun run lint`, `bun run check`,",
+    "  or whatever the repo declares). Capture the failures.",
+    "- Fix only the reported lint failures. No incidental refactors, no formatting beyond",
+    "  what the lint tool itself requires.",
+    "- After each batch of fixes, re-run the lint command and verify the failure count",
+    "  went down. If a fix made it worse, revert that file and try a different approach.",
+    "- Repeat until the lint command exits 0 — or until you've tried twice without progress,",
+    "  in which case stop and report exactly which rules remain unfixed and why.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-haiku-4.5",
+  toolAllowlist: ["file", "search", "shell"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 2_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
 export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [echoPreset.name]: echoPreset,
   [coderPreset.name]: coderPreset,
+  [linterPreset.name]: linterPreset,
 });
 
 export function getPresetNames(): readonly string[] {

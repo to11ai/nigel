@@ -74,6 +74,18 @@ describe("getSpecialist", () => {
     );
   });
 
+  test("linter preset resolves with the expected shape", async () => {
+    const linter = await getSpecialist("linter");
+    expect(linter).not.toBeNull();
+    expect(linter?.name).toBe("linter");
+    expect(linter?.kind).toBe("preset");
+    expect(linter?.model).toBe("anthropic/claude-haiku-4.5");
+    expect(linter?.toolAllowlist).toEqual(["file", "search", "shell"]);
+    expect(linter?.sandboxPolicy).toBe("fresh");
+    expect(linter?.mayRecurse).toBe(false);
+    expect(linter?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),
