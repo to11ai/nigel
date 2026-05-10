@@ -6,9 +6,15 @@ export const PRICING: Record<
   string,
   { in: number; out: number; cacheRead: number }
 > = {
-  "anthropic/claude-opus-4-7": { in: 15, out: 75, cacheRead: 1.5 },
-  "anthropic/claude-sonnet-4-6": { in: 3, out: 15, cacheRead: 0.3 },
-  "anthropic/claude-haiku-4-5": { in: 0.8, out: 4, cacheRead: 0.08 },
+  // Vercel AI Gateway model slugs use dots ('claude-sonnet-4.6'), not
+  // dashes. The rest of the codebase (chat tests, model variants, prefs)
+  // also uses the dot form. Keep these keys in sync with the slugs that
+  // `gateway()` is called with — `getProviderOptionsForModel` in
+  // packages/agent/models.ts only matches the dot form when deciding
+  // adaptive vs. legacy thinking settings.
+  "anthropic/claude-opus-4.7": { in: 15, out: 75, cacheRead: 1.5 },
+  "anthropic/claude-sonnet-4.6": { in: 3, out: 15, cacheRead: 0.3 },
+  "anthropic/claude-haiku-4.5": { in: 0.8, out: 4, cacheRead: 0.08 },
 };
 
 export type TokenUsage = {

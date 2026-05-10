@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns, specialists, users } from "@/lib/db/schema";
+import { BudgetExhaustedError } from "./budget";
 import { Run } from "./create";
 import {
   dispatchSpecialist,
@@ -158,5 +160,123 @@ describe("dispatchSpecialistsParallel", () => {
         { parentRunId: parent.id, specialistName: "missing", task: "fail" },
       ]),
     ).rejects.toThrow(SpecialistDispatchError);
+  });
+});
+
+// LLM-driven specialist dispatch (Phase 4b). The DI seam on
+// DispatchSpecialistInput.deps lets us drive the orchestration without
+// touching the Vercel AI Gateway or Vercel Sandbox.
+describe("dispatchSpecialist — LLM specialists", () => {
+  const stubbedSandbox = () => ({
+    sandbox: {} as never,
+    workingDirectory: "/work",
+    ownedByThisRun: false,
+    toAgentContext: () => ({
+      state: { type: "vercel" as const } as never,
+      workingDirectory: "/work",
+    }),
+    stop: async () => undefined,
+  });
+
+  test("dispatches coder end-to-end via injected execution", async () => {
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    let provisionCount = 0;
+    let teardownCount = 0;
+    const result = await dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "rename function foo to bar",
+      deps: {
+        provisionSandboxForRun: async () => {
+          provisionCount++;
+          return stubbedSandbox();
+        },
+        teardownSandboxForRun: async () => {
+          teardownCount++;
+        },
+        executeSpecialistViaLLM: async () => ({
+          output: "renamed foo to bar in 3 files",
+        }),
+      },
+    });
+
+    expect(result.output).toBe("renamed foo to bar in 3 files");
+    expect(provisionCount).toBe(1);
+    expect(teardownCount).toBe(1);
+    const child = await getRun(result.childRun.id);
+    expect(child?.status).toBe("completed");
+  });
+
+  test("transitions child to failed and runs teardown when LLM throws", async () => {
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    let teardownCount = 0;
+    const promise = dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "x",
+      deps: {
+        provisionSandboxForRun: async () => stubbedSandbox(),
+        teardownSandboxForRun: async () => {
+          teardownCount++;
+        },
+        executeSpecialistViaLLM: async () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    await expect(promise).rejects.toThrow("boom");
+    expect(teardownCount).toBe(1);
+
+    // Find the child via parent linkage since the dispatch threw before
+    // returning the child run.
+    const allChildren = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.parentRunId, parent.id));
+    expect(allChildren).toHaveLength(1);
+    expect(allChildren[0].status).toBe("failed");
+  });
+
+  test("transitions child to blocked when LLM throws BudgetExhaustedError", async () => {
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    const promise = dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "x",
+      deps: {
+        provisionSandboxForRun: async () => stubbedSandbox(),
+        teardownSandboxForRun: async () => undefined,
+        executeSpecialistViaLLM: async () => {
+          throw new BudgetExhaustedError("run_root");
+        },
+      },
+    });
+    await expect(promise).rejects.toThrow(BudgetExhaustedError);
+
+    const allChildren = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.parentRunId, parent.id));
+    expect(allChildren).toHaveLength(1);
+    expect(allChildren[0].status).toBe("blocked");
+    expect(allChildren[0].blockedReason).toBe("budget exhausted");
   });
 });

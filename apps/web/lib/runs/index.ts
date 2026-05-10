@@ -50,3 +50,9 @@ export {
   SandboxNotProvisionedError,
   teardownSandboxForRun,
 } from "./sandbox-coordinator";
+
+export {
+  type ExecuteSpecialistInput,
+  type ExecuteSpecialistResult,
+  executeSpecialistViaLLM,
+} from "./specialist-execution";

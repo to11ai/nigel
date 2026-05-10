@@ -17,7 +17,7 @@ describe("specialists repository", () => {
     const created = await upsertCustomSpecialist({
       name: "my-role",
       systemPrompt: "Be helpful",
-      model: "anthropic/claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4.5",
       toolAllowlist: ["file"],
       sandboxPolicy: "inherit",
       mayRecurse: false,
@@ -31,7 +31,7 @@ describe("specialists repository", () => {
     const updated = await upsertCustomSpecialist({
       name: "my-role",
       systemPrompt: "Be very helpful",
-      model: "anthropic/claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4.5",
       toolAllowlist: ["file", "search"],
       sandboxPolicy: "inherit",
       mayRecurse: false,
@@ -70,7 +70,7 @@ describe("specialists repository", () => {
       upsertCustomSpecialist({
         name: "echo",
         systemPrompt: "x",
-        model: "anthropic/claude-haiku-4-5",
+        model: "anthropic/claude-haiku-4.5",
         toolAllowlist: [],
         sandboxPolicy: "fresh",
         mayRecurse: false,
@@ -92,7 +92,7 @@ describe("specialists repository", () => {
     await upsertCustomSpecialist({
       name: "alpha",
       systemPrompt: "x",
-      model: "anthropic/claude-haiku-4-5",
+      model: "anthropic/claude-haiku-4.5",
       toolAllowlist: [],
       sandboxPolicy: "fresh",
       mayRecurse: false,

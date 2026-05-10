@@ -5,7 +5,12 @@ export type {
   OpenAgentCallOptions,
   OpenAgentModelInput,
 } from "./open-agent";
-export { defaultModel, defaultModelLabel, openAgent } from "./open-agent";
+export {
+  defaultModel,
+  defaultModelLabel,
+  nigelTools,
+  openAgent,
+} from "./open-agent";
 // Skills exports
 export { discoverSkills, parseSkillFrontmatter } from "./skills/discovery";
 export { extractSkillBody, substituteArguments } from "./skills/loader";
