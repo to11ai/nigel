@@ -79,6 +79,7 @@ describe("getSpecialist", () => {
     expect(linter).not.toBeNull();
     expect(linter?.name).toBe("linter");
     expect(linter?.kind).toBe("preset");
+    expect(linter?.systemPrompt).toContain("linter");
     expect(linter?.model).toBe("anthropic/claude-haiku-4.5");
     expect(linter?.toolAllowlist).toEqual(["file", "search", "shell"]);
     expect(linter?.sandboxPolicy).toBe("fresh");
@@ -93,6 +94,7 @@ describe("getSpecialist", () => {
     expect(tc).not.toBeNull();
     expect(tc?.name).toBe("type-checker");
     expect(tc?.kind).toBe("preset");
+    expect(tc?.systemPrompt).toContain("type-checker");
     expect(tc?.model).toBe("anthropic/claude-haiku-4.5");
     expect(tc?.toolAllowlist).toEqual(["file", "search", "shell"]);
     expect(tc?.sandboxPolicy).toBe("fresh");
@@ -107,6 +109,7 @@ describe("getSpecialist", () => {
     expect(ut).not.toBeNull();
     expect(ut?.name).toBe("unit-tester");
     expect(ut?.kind).toBe("preset");
+    expect(ut?.systemPrompt).toContain("unit-tester");
     expect(ut?.model).toBe("anthropic/claude-haiku-4.5");
     expect(ut?.toolAllowlist).toEqual(["file", "search", "shell"]);
     expect(ut?.sandboxPolicy).toBe("fresh");
