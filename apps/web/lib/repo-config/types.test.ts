@@ -22,8 +22,8 @@ describe("RepoConfigSchema", () => {
         },
       },
       local_stack: {
-        compose_file: "docker-compose.yaml",
-        wait_for: [{ service: "db", cmd: "pg_isready -h db" }],
+        startup_commands: ["bun run scripts/provision-neon-branch.ts"],
+        teardown_commands: ["bun run scripts/teardown-neon-branch.ts"],
         profiles: {
           bare: { description: "x", post_up: ["bun run db:migrate"] },
         },
@@ -74,7 +74,6 @@ describe("RepoConfigSchema", () => {
       RepoConfigSchema.parse({
         version: 1,
         local_stack: {
-          compose_file: "docker-compose.yaml",
           profiles: { bare: { description: "x" } },
           default_profile: "nonexistent",
         },
@@ -86,7 +85,6 @@ describe("RepoConfigSchema", () => {
     const parsed = RepoConfigSchema.parse({
       version: 1,
       local_stack: {
-        compose_file: "docker-compose.yaml",
         profiles: {
           full: {
             description: "full",

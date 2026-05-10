@@ -12,7 +12,7 @@ Fork of [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents), r
 3. Linear ticket triggers (assign-to-bot model with ping-pong reassignment to capture human ownership).
 4. Chained-agent triggers (one Run dispatching follow-up Runs as a top-level trigger source).
 5. Expanded tool surface: browser automation (Playwright + multi-resolution screenshots), database access, cloud SDKs, registered MCP servers, Slack outbound.
-6. Per-repo `.nigel.yaml` config with Turbo-aware command derivation, `local_stack` (docker-compose) profiles for stateful test setups, and snapshot caching for fast bootstrap.
+6. Per-repo `.nigel.yaml` config with Turbo-aware command derivation, `local_stack` profiles (named startup/seeding recipes; commands rather than docker-compose) for stateful test setups, and snapshot caching for fast bootstrap.
 7. Cost guardrails (per-Run budget caps, per-org monthly caps).
 8. Datadog-backed observability via OpenTelemetry, including dashboards and alerts managed as code.
 9. UI surface for the Run hierarchy, visual proof galleries, admin configuration of specialists, repos, and tool connections.
@@ -449,10 +449,24 @@ checks:
     needs: [dev_server]
 
 local_stack:
-  compose_file: docker-compose.yaml
-  wait_for:
-    - { service: db,    cmd: "pg_isready -h db" }
-    - { service: redis, cmd: "redis-cli -h redis ping" }
+  # Commands run once per Run, before any profile, to provision the
+  # backing infra the repo needs. Each command is responsible for its
+  # own readiness — a Neon-branch provisioning script should not return
+  # until the branch is reachable. There is no `wait_for` step; bake it
+  # into the command. There is no docker-compose; if a repo wants
+  # Postgres, it provisions a Neon branch (or whatever it uses in prod).
+  # Vercel Sandbox cannot host docker — see Phase 3b-2 followup.
+  startup_commands:
+    - "bun run scripts/provision-neon-branch.ts"
+    - "bun run scripts/provision-upstash.ts"
+    - "bun run scripts/provision-clickhouse.ts"
+    - "bun run scripts/start-api &"
+    - "bun run scripts/start-gateway &"
+    - "bun run scripts/start-web &"
+  teardown_commands:
+    - "bun run scripts/teardown-neon-branch.ts"
+    - "bun run scripts/teardown-upstash.ts"
+    - "bun run scripts/teardown-clickhouse.ts"
   env_file: .env.test
   startup_timeout_seconds: 120
   teardown_on_exit: true
@@ -515,7 +529,7 @@ function resolveProfile(check, specialist, dispatch, repo): Profile | null {
 }
 ```
 
-`local_stack_profile: none` (or omitted on a no-stack check) skips docker-compose entirely. If a specialist requires `needs_local_stack: true` and no profile resolves, the Run fails fast with a clear error citing the specialist name and the chain of fallbacks that returned nothing.
+`local_stack_profile: none` (or omitted on a no-stack check) skips the entire local-stack bootstrap (no `startup_commands`, no profile's `post_up`). If a specialist requires `needs_local_stack: true` and no profile resolves, the Run fails fast with a clear error citing the specialist name and the chain of fallbacks that returned nothing.
 
 The planner specialist receives the list of available profile names (`Object.keys(repo.profiles)`) at start; it picks per task using its own judgment, not by hard-coded name.
 
@@ -526,22 +540,22 @@ sandbox_snapshots
   id, repo_full_name, branch_or_sha, profile, base_snapshot_id
   built_at, ttl_until, size_bytes
   invalidation_keys: {
-    'docker-compose.yaml': sha256,
     'package-lock': sha256,
     'migration-files': sha256,
-    'seed-script': sha256
+    'seed-script': sha256,
+    '.nigel.yaml.local_stack': sha256,   // hash of the local_stack subtree
   }
 ```
 
 Bootstrap flow:
 
 1. Run dispatch with profile resolved.
-2. Compute invalidation keys from current files.
+2. Compute invalidation keys from current files (including a hash of the `.nigel.yaml` `local_stack` subtree so changes to `startup_commands` / `teardown_commands` / `post_up` invalidate the cache).
 3. Query `sandbox_snapshots` for an exact match on `(repo, profile, keys)`.
-4. **Hit**: resume from snapshot — ready in seconds.
-5. **Miss**: full bootstrap (`compose up`, wait for readiness, run post-up scripts), then snapshot the result and register the row.
+4. **Hit**: resume from snapshot — backing infra and seed state already in place, ready in seconds.
+5. **Miss**: full bootstrap: run `startup_commands` (provision external services + start any locally-hosted processes), run the profile's `post_up` commands, then snapshot the sandbox filesystem and register the row.
 
-When migration files, seed scripts, compose file, or lockfile change, the snapshot is implicitly invalidated.
+When migration files, seed scripts, the local_stack config, or the lockfile change, the snapshot is implicitly invalidated.
 
 ### 7. UI
 
@@ -620,7 +634,7 @@ trace: <root_run_id>
    ├─ span: sandbox.exec
    ├─ span: linear.comment
    ├─ span: pulumi.preview
-   ├─ span: docker.compose_up
+   ├─ span: local_stack.startup
    └─ span: profile.post_up
 ```
 
@@ -766,7 +780,7 @@ Each Run is its own Workflow SDK instance with its own sandbox. One failing Run 
 - Linear comment command parser (`/approve`, `/reject`, `/resume`, `/run`, `/cancel`).
 - Repo-mapping resolver: Linear native > team_repo_map > label override.
 - Trigger source dedup: idempotency key derivation for webhook events.
-- Snapshot invalidation key hashing: lockfile + compose + migrations + seeds.
+- Snapshot invalidation key hashing: lockfile + local_stack subtree + migrations + seeds.
 
 Target: < 10s for full unit suite. Run on every commit.
 
@@ -871,7 +885,7 @@ Phase 1's feature flag covers Phase 2-3 rollouts. Phase 4+ each ships behind its
 7. A `visual-prover` Run posts a Linear comment with screenshots at every default-matrix resolution and a link to `/runs/:id/proof` that renders the same images.
 8. `/admin/connections` allows admin to register a Postgres `tool_connections.kind='database'` row; `db-analyst` Run can query it; secret never appears in spans, logs, artifacts, or Linear comments.
 9. A repo with `turbo.json` and no `.nigel.yaml` runs lint/typecheck/test via derived `turbo run` commands without admin intervention.
-10. A repo declaring `local_stack.profiles.onboarded` runs `e2e-tester` against `compose up` + post-up scripts; second run with same hashes resumes from snapshot in under 10 seconds.
+10. A repo declaring `local_stack.profiles.onboarded` runs `e2e-tester` against `startup_commands` + the profile's `post_up` scripts; second run with same hashes resumes from snapshot in under 10 seconds.
 11. A `pulumi-engineer` Run can run `pulumi preview` but cannot run `pulumi up` (allowlist enforces).
 12. Datadog dashboards (`Run health`, `Cost`, `Linear pipeline`, `Sandbox bootstrap`, `Tool reliability`) render with live data from a deployed Nigel.
 13. Kill -9 the web app mid-Run; on restart, Workflow SDK resumes from the last checkpoint and the Run reaches `completed` if it was on track.
@@ -891,8 +905,8 @@ Phase 1's feature flag covers Phase 2-3 rollouts. Phase 4+ each ships behind its
 ## Assumptions
 
 1. Upstream `vercel-labs/open-agents` HEAD as of fork date is stable enough to base on; no in-flight breaking changes expected from upstream during Phase 0–1.
-2. Vercel Sandbox supports docker-in-docker (compose up) within the sandbox image. If not, `local_stack` requires a custom base snapshot with docker pre-installed; that custom snapshot becomes a deploy prerequisite documented in the deploy guide.
-3. Vercel AI Gateway exposes Anthropic and OpenAI with the slugs we expect (`anthropic/claude-opus-4-7`, `anthropic/claude-sonnet-4-6`, `anthropic/claude-haiku-4-5`, `openai/gpt-*`). Pricing table in code is updated when slugs or prices change.
+2. ~~Vercel Sandbox supports docker-in-docker (compose up) within the sandbox image. If not, `local_stack` requires a custom base snapshot with docker pre-installed; that custom snapshot becomes a deploy prerequisite documented in the deploy guide.~~ **Invalidated 2026-05-09**: a spike confirmed Vercel Sandbox's capability bounding set excludes `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, and `CAP_SYS_PTRACE`. Docker cannot run inside Vercel Sandbox regardless of binary availability. `local_stack` was redesigned as a list of `startup_commands` + `teardown_commands` + profile `post_up` commands the repo author writes against its chosen cloud APIs (Neon, Upstash, ClickHouse Cloud, etc.) rather than docker-compose. See section 6.
+3. Vercel AI Gateway exposes Anthropic and OpenAI with the slugs we expect (`anthropic/claude-opus-4.7`, `anthropic/claude-sonnet-4.6`, `anthropic/claude-haiku-4.5`, `openai/gpt-*`). Pricing table in code is updated when slugs or prices change.
 4. Pulumi MCP server exists and exposes the tools `preview`, `stack_output`, `stack_history`, `list_stacks`. If naming differs, the connection's `allowed_tools` adjusts at registration time.
 5. Linear's webhook events include `Issue.assignee_changed` with both prior and new assignee, plus an `actor` field identifying who made the change. If actor is not provided, fall back to `creator` per Section 3.
 6. Linear renders inline image markdown (`![alt](url)`) in comments. If not, fall back to `attachmentCreate` mutation with image URLs.

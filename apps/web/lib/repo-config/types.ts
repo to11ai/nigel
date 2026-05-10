@@ -16,11 +16,14 @@ const ProfileSchema = z.object({
 
 const LocalStackSchema = z
   .object({
-    compose_file: z.string(),
-    wait_for: z
-      .array(z.object({ service: z.string(), cmd: z.string() }))
-      .optional()
-      .default([]),
+    // Commands run once per Run, before any profile's post_up, to
+    // provision the backing infra the repo needs. Each command is
+    // responsible for its own readiness (no `wait_for` step; bake it
+    // into the command). Vercel Sandbox cannot host docker, so a repo
+    // wanting Postgres provisions a Neon branch (or whatever it uses in
+    // prod) via its own script rather than spinning up a container.
+    startup_commands: z.array(z.string()).optional().default([]),
+    teardown_commands: z.array(z.string()).optional().default([]),
     env_file: z.string().optional(),
     startup_timeout_seconds: z.number().int().positive().optional(),
     teardown_on_exit: z.boolean().optional().default(true),

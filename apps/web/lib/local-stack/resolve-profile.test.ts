@@ -26,8 +26,8 @@ const specialistNeedsStack = (): ResolvedSpecialist => ({
 });
 
 const sampleStack = (): RepoLocalStack => ({
-  compose_file: "docker-compose.yaml",
-  wait_for: [],
+  startup_commands: [],
+  teardown_commands: [],
   teardown_on_exit: true,
   profiles: {
     bare: { description: "minimal", post_up: [] },
