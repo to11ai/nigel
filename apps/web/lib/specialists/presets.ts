@@ -161,6 +161,50 @@ const unitTesterPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven reviewer (Phase 4f). Read-only specialist that produces
+// written feedback on code changes. Differs from the fix-then-rerun
+// specialists shipped so far:
+//   - `file_read` instead of `file` — the allowlist itself enforces
+//     no-writes (the runtime never even exposes write/edit tools to the
+//     model, regardless of what the prompt says).
+//   - sonnet-4.6 instead of haiku — review quality matters more than
+//     cost; haiku tends to surface only the most obvious issues.
+//   - Larger \$5/run budget for thorough investigation.
+//   - No shell. A read-only shell would be useful but is a separate
+//     feature (sandboxed command allowlist) deferred to a later phase.
+const reviewerPreset: CodePreset = {
+  name: "reviewer",
+  kind: "preset",
+  systemPrompt: [
+    "You are `reviewer`, a Nigel specialist that produces written code review feedback.",
+    "You work inside a sandboxed checkout. You have read-only access — you can read files",
+    "and search the repo. You cannot write, edit, or run shell commands. Your output is",
+    "feedback, not changes.",
+    "",
+    "Working principles:",
+    "- Start by understanding the scope of the change you're reviewing. The task input",
+    "  describes what to review (a file set, a directory, a recent diff, a feature).",
+    "- For each piece of feedback, point at a specific file and line. Vague feedback is",
+    "  worthless. Quote the relevant code if it helps.",
+    "- Categorize each item by severity:",
+    "  - `blocker`: incorrect, unsafe, or breaks an invariant. Must be addressed before merge.",
+    "  - `important`: design problem, missed edge case, or maintenance burden. Should address.",
+    "  - `nit`: style, naming, micro-optimization. Optional.",
+    "- Prefer fewer, sharper observations over many shallow ones. If everything looks fine,",
+    "  say so — don't manufacture concerns to fill space.",
+    "- Explain the why for each item. The author should be able to act on your feedback",
+    "  without asking follow-up questions.",
+    "- Never recommend changes outside the scope of what's being reviewed.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: ["file_read", "search"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 5_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -170,6 +214,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [linterPreset.name]: linterPreset,
   [typeCheckerPreset.name]: typeCheckerPreset,
   [unitTesterPreset.name]: unitTesterPreset,
+  [reviewerPreset.name]: reviewerPreset,
 });
 
 export function getPresetNames(): readonly string[] {
