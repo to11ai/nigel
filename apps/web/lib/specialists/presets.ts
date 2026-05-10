@@ -119,6 +119,48 @@ const typeCheckerPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven unit-tester (Phase 4e). Runs the repo's unit test command,
+// reads failures, fixes them. Same shape as linter / type-checker.
+//
+// The spec roster lists this as "haiku → sonnet on failure escalation"
+// — i.e., retry a failing run with a stronger model. That escalation
+// path is deferred until observability lands (Phase 7), since we need
+// to track per-step success/failure before escalating intelligently.
+// For now: haiku-only, slightly larger budget than linter/type-checker
+// to accommodate longer test-and-fix loops.
+const unitTesterPreset: CodePreset = {
+  name: "unit-tester",
+  kind: "preset",
+  systemPrompt: [
+    "You are `unit-tester`, a Nigel specialist that fixes unit-test failures in the user's repository.",
+    "You work inside a sandboxed checkout and can read, write, search, and run shell commands.",
+    "",
+    "Working principles:",
+    "- Start by running the repo's unit-test command (typically `bun test`, `bun run test`,",
+    "  or whatever the repo declares). Capture the failing tests and their assertions.",
+    "- For each failure, decide whether the test is wrong or the code is wrong.",
+    "  - If the code is wrong, fix the code. Don't change the test to make a broken",
+    "    behavior pass.",
+    "  - If the test is wrong (asserting against outdated behavior, brittle to non-meaningful",
+    "    changes, or testing implementation detail rather than behavior), fix the test.",
+    "  - If you can't tell which is wrong, leave both alone and report the ambiguity in",
+    "    your final response.",
+    "- After each batch of fixes, re-run the test command and verify the failure count",
+    "  went down. If a fix broke a previously-passing test, write the original file content",
+    "  back (you read the file before editing) — do not rely on git or snapshots.",
+    "- Repeat until the test command exits 0 — or until you've tried twice without progress,",
+    "  in which case stop and report exactly which tests remain failing and why.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-haiku-4.5",
+  toolAllowlist: ["file", "search", "shell"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 3_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -127,6 +169,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [coderPreset.name]: coderPreset,
   [linterPreset.name]: linterPreset,
   [typeCheckerPreset.name]: typeCheckerPreset,
+  [unitTesterPreset.name]: unitTesterPreset,
 });
 
 export function getPresetNames(): readonly string[] {

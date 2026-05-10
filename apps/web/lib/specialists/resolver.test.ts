@@ -79,6 +79,7 @@ describe("getSpecialist", () => {
     expect(linter).not.toBeNull();
     expect(linter?.name).toBe("linter");
     expect(linter?.kind).toBe("preset");
+    expect(linter?.systemPrompt).toContain("linter");
     expect(linter?.model).toBe("anthropic/claude-haiku-4.5");
     expect(linter?.toolAllowlist).toEqual(["file", "search", "shell"]);
     expect(linter?.sandboxPolicy).toBe("fresh");
@@ -93,6 +94,7 @@ describe("getSpecialist", () => {
     expect(tc).not.toBeNull();
     expect(tc?.name).toBe("type-checker");
     expect(tc?.kind).toBe("preset");
+    expect(tc?.systemPrompt).toContain("type-checker");
     expect(tc?.model).toBe("anthropic/claude-haiku-4.5");
     expect(tc?.toolAllowlist).toEqual(["file", "search", "shell"]);
     expect(tc?.sandboxPolicy).toBe("fresh");
@@ -100,6 +102,21 @@ describe("getSpecialist", () => {
     expect(tc?.maxChildren).toBe(0);
     expect(tc?.budgetUsdDefaultMicros).toBe(2_000_000);
     expect(tc?.needsLocalStack).toBe(false);
+  });
+
+  test("unit-tester preset resolves with the expected shape", async () => {
+    const ut = await getSpecialist("unit-tester");
+    expect(ut).not.toBeNull();
+    expect(ut?.name).toBe("unit-tester");
+    expect(ut?.kind).toBe("preset");
+    expect(ut?.systemPrompt).toContain("unit-tester");
+    expect(ut?.model).toBe("anthropic/claude-haiku-4.5");
+    expect(ut?.toolAllowlist).toEqual(["file", "search", "shell"]);
+    expect(ut?.sandboxPolicy).toBe("fresh");
+    expect(ut?.mayRecurse).toBe(false);
+    expect(ut?.maxChildren).toBe(0);
+    expect(ut?.budgetUsdDefaultMicros).toBe(3_000_000);
+    expect(ut?.needsLocalStack).toBe(false);
   });
 
   test("rejects a custom row missing required fields", async () => {
