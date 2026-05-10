@@ -169,7 +169,7 @@ const unitTesterPreset: CodePreset = {
 //     model, regardless of what the prompt says).
 //   - sonnet-4.6 instead of haiku — review quality matters more than
 //     cost; haiku tends to surface only the most obvious issues.
-//   - Larger \$5/run budget for thorough investigation.
+//   - Larger $5/run budget for thorough investigation.
 //   - No shell. A read-only shell would be useful but is a separate
 //     feature (sandboxed command allowlist) deferred to a later phase.
 const reviewerPreset: CodePreset = {
@@ -195,6 +195,9 @@ const reviewerPreset: CodePreset = {
     "- Explain the why for each item. The author should be able to act on your feedback",
     "  without asking follow-up questions.",
     "- Never recommend changes outside the scope of what's being reviewed.",
+    "- If the task input is too vague to know what to review, return an explicit",
+    "  description of what context you'd need to do a meaningful review — do not",
+    "  invent a scope or produce filler observations on arbitrary files.",
   ].join("\n"),
   model: "anthropic/claude-sonnet-4.6",
   toolAllowlist: ["file_read", "search"],
