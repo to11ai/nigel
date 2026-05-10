@@ -88,6 +88,20 @@ describe("getSpecialist", () => {
     expect(linter?.needsLocalStack).toBe(false);
   });
 
+  test("type-checker preset resolves with the expected shape", async () => {
+    const tc = await getSpecialist("type-checker");
+    expect(tc).not.toBeNull();
+    expect(tc?.name).toBe("type-checker");
+    expect(tc?.kind).toBe("preset");
+    expect(tc?.model).toBe("anthropic/claude-haiku-4.5");
+    expect(tc?.toolAllowlist).toEqual(["file", "search", "shell"]);
+    expect(tc?.sandboxPolicy).toBe("fresh");
+    expect(tc?.mayRecurse).toBe(false);
+    expect(tc?.maxChildren).toBe(0);
+    expect(tc?.budgetUsdDefaultMicros).toBe(2_000_000);
+    expect(tc?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),

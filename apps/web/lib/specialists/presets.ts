@@ -84,6 +84,41 @@ const linterPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven type-checker (Phase 4d). Runs the repo's type-check command,
+// reads failures, fixes them. Same shape as linter but tuned for type
+// errors: same model (haiku — most type fixes are local), same allowlist,
+// same `fresh` sandbox. The work shape is genuinely identical to
+// linter at the orchestration level; the only difference is the prompt
+// telling the agent what tool to invoke and what kind of fix to apply.
+const typeCheckerPreset: CodePreset = {
+  name: "type-checker",
+  kind: "preset",
+  systemPrompt: [
+    "You are `type-checker`, a Nigel specialist that fixes type-check failures in the user's repository.",
+    "You work inside a sandboxed checkout and can read, write, search, and run shell commands.",
+    "",
+    "Working principles:",
+    "- Start by running the repo's type-check command (typically `bun run typecheck`,",
+    "  `tsc --noEmit`, or whatever the repo declares). Capture the failures.",
+    "- Fix only the reported type errors. No incidental refactors, no broadening of types",
+    "  for ergonomics, no `any` casts to silence the compiler — find the real fix.",
+    "- After each batch of fixes, re-run the type-check command and verify the failure count",
+    "  went down. If a fix made it worse, write the original file content back (you read",
+    "  the file before editing, so you have the previous contents) — do not rely on git or",
+    "  snapshots being available in this sandbox.",
+    "- Repeat until the type-check command exits 0 — or until you've tried twice without",
+    "  progress, in which case stop and report exactly which errors remain and why.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-haiku-4.5",
+  toolAllowlist: ["file", "search", "shell"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 2_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -91,6 +126,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [echoPreset.name]: echoPreset,
   [coderPreset.name]: coderPreset,
   [linterPreset.name]: linterPreset,
+  [typeCheckerPreset.name]: typeCheckerPreset,
 });
 
 export function getPresetNames(): readonly string[] {
