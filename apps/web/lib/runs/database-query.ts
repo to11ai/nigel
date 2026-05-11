@@ -340,7 +340,7 @@ function buildConnectionUrl(
 ): string {
   const user = encodeURIComponent(config.user);
   const password = encodeURIComponent(secrets.password);
-  const host = encodeURIComponent(config.host);
+  const host = formatHostForUrl(config.host);
   const database = encodeURIComponent(config.database);
   const url = new URL(
     `postgres://${user}:${password}@${host}:${config.port}/${database}`,
@@ -350,4 +350,24 @@ function buildConnectionUrl(
   // chain + hostname validation on top.
   url.searchParams.set("sslmode", config.sslMode);
   return url.toString();
+}
+
+// URL hosts can't be percent-encoded the way path/query components
+// can: `encodeURIComponent` mangles IPv6 (`::1` → `%3A%3A1`) and the
+// brackets that wrap it. Treat the host as opaque and only normalize
+// the IPv6 bracket convention. Named hosts and IPv4 addresses pass
+// through unchanged; bare IPv6 gets wrapped in `[...]` so the URL
+// parser splits host from port correctly.
+function formatHostForUrl(host: string): string {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host;
+  }
+  // IPv6 addresses contain colons but no dots (an IPv4-mapped IPv6
+  // address like ::ffff:1.2.3.4 still contains colons, so the dot
+  // check would mis-classify it as v4 — fall back to "contains colon"
+  // as the signal).
+  if (host.includes(":")) {
+    return `[${host}]`;
+  }
+  return host;
 }
