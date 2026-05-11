@@ -62,20 +62,26 @@ const McpSecretsSchema = z.object({
   // HTTP transport typically carries an OAuth/bearer token; stdio
   // transport rarely needs one but allow for sidecar credentials.
   // Both fields are optional so an unauthenticated dev MCP server
-  // can still be represented.
-  bearerToken: z.string().optional(),
+  // can still be represented — callers who don't have a token
+  // should omit the field entirely. An empty string is rejected
+  // because it'd ship as a literal "Authorization: Bearer " header
+  // that produces a baffling 401 only when the tool runs.
+  bearerToken: z.string().min(1).optional(),
   // Free-form key/value bag for transports that need extra headers
   // or environment variables (e.g. `GITHUB_TOKEN`, `LINEAR_API_KEY`).
-  // Stored encrypted alongside the bearer token.
-  env: z.record(z.string(), z.string()).optional(),
+  // Stored encrypted alongside the bearer token. Empty keys / values
+  // are rejected for the same reason as `bearerToken`.
+  env: z.record(z.string().min(1), z.string().min(1)).optional(),
 });
 
 const SlackConfigSchema = z.object({
   // Channel ID or webhook target description. The webhook URL itself
   // is a secret (it carries authentication).
   channel: z.string().min(1),
-  // Optional bot display name override.
-  username: z.string().optional(),
+  // Optional bot display name override. Empty strings are rejected
+  // (same rationale as the MCP optionals): callers who don't want a
+  // custom name should omit the field.
+  username: z.string().min(1).optional(),
 });
 
 const SlackSecretsSchema = z.object({

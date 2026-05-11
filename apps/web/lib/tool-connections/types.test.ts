@@ -96,6 +96,24 @@ describe("validateConfigForKind — mcp", () => {
   });
 });
 
+describe("validateSecretsForKind — mcp", () => {
+  test("accepts an omitted bearerToken (unauthenticated dev MCP)", () => {
+    expect(validateSecretsForKind("mcp", {})).toEqual({});
+  });
+
+  test("rejects an empty-string bearerToken", () => {
+    expect(() => validateSecretsForKind("mcp", { bearerToken: "" })).toThrow(
+      ToolConnectionValidationError,
+    );
+  });
+
+  test("rejects an empty-string env value", () => {
+    expect(() => validateSecretsForKind("mcp", { env: { TOKEN: "" } })).toThrow(
+      ToolConnectionValidationError,
+    );
+  });
+});
+
 describe("validateConfigForKind — slack", () => {
   test("accepts a channel-only config", () => {
     const config = validateConfigForKind("slack", { channel: "#ops" });
