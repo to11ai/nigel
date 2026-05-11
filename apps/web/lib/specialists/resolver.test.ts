@@ -89,6 +89,21 @@ describe("getSpecialist", () => {
     expect(linter?.needsLocalStack).toBe(false);
   });
 
+  test("formatter preset resolves with the expected shape", async () => {
+    const f = await getSpecialist("formatter");
+    expect(f).not.toBeNull();
+    expect(f?.name).toBe("formatter");
+    expect(f?.kind).toBe("preset");
+    expect(f?.systemPrompt).toContain("formatter");
+    expect(f?.model).toBe("anthropic/claude-haiku-4.5");
+    expect(f?.toolAllowlist).toEqual(["file", "search", "shell"]);
+    expect(f?.sandboxPolicy).toBe("fresh");
+    expect(f?.mayRecurse).toBe(false);
+    expect(f?.maxChildren).toBe(0);
+    expect(f?.budgetUsdDefaultMicros).toBe(2_000_000);
+    expect(f?.needsLocalStack).toBe(false);
+  });
+
   test("type-checker preset resolves with the expected shape", async () => {
     const tc = await getSpecialist("type-checker");
     expect(tc).not.toBeNull();

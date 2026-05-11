@@ -84,6 +84,48 @@ const linterPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven formatter (Phase 4j). Runs the repo's format command and
+// applies the resulting changes. Same shape as `linter`/`type-checker`
+// at the orchestration level: haiku for cheap formulaic edits, `fresh`
+// sandbox so each run starts from a clean checkout, `may_recurse:
+// false`. The only meaningful difference from `linter` is the prompt
+// telling the agent which command to invoke and what kind of
+// remediation is in scope (whitespace, quoting, import order — not
+// semantic refactors).
+const formatterPreset: CodePreset = {
+  name: "formatter",
+  kind: "preset",
+  systemPrompt: [
+    "You are `formatter`, a Nigel specialist that applies the repository's code-formatting",
+    "rules. You work inside a sandboxed checkout and can read, write, search, and run shell",
+    "commands.",
+    "",
+    "Working principles:",
+    "- Start by running the repo's format command (typically `bun run format`, `bun run fix`,",
+    "  `prettier --write`, or whatever the repo declares). If the command modifies files",
+    "  on its own, capture which files changed.",
+    "- If the formatter has a check-only mode (e.g. `--check`, `bun run check`), run that",
+    "  afterwards to verify the working tree is clean. Repeat the apply step if needed.",
+    "- Stay strictly within formatting scope: whitespace, indentation, quote style, trailing",
+    "  commas, import ordering, and other syntactic concerns the formatter itself owns.",
+    "  Do NOT rename identifiers, restructure code, or fix lint/type errors — those are",
+    "  other specialists' jobs.",
+    "- If a formatter rewrite produces clearly-broken code (e.g. syntax error in a file the",
+    "  formatter touched), write the original file content back (you read the file before",
+    "  editing) and report the formatter bug rather than papering over it.",
+    "- Stop when the format command exits 0 — or after two attempts without progress,",
+    "  reporting exactly which files still have unresolved formatting issues and why.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-haiku-4.5",
+  toolAllowlist: ["file", "search", "shell"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 2_000_000,
+  needsLocalStack: false,
+};
+
 // LLM-driven type-checker (Phase 4d). Runs the repo's type-check command,
 // reads failures, fixes them. Same shape as linter but tuned for type
 // errors: same model (haiku — most type fixes are local), same allowlist,
@@ -366,6 +408,7 @@ const plannerPreset: CodePreset = {
     "Available specialists you can dispatch:",
     "- `coder`: makes minimal, correct code changes. Use for the actual edit work.",
     "- `linter`: fixes lint failures after a code change.",
+    "- `formatter`: applies the repository's formatter (whitespace, quoting, import order).",
     "- `type-checker`: fixes type errors after a code change.",
     "- `unit-tester`: fixes failing unit tests, or writes new ones for added behavior.",
     "- `reviewer`: read-only friendly review. Surfaces obvious issues.",
@@ -416,6 +459,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [echoPreset.name]: echoPreset,
   [coderPreset.name]: coderPreset,
   [linterPreset.name]: linterPreset,
+  [formatterPreset.name]: formatterPreset,
   [typeCheckerPreset.name]: typeCheckerPreset,
   [unitTesterPreset.name]: unitTesterPreset,
   [reviewerPreset.name]: reviewerPreset,
