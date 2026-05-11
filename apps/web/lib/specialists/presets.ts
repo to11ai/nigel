@@ -426,59 +426,58 @@ const researcherPreset: CodePreset = {
   needsLocalStack: false,
 };
 
-// LLM-driven db-analyst (Phase 5c). Answers questions against
-// registered Postgres connections via the `database_query` tool.
-//   - sonnet-4.6: analysis benefits from the larger model; haiku
-//     tends to ask for one row at a time instead of writing one good
-//     query.
-//   - `fresh` sandbox so each run starts from a clean checkout. We
-//     don't strictly need the checkout for SQL work, but the
-//     existing sandbox infrastructure assumes one; revisit when the
-//     specialist roster gains a no-sandbox path.
-//   - Allowlist `[file_read, search, database_query]`: read-only
-//     access to the repo so the analyst can ground its work in
-//     domain code (column definitions, fixture queries, prior
-//     analyses) plus the SQL tool itself. No `shell` and no write
-//     surface — analysis specialists return text, not changes.
-//   - `may_recurse: false`: nothing in the analysis flow needs to
-//     fan out.
-//   - $5/run: a deep analysis may run many small queries; haiku-
-//     priced runs aren't enough, sonnet is the right tier.
+// LLM-driven data-analyst (Phase 5c → 5d). Answers questions against
+// any data store the user has registered as a tool_connection. Started
+// as `db-analyst` (Postgres only) in 5c; renamed and broadened in 5d
+// to include ClickHouse via the `clickhouse_query` tool. 5e will add
+// Redis. One analyst for all stores beats one-per-engine: real
+// analytical questions span engines (correlate a Postgres user record
+// with ClickHouse events) and a single specialist can hold both
+// result sets in context. Per-engine reasoning lives in each tool's
+// description.
 //
-// The `database_query` tool enforces read-only at runtime when the
-// connection's `readOnly: true` (the default), so even a prompt-
-// injected attempt at INSERT/UPDATE/DELETE returns an error from the
-// tool. The connection's scope must allow `db-analyst` (either
-// `global` or `specialist:db-analyst`).
-const dbAnalystPreset: CodePreset = {
-  name: "db-analyst",
+//   - sonnet-4.6: analysis benefits from the larger model.
+//   - `fresh` sandbox: each run starts from a clean checkout.
+//   - Allowlist `[file_read, search, database_query, clickhouse_query]`:
+//     read-only repo access plus the per-engine query tools. No
+//     `shell` and no write surface.
+//   - `may_recurse: false`.
+//   - $5/run.
+//
+// The per-tool callbacks enforce scope + read-only at runtime, so a
+// prompt-injected attempt at INSERT/UPDATE/DELETE returns a typed
+// error from the tool. Connections scoped to `specialist:data-analyst`
+// (or `global`) are the ones this specialist can reach.
+const dataAnalystPreset: CodePreset = {
+  name: "data-analyst",
   kind: "preset",
   systemPrompt: [
-    "You are `db-analyst`, a Nigel specialist that answers questions about data in registered",
-    "Postgres connections. You work inside a sandboxed checkout. You can read repo files,",
-    "search the repo, and run SQL against a registered tool_connection of kind 'postgres'",
-    "via the `database_query` tool. You cannot write files, execute shell, or modify any",
-    "database — analyst connections are read-only at the registry level.",
+    "You are `data-analyst`, a Nigel specialist that answers questions about data the user",
+    "has registered. You can query Postgres connections via `database_query` and ClickHouse",
+    "connections via `clickhouse_query`. You can also read repo files and search the repo",
+    "for schema / migration context. You cannot write files, execute shell, or modify any",
+    "data store — analyst connections are read-only at the registry level.",
     "",
     "Working principles:",
     "- Start by understanding the question. Re-state it in your own words at the top of",
     "  your output to confirm scope. If the question is ambiguous or refers to columns /",
     "  tables you can't identify, ask for clarification instead of guessing.",
-    "- Ground the schema before you query. When the repo has migrations or model",
-    "  definitions, read them first — the column types and constraints are easier to",
-    "  reason about than column names alone. Use `read` and `search` for this.",
-    "- Prefer fewer, broader queries that pull what you need at once over many",
-    "  one-row-at-a-time queries. The `database_query` tool returns up to 1000 rows by",
-    "  default; if you need more, refine the query (aggregate, filter, sample) rather",
-    "  than asking for a larger limit.",
-    "- Always use parameter placeholders (`$1`, `$2`, ...) for values. Never concatenate",
-    "  user input or other untrusted strings into SQL.",
-    "- If the tool returns `truncated: true`, you got the first N rows; the rest were cut.",
-    "  Refine your query (LIMIT, WHERE, GROUP BY, sampling) rather than rerunning with a",
-    "  larger limit.",
-    "- If the tool returns a read-only violation, do not try to bypass it (CTEs that",
-    "  call functions with side effects, etc.). The connection is read-only by design;",
-    "  the right answer is to refuse the modification or ask the user to provision a",
+    "- Pick the right engine for each part of the question. The connection name encodes",
+    "  the engine; the tool you use must match. Postgres → `database_query`. ClickHouse →",
+    "  `clickhouse_query`. Cross-engine questions are fine — run one query per engine",
+    "  and combine the results in your synthesis.",
+    "- Ground the schema before you query. When the repo has migrations, model",
+    "  definitions, or prior queries, read them first — the column types and constraints",
+    "  are easier to reason about than column names alone.",
+    "- Use parameter placeholders for every user-controlled or untrusted value.",
+    "  Postgres uses positional `$1`, `$2`, ...; ClickHouse uses named `{name:Type}`",
+    "  (and you list `parameters` separately). Never concatenate strings into SQL.",
+    "- Prefer fewer broader queries over many narrow ones. The query tools return up to",
+    "  1000 rows by default. If the result is `truncated: true`, refine the query",
+    "  (aggregate, filter, sample, GROUP BY) rather than asking for more rows.",
+    "- If a tool returns a read-only violation, do NOT try to bypass it (CTE-DML,",
+    "  function-call side effects, etc.). The connection is read-only by design; the",
+    "  right answer is to refuse the modification or ask the user to provision a",
     "  writable connection.",
     "- Structure your output: top-line answer first (the number, the trend, the missing",
     "  row), supporting query + evidence next, caveats and uncertainties last. Include",
@@ -486,7 +485,7 @@ const dbAnalystPreset: CodePreset = {
     "- Never recommend code changes — that's a different specialist's job.",
   ].join("\n"),
   model: "anthropic/claude-sonnet-4.6",
-  toolAllowlist: ["file_read", "search", "database_query"],
+  toolAllowlist: ["file_read", "search", "database_query", "clickhouse_query"],
   sandboxPolicy: "fresh",
   mayRecurse: false,
   maxChildren: 0,
@@ -546,8 +545,9 @@ const plannerPreset: CodePreset = {
     "  Expensive; use only when the change warrants it.",
     "- `researcher`: produces a written research report from web + repo sources. Use when",
     "  the task requires background knowledge you don't have.",
-    "- `db-analyst`: answers questions about data in registered Postgres connections.",
-    "  Read-only by design. Use when the task needs facts from a live database.",
+    "- `data-analyst`: answers questions about data in registered Postgres / ClickHouse",
+    "  connections. Read-only by design. Use when the task needs facts from a live",
+    "  data store.",
     "",
     "Working principles:",
     "- Start by re-stating the task in your own words. If it's ambiguous, return a request",
@@ -601,7 +601,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [adversarialReviewerPreset.name]: adversarialReviewerPreset,
   [researcherPreset.name]: researcherPreset,
   [plannerPreset.name]: plannerPreset,
-  [dbAnalystPreset.name]: dbAnalystPreset,
+  [dataAnalystPreset.name]: dataAnalystPreset,
 });
 
 export function getPresetNames(): readonly string[] {

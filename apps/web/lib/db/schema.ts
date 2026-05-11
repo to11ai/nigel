@@ -682,7 +682,9 @@ export const toolConnections = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    kind: text("kind", { enum: ["postgres", "mcp", "slack"] }).notNull(),
+    kind: text("kind", {
+      enum: ["postgres", "clickhouse", "mcp", "slack"],
+    }).notNull(),
     description: text("description"),
     configJson: jsonb("config_json").notNull(),
     secretsCiphertext: text("secrets_ciphertext").notNull(),

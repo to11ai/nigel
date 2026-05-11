@@ -20,6 +20,8 @@ export {
   updateToolConnection,
 } from "./repository";
 export {
+  type ClickhouseConnectionConfig,
+  type ClickhouseConnectionSecrets,
   formatScope,
   type McpConnectionConfig,
   type McpConnectionSecrets,

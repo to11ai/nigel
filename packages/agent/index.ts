@@ -33,6 +33,11 @@ export {
   type AskUserQuestionToolUIPart,
 } from "./tools/ask-user-question";
 export type {
+  ClickhouseQueryCallback,
+  ClickhouseQueryInput,
+  ClickhouseQueryResultRow,
+} from "./tools/clickhouse-query";
+export type {
   DatabaseQueryCallback,
   DatabaseQueryInput,
   DatabaseQueryResultRow,
