@@ -2,6 +2,11 @@ import type { SandboxState } from "@nigel/sandbox";
 import { getSpecialist } from "@/lib/specialists";
 import { BudgetExhaustedError, checkRootBudget } from "./budget";
 import { Run } from "./create";
+import {
+  defaultLocalStackLifecycle,
+  type LocalStackLifecycle,
+  type LocalStackTeardown,
+} from "./local-stack-lifecycle";
 import { getRun, listChildren, updateRunStatus } from "./repository";
 import {
   type ProvisionedSandbox,
@@ -45,6 +50,7 @@ export type DispatchSpecialistInput = {
     executeSpecialistViaLLM?: (
       input: ExecuteSpecialistInput,
     ) => Promise<ExecuteSpecialistResult>;
+    localStackLifecycle?: LocalStackLifecycle;
   };
 };
 
@@ -142,12 +148,20 @@ export async function dispatchSpecialist(
     input.deps?.teardownSandboxForRun ?? defaultTeardownSandboxForRun;
   const executeSpecialistViaLLM =
     input.deps?.executeSpecialistViaLLM ?? defaultExecuteSpecialistViaLLM;
+  const localStackLifecycle =
+    input.deps?.localStackLifecycle ?? defaultLocalStackLifecycle;
 
   let provisioned: ProvisionedSandbox | null = null;
+  let runLocalStackTeardown: LocalStackTeardown | null = null;
   try {
     await updateRunStatus(childRun.id, "running");
     provisioned = await provisionSandboxForRun({
       inheritFrom: input.inheritSandboxState ?? null,
+    });
+    runLocalStackTeardown = await localStackLifecycle.prepare({
+      specialist,
+      provisioned,
+      parentRepoRef: parent.repoRef,
     });
     const result = await executeSpecialistViaLLM({
       run: childRun,
@@ -168,6 +182,13 @@ export async function dispatchSpecialist(
     }
     throw err;
   } finally {
+    if (runLocalStackTeardown) {
+      // Always invoke. The default implementation is a no-op for
+      // specialists that didn't need the stack; non-no-op teardowns
+      // are responsible for swallowing their own errors so we don't
+      // leak them past `finally`.
+      await runLocalStackTeardown();
+    }
     if (provisioned) {
       // Don't let teardown failure mask the original outcome (success or
       // the original throw). But do log — silent failure here can leak

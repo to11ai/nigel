@@ -134,6 +134,21 @@ describe("getSpecialist", () => {
     expect(ut?.needsLocalStack).toBe(false);
   });
 
+  test("e2e-tester preset resolves with the expected shape", async () => {
+    const e = await getSpecialist("e2e-tester");
+    expect(e).not.toBeNull();
+    expect(e?.name).toBe("e2e-tester");
+    expect(e?.kind).toBe("preset");
+    expect(e?.systemPrompt).toContain("e2e-tester");
+    expect(e?.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(e?.toolAllowlist).toEqual(["file", "search", "shell"]);
+    expect(e?.sandboxPolicy).toBe("fresh");
+    expect(e?.mayRecurse).toBe(false);
+    expect(e?.maxChildren).toBe(0);
+    expect(e?.budgetUsdDefaultMicros).toBe(5_000_000);
+    expect(e?.needsLocalStack).toBe(true);
+  });
+
   test("reviewer preset resolves with the expected shape (read-only)", async () => {
     const rev = await getSpecialist("reviewer");
     expect(rev).not.toBeNull();
