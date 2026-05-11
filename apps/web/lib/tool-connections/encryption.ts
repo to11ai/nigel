@@ -53,19 +53,14 @@ export function loadEncryptionKey(): Buffer {
       `${ENV_VAR} is not set. Generate a key with \`openssl rand -base64 32\` and set it in the environment before using tool connections.`,
     );
   }
-  let bytes: Buffer;
-  try {
-    // Accept both base64 and base64url so operators don't have to
-    // worry about which encoding their key-generation tool emits.
-    bytes = Buffer.from(raw, "base64");
-    if (bytes.length !== KEY_BYTES) {
-      bytes = Buffer.from(raw, "base64url");
-    }
-  } catch (err) {
-    throw new ToolConnectionsCryptoError(
-      "key_invalid",
-      `${ENV_VAR} is set but failed to decode: ${err instanceof Error ? err.message : String(err)}. The value must be 32 bytes encoded as base64 or base64url.`,
-    );
+  // Accept both base64 and base64url so operators don't have to
+  // worry about which encoding their key-generation tool emits.
+  // `Buffer.from(str, "base64")` never throws on malformed input —
+  // it silently drops unrecognised characters — so we rely entirely
+  // on the length check below to detect a wrong/corrupt key string.
+  let bytes = Buffer.from(raw, "base64");
+  if (bytes.length !== KEY_BYTES) {
+    bytes = Buffer.from(raw, "base64url");
   }
   if (bytes.length !== KEY_BYTES) {
     throw new ToolConnectionsCryptoError(

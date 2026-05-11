@@ -195,9 +195,10 @@ export function decryptRow(row: ToolConnection): ResolvedConnection {
     keyVersion: row.keyVersion as 1,
   };
   const secrets = validateSecretsForKind(kind, decryptSecrets(encrypted));
-  // Parse scope eagerly so callers can match against it without
-  // re-validating on each tool invocation.
-  parseScope(row.scope);
+  // Parse scope once and hand callers the parsed struct so they can
+  // match by kind / specialistName without re-validating on every
+  // tool invocation.
+  const scope = parseScope(row.scope);
   // The cast is sound: the per-kind discriminated union above lines
   // up exactly with the validated config/secrets pair. TS can't
   // narrow through the generic accessor, so we tell it directly.
@@ -205,7 +206,7 @@ export function decryptRow(row: ToolConnection): ResolvedConnection {
     id: row.id,
     name: row.name,
     kind,
-    scope: row.scope,
+    scope,
     config,
     secrets,
   } as ResolvedConnection;

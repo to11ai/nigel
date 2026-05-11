@@ -58,9 +58,10 @@ describe("validateConfigForKind — mcp", () => {
       url: "https://mcp.example.com/sse",
     });
     expect(config.transport).toBe("http");
-    expect(config.url).toBe("https://mcp.example.com/sse");
-    expect(config.args).toEqual([]);
-    expect(config.defaultTimeoutMs).toBe(60_000);
+    if (config.transport === "http") {
+      expect(config.url).toBe("https://mcp.example.com/sse");
+      expect(config.defaultTimeoutMs).toBe(60_000);
+    }
   });
 
   test("accepts stdio transport with command", () => {
@@ -69,8 +70,29 @@ describe("validateConfigForKind — mcp", () => {
       command: "pulumi-mcp",
       args: ["--cloud-url", "https://api.pulumi.com"],
     });
-    expect(config.command).toBe("pulumi-mcp");
-    expect(config.args).toEqual(["--cloud-url", "https://api.pulumi.com"]);
+    expect(config.transport).toBe("stdio");
+    if (config.transport === "stdio") {
+      expect(config.command).toBe("pulumi-mcp");
+      expect(config.args).toEqual(["--cloud-url", "https://api.pulumi.com"]);
+    }
+  });
+
+  test("rejects http transport without url", () => {
+    expect(() => validateConfigForKind("mcp", { transport: "http" })).toThrow(
+      ToolConnectionValidationError,
+    );
+  });
+
+  test("rejects stdio transport without command", () => {
+    expect(() => validateConfigForKind("mcp", { transport: "stdio" })).toThrow(
+      ToolConnectionValidationError,
+    );
+  });
+
+  test("rejects http transport with empty url string", () => {
+    expect(() =>
+      validateConfigForKind("mcp", { transport: "http", url: "" }),
+    ).toThrow(ToolConnectionValidationError);
   });
 });
 

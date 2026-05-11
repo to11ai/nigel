@@ -99,6 +99,21 @@ describe("resolveToolConnection", () => {
       expect(resolved.config.sslMode).toBe("require");
       expect(resolved.secrets.password).toBe("supersecret");
     }
+    // Scope comes back parsed (not the raw string column) so callers
+    // can branch on `kind` without re-validating.
+    expect(resolved.scope).toEqual({ kind: "global" });
+  });
+
+  test("returns a parsed specialist scope on a scoped row", async () => {
+    await createToolConnection({
+      ...postgresFixture(),
+      scope: { kind: "specialist", specialistName: "db-analyst" },
+    });
+    const resolved = await resolveToolConnection("prod-pg-readonly");
+    expect(resolved.scope).toEqual({
+      kind: "specialist",
+      specialistName: "db-analyst",
+    });
   });
 
   test("throws ToolConnectionRepositoryError(not_found) for an unknown name", async () => {

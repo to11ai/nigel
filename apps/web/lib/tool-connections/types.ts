@@ -32,19 +32,31 @@ const PostgresSecretsSchema = z.object({
   password: z.string().min(1),
 });
 
-const McpConfigSchema = z.object({
-  // The MCP server URL (HTTPS) or a stdio command line. Stored as a
-  // discriminated union so the consumer can branch on transport.
-  transport: z.enum(["http", "stdio"]),
-  // HTTP transport: URL the MCP client POSTs to.
-  url: z.string().url().optional(),
-  // stdio transport: command + args to spawn. Used only for trusted
-  // first-party MCP servers — never user-provided binaries.
-  command: z.string().optional(),
-  args: z.array(z.string()).default([]),
-  // Per-call defaults; same rationale as Postgres.
+// Two distinct transport shapes for MCP servers. Modeled as a
+// discriminated union so the schema rejects nonsense rows at insert
+// time — an `http` row without `url` or a `stdio` row without
+// `command` would otherwise pass validation and only fail when a
+// consumer tries to use it.
+const McpHttpConfigSchema = z.object({
+  transport: z.literal("http"),
+  // URL the MCP client POSTs to.
+  url: z.string().url(),
   defaultTimeoutMs: z.number().int().positive().default(60_000),
 });
+
+const McpStdioConfigSchema = z.object({
+  transport: z.literal("stdio"),
+  // Command + args to spawn. Used only for trusted first-party MCP
+  // servers — never user-provided binaries.
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  defaultTimeoutMs: z.number().int().positive().default(60_000),
+});
+
+const McpConfigSchema = z.discriminatedUnion("transport", [
+  McpHttpConfigSchema,
+  McpStdioConfigSchema,
+]);
 
 const McpSecretsSchema = z.object({
   // HTTP transport typically carries an OAuth/bearer token; stdio
@@ -94,12 +106,14 @@ export type SlackConnectionSecrets = z.infer<typeof SlackSecretsSchema>;
 
 // Tagged discriminated union of (config, secrets) keyed on kind. The
 // resolver hands one of these back to a tool, fully validated.
+// `scope` is the parsed shape (not the raw string column) so callers
+// can match without re-parsing on every tool invocation.
 export type ResolvedConnection =
   | {
       id: string;
       name: string;
       kind: "postgres";
-      scope: string;
+      scope: ToolConnectionScope;
       config: PostgresConnectionConfig;
       secrets: PostgresConnectionSecrets;
     }
@@ -107,7 +121,7 @@ export type ResolvedConnection =
       id: string;
       name: string;
       kind: "mcp";
-      scope: string;
+      scope: ToolConnectionScope;
       config: McpConnectionConfig;
       secrets: McpConnectionSecrets;
     }
@@ -115,7 +129,7 @@ export type ResolvedConnection =
       id: string;
       name: string;
       kind: "slack";
-      scope: string;
+      scope: ToolConnectionScope;
       config: SlackConnectionConfig;
       secrets: SlackConnectionSecrets;
     };
