@@ -209,6 +209,60 @@ const unitTesterPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven e2e-tester (Phase 4k). Runs the repo's end-to-end test
+// suite and fixes failures. Distinct from `unit-tester` in two ways:
+//   - `needs_local_stack: true`: the dispatch layer brings the repo's
+//     local_stack profile up (startup_commands + post_up) before this
+//     specialist starts, and tears it down afterwards. E2E tests
+//     typically require running services (a dev server, an
+//     ephemeral database, an in-process worker, etc.) that the unit
+//     tester does not.
+//   - sonnet-4.6 instead of haiku: e2e failures are flakier and the
+//     debug surface is larger (network, timing, real DOM), so the
+//     larger model is worth the cost.
+// Same allowlist as the other test/lint specialists; `fresh` sandbox
+// so the local_stack starts from a clean checkout per run.
+const e2eTesterPreset: CodePreset = {
+  name: "e2e-tester",
+  kind: "preset",
+  systemPrompt: [
+    "You are `e2e-tester`, a Nigel specialist that runs and fixes end-to-end test failures.",
+    "Your sandbox already has the repo's local stack started (databases, dev server,",
+    "ephemeral cloud resources — whatever the repo's `.nigel.yaml` `local_stack` declares).",
+    "You can read, write, search, and run shell commands.",
+    "",
+    "Working principles:",
+    "- Start by running the repo's e2e command (typically `bun run test:e2e`, `playwright",
+    "  test`, `bun test e2e/`, or whatever the repo declares). Capture failures: which",
+    "  spec, which assertion, and any surrounding diagnostics (network logs, screenshots,",
+    "  the page state at failure).",
+    "- For each failure, distinguish three categories:",
+    "  - `code`: the application behaves wrong. Fix the application code.",
+    "  - `test`: the test asserts against outdated behavior, races, or implementation",
+    "    detail. Fix the test (do NOT change application behavior to make a brittle test",
+    "    pass).",
+    "  - `environment`: the local stack is in a bad state (dev server not ready, database",
+    "    migration not applied, port already bound). Do NOT silently rerun — investigate.",
+    "    If the stack truly is not ready, report the issue rather than papering over it",
+    "    with sleeps or retries; the dispatch layer is responsible for stack readiness.",
+    "- After each batch of fixes, re-run the e2e command and verify the failure count",
+    "  went down. If a fix broke a previously-passing test, recover with `git restore",
+    "  <file>` (the sandbox started from a clean git checkout).",
+    "- Stop when the e2e command exits 0 — or after two attempts without progress, in",
+    "  which case stop and report exactly which specs are still failing and why,",
+    "  including whether the remaining failures look like flakes that need test-level",
+    "  fixes rather than retries.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: ["file", "search", "shell"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 5_000_000,
+  needsLocalStack: true,
+};
+
 // LLM-driven reviewer (Phase 4f). Read-only specialist that produces
 // written feedback on code changes. Differs from the fix-then-rerun
 // specialists shipped so far:
@@ -417,6 +471,8 @@ const plannerPreset: CodePreset = {
     "- `formatter`: applies the repository's formatter (whitespace, quoting, import order).",
     "- `type-checker`: fixes type errors after a code change.",
     "- `unit-tester`: fixes failing unit tests, or writes new ones for added behavior.",
+    "- `e2e-tester`: runs and fixes end-to-end test failures. Needs the repo's local",
+    "  stack (the dispatch layer brings it up automatically when this specialist runs).",
     "- `reviewer`: read-only friendly review. Surfaces obvious issues.",
     "- `adversarial-reviewer`: read-only deep audit for security/race/idempotency holes.",
     "  Expensive; use only when the change warrants it.",
@@ -435,7 +491,9 @@ const plannerPreset: CodePreset = {
     "  coordination, not execution. Use your direct file/shell access for verification",
     "  and trivial patches only.",
     "- After every code-touching dispatch, consider running the appropriate verification",
-    "  specialists (formatter, linter, type-checker, unit-tester) before declaring success.",
+    "  specialists (formatter, linter, type-checker, unit-tester, e2e-tester) before",
+    "  declaring success. e2e-tester is expensive; only run it when the change plausibly",
+    "  affects end-to-end behavior.",
     "- The root budget caps total spend across all your dispatches. If you receive a",
     "  budget-exhausted error, stop and report what was accomplished plus what remained.",
     "- If a dispatch returns a meaningful failure or refusal, treat that as a real signal —",
@@ -468,6 +526,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [formatterPreset.name]: formatterPreset,
   [typeCheckerPreset.name]: typeCheckerPreset,
   [unitTesterPreset.name]: unitTesterPreset,
+  [e2eTesterPreset.name]: e2eTesterPreset,
   [reviewerPreset.name]: reviewerPreset,
   [adversarialReviewerPreset.name]: adversarialReviewerPreset,
   [researcherPreset.name]: researcherPreset,

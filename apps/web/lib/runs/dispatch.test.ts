@@ -279,4 +279,112 @@ describe("dispatchSpecialist — LLM specialists", () => {
     expect(allChildren[0].status).toBe("blocked");
     expect(allChildren[0].blockedReason).toBe("budget exhausted");
   });
+
+  test("invokes localStackLifecycle.prepare and its teardown in finally", async () => {
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      repoRef: "owner/repo",
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    let prepareCalls = 0;
+    let teardownCalls = 0;
+    let prepareSawRepoRef: string | null = "";
+    const result = await dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "x",
+      deps: {
+        provisionSandboxForRun: async () => stubbedSandbox(),
+        teardownSandboxForRun: async () => undefined,
+        executeSpecialistViaLLM: async () => ({ output: "ok" }),
+        localStackLifecycle: {
+          prepare: async (i) => {
+            prepareCalls++;
+            prepareSawRepoRef = i.parentRepoRef;
+            return async () => {
+              teardownCalls++;
+            };
+          },
+        },
+      },
+    });
+
+    expect(result.output).toBe("ok");
+    expect(prepareCalls).toBe(1);
+    expect(teardownCalls).toBe(1);
+    expect(prepareSawRepoRef).toBe("owner/repo");
+  });
+
+  test("teardown runs even when LLM execution throws", async () => {
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      repoRef: "owner/repo",
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    let teardownCalls = 0;
+    const promise = dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "x",
+      deps: {
+        provisionSandboxForRun: async () => stubbedSandbox(),
+        teardownSandboxForRun: async () => undefined,
+        executeSpecialistViaLLM: async () => {
+          throw new Error("llm boom");
+        },
+        localStackLifecycle: {
+          prepare: async () => async () => {
+            teardownCalls++;
+          },
+        },
+      },
+    });
+    await expect(promise).rejects.toThrow("llm boom");
+    expect(teardownCalls).toBe(1);
+  });
+
+  test("marks child failed when localStackLifecycle.prepare throws", async () => {
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      repoRef: "owner/repo",
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    let executeCalls = 0;
+    const promise = dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "x",
+      deps: {
+        provisionSandboxForRun: async () => stubbedSandbox(),
+        teardownSandboxForRun: async () => undefined,
+        executeSpecialistViaLLM: async () => {
+          executeCalls++;
+          return { output: "should not run" };
+        },
+        localStackLifecycle: {
+          prepare: async () => {
+            throw new Error("stack startup blew up");
+          },
+        },
+      },
+    });
+    await expect(promise).rejects.toThrow("stack startup blew up");
+    expect(executeCalls).toBe(0);
+
+    const allChildren = await db
+      .select()
+      .from(agentRuns)
+      .where(eq(agentRuns.parentRunId, parent.id));
+    expect(allChildren).toHaveLength(1);
+    expect(allChildren[0].status).toBe("failed");
+  });
 });

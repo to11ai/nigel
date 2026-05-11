@@ -14,6 +14,15 @@ export {
   type ResolveProfileInput,
   resolveProfile,
 } from "./resolve-profile";
+export {
+  type LocalStackExec,
+  LocalStackCommandError,
+  type LocalStackPhase,
+  type RunStartupInput,
+  type RunTeardownInput,
+  runLocalStackStartup,
+  runLocalStackTeardown,
+} from "./runner";
 export type {
   RepoLocalStack,
   ResolvedPostUpStep,
