@@ -18,6 +18,12 @@ export {
 export { skillTool, type SkillToolInput } from "./skill";
 export { webFetchTool } from "./fetch";
 export {
+  type DatabaseQueryCallback,
+  type DatabaseQueryInput,
+  type DatabaseQueryResultRow,
+  databaseQueryTool,
+} from "./database-query";
+export {
   type DispatchSpecialistCallback,
   type DispatchSpecialistInput,
   dispatchSpecialistTool,

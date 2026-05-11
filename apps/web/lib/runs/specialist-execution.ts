@@ -1,4 +1,7 @@
-import type { DispatchSpecialistCallback } from "@nigel/agent";
+import type {
+  DatabaseQueryCallback,
+  DispatchSpecialistCallback,
+} from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
 import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
@@ -6,6 +9,7 @@ import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import { checkRootBudget as defaultCheckRootBudget } from "./budget";
 import { computeCostMicros } from "./cost";
+import { createDatabaseQueryCallback } from "./database-query";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
 import { filterAgentTools } from "./tool-allowlist";
@@ -47,6 +51,11 @@ export type ExecuteSpecialistInput = {
     // around the real dispatch function (set up at call time so we
     // avoid an import cycle).
     dispatchSpecialist?: DispatchSpecialistCallback;
+    // Same DI seam for the database_query tool callback. Production
+    // callers leave this unset and the wrapper builds a callback
+    // bound to the current specialist's name (used by the scope
+    // check inside the callback).
+    databaseQuery?: DatabaseQueryCallback;
   };
 };
 
@@ -104,6 +113,14 @@ export async function executeSpecialistViaLLM(
       return { output: result.output };
     });
 
+  // database_query callback. Like the dispatchSpecialist callback,
+  // closures-in the things only this run knows — specifically the
+  // specialist's own name, which the scope check inside the callback
+  // uses to refuse connections scoped to a different specialist.
+  const databaseQueryFn: DatabaseQueryCallback =
+    deps?.databaseQuery ??
+    createDatabaseQueryCallback({ specialistName: specialist.name });
+
   const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
   const callModel = gateway(specialist.model);
 
@@ -122,6 +139,7 @@ export async function executeSpecialistViaLLM(
       sandbox,
       model: callModel,
       dispatchSpecialist: dispatchSpecialistFn,
+      databaseQuery: databaseQueryFn,
     },
     prepareStep: async () => {
       await checkRootBudget(run.rootRunId);

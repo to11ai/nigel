@@ -222,6 +222,21 @@ describe("getSpecialist", () => {
     expect(p?.needsLocalStack).toBe(false);
   });
 
+  test("db-analyst preset resolves with the expected shape", async () => {
+    const d = await getSpecialist("db-analyst");
+    expect(d).not.toBeNull();
+    expect(d?.name).toBe("db-analyst");
+    expect(d?.kind).toBe("preset");
+    expect(d?.systemPrompt).toContain("db-analyst");
+    expect(d?.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(d?.toolAllowlist).toEqual(["file_read", "search", "database_query"]);
+    expect(d?.sandboxPolicy).toBe("fresh");
+    expect(d?.mayRecurse).toBe(false);
+    expect(d?.maxChildren).toBe(0);
+    expect(d?.budgetUsdDefaultMicros).toBe(5_000_000);
+    expect(d?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),

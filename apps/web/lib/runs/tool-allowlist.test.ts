@@ -16,6 +16,7 @@ describe("filterAgentTools", () => {
     todo_write: { _kind: "tool" },
     ask_user_question: { _kind: "tool" },
     dispatch_specialist: { _kind: "tool" },
+    database_query: { _kind: "tool" },
   };
 
   test("file expands to read+write+edit", () => {
@@ -62,6 +63,27 @@ describe("filterAgentTools", () => {
       allTools as unknown as ToolSet,
     );
     expect(Object.keys(out).sort()).toEqual(["dispatch_specialist"]);
+  });
+
+  test("database_query expands to database_query tool", () => {
+    const out = filterAgentTools(
+      ["database_query"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["database_query"]);
+  });
+
+  test("db-analyst allowlist yields the analyst tool surface", () => {
+    const out = filterAgentTools(
+      ["file_read", "search", "database_query"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual([
+      "database_query",
+      "glob",
+      "grep",
+      "read",
+    ]);
   });
 
   test("planner allowlist yields the planner tool surface", () => {

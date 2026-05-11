@@ -13,6 +13,7 @@ import { buildSystemPrompt } from "./system-prompt";
 import {
   askUserQuestionTool,
   bashTool,
+  databaseQueryTool,
   dispatchSpecialistTool,
   editFileTool,
   globTool,
@@ -65,12 +66,13 @@ function normalizeAgentModelSelection(
 
 // Canonical tool set Nigel specialists draw from. Phase 4b's
 // `executeSpecialistViaLLM` filters this map by each specialist's
-// allowlist. `dispatch_specialist` is part of this set so specialists
-// with the right allowlist (currently just `planner`) see it, but it's
+// allowlist. `dispatch_specialist` and `database_query` are part of
+// this set so specialists with the right allowlist (currently the
+// planner / db-analyst respectively) see them, but they're
 // intentionally excluded from the chat agent below — the chat path
-// doesn't supply a `dispatchSpecialist` callback in
-// `experimental_context`, so calling it from chat would always fail
-// with a misleading "runtime configuration bug" error.
+// doesn't supply the required callbacks in `experimental_context`,
+// so calling either from chat would always fail with a misleading
+// "runtime configuration bug" error.
 export const nigelTools = {
   todo_write: todoWriteTool,
   read: readFileTool(),
@@ -84,12 +86,16 @@ export const nigelTools = {
   skill: skillTool,
   web_fetch: webFetchTool,
   dispatch_specialist: dispatchSpecialistTool,
+  database_query: databaseQueryTool,
 } satisfies ToolSet;
 
-// Subset of `nigelTools` exposed to the chat agent. Excludes
-// `dispatch_specialist` because chat doesn't run inside a parent run
-// and has no dispatch callback wired in `experimental_context`.
-const { dispatch_specialist: _unusedDispatchTool, ...chatTools } = nigelTools;
+// Subset of `nigelTools` exposed to the chat agent. Excludes the
+// specialist-only tools whose callbacks the chat path doesn't wire.
+const {
+  dispatch_specialist: _unusedDispatchTool,
+  database_query: _unusedDatabaseQueryTool,
+  ...chatTools
+} = nigelTools;
 
 export const openAgent = new ToolLoopAgent({
   model: defaultModel,

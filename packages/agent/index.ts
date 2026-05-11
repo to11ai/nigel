@@ -33,6 +33,11 @@ export {
   type AskUserQuestionToolUIPart,
 } from "./tools/ask-user-question";
 export type {
+  DatabaseQueryCallback,
+  DatabaseQueryInput,
+  DatabaseQueryResultRow,
+} from "./tools/database-query";
+export type {
   DispatchSpecialistCallback,
   DispatchSpecialistInput,
 } from "./tools/dispatch-specialist";
