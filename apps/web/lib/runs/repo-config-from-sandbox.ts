@@ -22,21 +22,14 @@ export async function loadRepoConfigFromSandbox(input: {
   workingDirectory: string;
   exec: LocalStackExec;
 }): Promise<RepoConfig> {
-  const yamlText = await readFileMaybe(
-    input.exec,
-    input.workingDirectory,
-    ".nigel.yaml",
-  );
-  const pkgJsonText = await readFileMaybe(
-    input.exec,
-    input.workingDirectory,
-    "package.json",
-  );
-  const turboJsonText = await readFileMaybe(
-    input.exec,
-    input.workingDirectory,
-    "turbo.json",
-  );
+  // Fetch the three files concurrently — they're independent, and
+  // serializing them stacks the per-call timeout, costing up to 3× the
+  // single-read budget on a slow sandbox.
+  const [yamlText, pkgJsonText, turboJsonText] = await Promise.all([
+    readFileMaybe(input.exec, input.workingDirectory, ".nigel.yaml"),
+    readFileMaybe(input.exec, input.workingDirectory, "package.json"),
+    readFileMaybe(input.exec, input.workingDirectory, "turbo.json"),
+  ]);
 
   const result = await loadRepoConfig({
     repoFullName: input.repoFullName,
