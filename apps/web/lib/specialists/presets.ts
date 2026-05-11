@@ -274,6 +274,10 @@ const adversarialReviewerPreset: CodePreset = {
 //     but rarely needs opus.
 //   - `inherit` sandbox so the researcher can read repo files for
 //     grounding alongside web sources (file_read + search + web_fetch).
+//     SSRF risk from `inherit` + web_fetch is mitigated at the tool
+//     level: packages/agent/tools/fetch.ts refuses to fetch private
+//     IPv4/IPv6 ranges (see isPrivateHost there). A prompt-injection
+//     vector in fetched content can't pivot to internal services.
 //   - $4/run budget — web research drives many small model calls
 //     summarizing fetched pages.
 //
