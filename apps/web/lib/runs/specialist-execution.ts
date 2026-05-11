@@ -1,5 +1,6 @@
 import type { DispatchSpecialistCallback } from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
+import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
 import type { ResolvedSpecialist } from "@/lib/specialists";
@@ -8,7 +9,21 @@ import { computeCostMicros } from "./cost";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
 import { filterAgentTools } from "./tool-allowlist";
-import type { AgentRun } from "./types";
+import type { AgentRun, SandboxPolicy } from "./types";
+
+// `provisionSandboxForRun` decides inherit-vs-fresh from `inheritFrom`
+// only and does not look at the child run's sandboxPolicy. So a
+// `fresh`/`fresh_clean` override from the LLM gets silently negated if
+// we also forward the parent's sandbox state. Return true only when
+// inheritance is actually permitted by the override (or omitted, in
+// which case the specialist's own preset wins downstream).
+export function shouldForwardInheritedSandbox(
+  state: SandboxState | null | undefined,
+  override: SandboxPolicy | undefined,
+): state is SandboxState {
+  if (!state) return false;
+  return override === undefined || override === "inherit";
+}
 
 const MAX_STEPS = 50;
 
@@ -79,9 +94,12 @@ export async function executeSpecialistViaLLM(
         ...(callInput.sandboxPolicyOverride !== undefined
           ? { sandboxPolicyOverride: callInput.sandboxPolicyOverride }
           : {}),
-        // Pass through the same sandbox state we inherited from our
-        // parent so the child specialist can attach to it as well.
-        ...(sandbox.state ? { inheritSandboxState: sandbox.state } : {}),
+        ...(shouldForwardInheritedSandbox(
+          sandbox.state,
+          callInput.sandboxPolicyOverride,
+        )
+          ? { inheritSandboxState: sandbox.state }
+          : {}),
       });
       return { output: result.output };
     });

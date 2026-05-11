@@ -52,7 +52,8 @@ mock.module("@nigel/agent", () => ({
   },
 }));
 
-const { executeSpecialistViaLLM } = await import("./specialist-execution");
+const { executeSpecialistViaLLM, shouldForwardInheritedSandbox } =
+  await import("./specialist-execution");
 
 // Stubs for the budget/repository functions are passed via the injection
 // seam on ExecuteSpecialistInput.deps rather than mocked at the module
@@ -283,7 +284,35 @@ describe("executeSpecialistViaLLM", () => {
       "write",
     ]);
   });
+});
 
+describe("shouldForwardInheritedSandbox", () => {
+  const state = { type: "vercel" as const, sandboxId: "s1", expiresAt: 1 };
+
+  test("returns false when there is no parent sandbox state", () => {
+    expect(shouldForwardInheritedSandbox(null, undefined)).toBe(false);
+    expect(shouldForwardInheritedSandbox(undefined, "inherit")).toBe(false);
+    expect(shouldForwardInheritedSandbox(null, "fresh")).toBe(false);
+  });
+
+  test("forwards inheritance when override is omitted (specialist preset wins)", () => {
+    expect(shouldForwardInheritedSandbox(state, undefined)).toBe(true);
+  });
+
+  test("forwards inheritance when override is explicitly 'inherit'", () => {
+    expect(shouldForwardInheritedSandbox(state, "inherit")).toBe(true);
+  });
+
+  test("withholds inheritance when override is 'fresh'", () => {
+    expect(shouldForwardInheritedSandbox(state, "fresh")).toBe(false);
+  });
+
+  test("withholds inheritance when override is 'fresh_clean'", () => {
+    expect(shouldForwardInheritedSandbox(state, "fresh_clean")).toBe(false);
+  });
+});
+
+describe("dispatchSpecialist callback wiring", () => {
   test("injected dispatchSpecialist callback is used when provided in deps", async () => {
     const dispatchStub = mock(async (input: { task: string }) => ({
       output: `dispatched: ${input.task}`,
