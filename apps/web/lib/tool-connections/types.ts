@@ -42,9 +42,13 @@ const ClickhouseConfigSchema = z.object({
   database: z.string().min(1),
   user: z.string().min(1),
   // Same intent as Postgres' read-only marker. ClickHouse enforces
-  // this server-side via the `readonly=1` setting (passed in the URL
-  // query string), so a misbehaving caller can't bypass it even if
-  // our prompt-side keyword scan misses something.
+  // this server-side via the `readonly=2` setting (passed in the URL
+  // query string by `runs/clickhouse-query.ts`), so a misbehaving
+  // caller can't bypass it even if our prompt-side keyword scan
+  // misses something. `readonly=2` blocks DML / DDL / admin while
+  // still permitting per-request setting overrides like
+  // `max_result_rows` and `max_execution_time` — `readonly=1` would
+  // additionally block those overrides and break every query.
   readOnly: z.boolean().default(true),
   defaultStatementTimeoutMs: z.number().int().positive().default(60_000),
   defaultRowLimit: z.number().int().positive().default(1000),

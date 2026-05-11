@@ -99,7 +99,7 @@ Use this when the task requires reading from a ClickHouse cluster the user has r
 Important:
 - Use named parameter placeholders (\`{name:Type}\`) for values. Examples: \`SELECT * FROM events WHERE user_id = {uid:UInt64} AND name = {ev:String}\`. The driver supplies the type for each placeholder; you list it in \`parameters\`.
 - Do NOT append a \`FORMAT\` clause — the tool sets the response format itself.
-- Connections flagged read-only refuse INSERT/ALTER/CREATE/DROP/TRUNCATE/OPTIMIZE/SYSTEM/ATTACH/DETACH/KILL/RENAME and ClickHouse's lightweight DELETE/UPDATE. Read-only is also enforced server-side via the \`readonly=1\` setting — even a prompt-injected attempt to write is refused by the server.
+- Connections flagged read-only refuse INSERT/ALTER/CREATE/DROP/TRUNCATE/OPTIMIZE/SYSTEM/ATTACH/DETACH/KILL/RENAME and ClickHouse's lightweight DELETE/UPDATE. Read-only is also enforced server-side via the \`readonly=2\` setting — even a prompt-injected attempt to write is refused by the server.
 - The result is row-limited (default 1000, capped by the connection's configured maximum) and ClickHouse stops the result stream at the cap via \`result_overflow_mode=break\`. When \`truncated: true\` the output was cut short — refine your query (sampling, GROUP BY, narrower WHERE) rather than asking for more rows.
 - If the connection name doesn't exist or your specialist's scope can't reach it, the tool returns an error explaining which — that's a configuration problem, not something to retry.`,
   inputSchema: clickhouseQueryInputSchema,
