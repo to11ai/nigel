@@ -15,6 +15,7 @@ describe("filterAgentTools", () => {
     web_fetch: { _kind: "tool" },
     todo_write: { _kind: "tool" },
     ask_user_question: { _kind: "tool" },
+    dispatch_specialist: { _kind: "tool" },
   };
 
   test("file expands to read+write+edit", () => {
@@ -53,6 +54,31 @@ describe("filterAgentTools", () => {
   test("web expands to web_fetch", () => {
     const out = filterAgentTools(["web"], allTools as unknown as ToolSet);
     expect(Object.keys(out).sort()).toEqual(["web_fetch"]);
+  });
+
+  test("dispatch_specialist expands to dispatch_specialist tool", () => {
+    const out = filterAgentTools(
+      ["dispatch_specialist"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["dispatch_specialist"]);
+  });
+
+  test("planner allowlist yields the planner tool surface", () => {
+    const out = filterAgentTools(
+      ["file", "search", "shell", "git", "web", "dispatch_specialist"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual([
+      "bash",
+      "dispatch_specialist",
+      "edit",
+      "glob",
+      "grep",
+      "read",
+      "web_fetch",
+      "write",
+    ]);
   });
 
   test("multiple categories deduplicate (shell+git both include bash)", () => {

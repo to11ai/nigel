@@ -13,6 +13,7 @@ import { buildSystemPrompt } from "./system-prompt";
 import {
   askUserQuestionTool,
   bashTool,
+  dispatchSpecialistTool,
   editFileTool,
   globTool,
   grepTool,
@@ -77,6 +78,7 @@ export const nigelTools = {
   ask_user_question: askUserQuestionTool,
   skill: skillTool,
   web_fetch: webFetchTool,
+  dispatch_specialist: dispatchSpecialistTool,
 } satisfies ToolSet;
 
 export const openAgent = new ToolLoopAgent({

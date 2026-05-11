@@ -32,6 +32,10 @@ export {
   type AskUserQuestionOutput,
   type AskUserQuestionToolUIPart,
 } from "./tools/ask-user-question";
+export type {
+  DispatchSpecialistCallback,
+  DispatchSpecialistInput,
+} from "./tools/dispatch-specialist";
 export type { SkillToolInput } from "./tools/skill";
 // Tool exports
 export type {
