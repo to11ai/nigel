@@ -47,6 +47,7 @@ mock.module("@nigel/agent", () => ({
     glob: { _kind: "tool" },
     bash: { _kind: "tool" },
     task: { _kind: "tool" },
+    web_fetch: { _kind: "tool" },
     dispatch_specialist: { _kind: "tool" },
   },
 }));
@@ -278,6 +279,7 @@ describe("executeSpecialistViaLLM", () => {
       "glob",
       "grep",
       "read",
+      "web_fetch",
       "write",
     ]);
   });

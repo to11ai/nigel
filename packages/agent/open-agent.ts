@@ -65,7 +65,12 @@ function normalizeAgentModelSelection(
 
 // Canonical tool set Nigel specialists draw from. Phase 4b's
 // `executeSpecialistViaLLM` filters this map by each specialist's
-// allowlist; the chat path's shared `openAgent` consumes the full set.
+// allowlist. `dispatch_specialist` is part of this set so specialists
+// with the right allowlist (currently just `planner`) see it, but it's
+// intentionally excluded from the chat agent below — the chat path
+// doesn't supply a `dispatchSpecialist` callback in
+// `experimental_context`, so calling it from chat would always fail
+// with a misleading "runtime configuration bug" error.
 export const nigelTools = {
   todo_write: todoWriteTool,
   read: readFileTool(),
@@ -81,10 +86,15 @@ export const nigelTools = {
   dispatch_specialist: dispatchSpecialistTool,
 } satisfies ToolSet;
 
+// Subset of `nigelTools` exposed to the chat agent. Excludes
+// `dispatch_specialist` because chat doesn't run inside a parent run
+// and has no dispatch callback wired in `experimental_context`.
+const { dispatch_specialist: _unusedDispatchTool, ...chatTools } = nigelTools;
+
 export const openAgent = new ToolLoopAgent({
   model: defaultModel,
   instructions: buildSystemPrompt({}),
-  tools: nigelTools,
+  tools: chatTools,
   stopWhen: stepCountIs(1),
   callOptionsSchema,
   prepareStep: ({ messages, model, steps: _steps }) => {
@@ -133,7 +143,7 @@ export const openAgent = new ToolLoopAgent({
       ...settings,
       model: callModel,
       tools: addCacheControl({
-        tools: settings.tools ?? nigelTools,
+        tools: settings.tools ?? chatTools,
         model: callModel,
       }),
       instructions,
