@@ -662,3 +662,46 @@ export const usageEvents = pgTable("usage_events", {
 
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
+
+// tool_connections — admin-managed registry of named credential bundles
+// used by agent tools (database query, MCP server, Slack webhook, etc.).
+// Non-secret config (host, server URL, dbname) lives in `configJson` so
+// it's queryable; the secret half (password, API token, signing key)
+// is stored as AES-256-GCM ciphertext in `secretsCiphertext` and
+// decrypted only when the tool actually executes. Encryption key comes
+// from TOOL_CONNECTIONS_ENC_KEY at runtime; rotating the key requires
+// a re-encrypt migration (not in scope here).
+//
+// `scope` controls which runs may select a connection. `"global"`
+// means any specialist can resolve it; `"specialist:<name>"` ties the
+// connection to a single preset. We keep the field a plain string
+// rather than enum'ing it so future scope schemes (per-repo, per-
+// human-owner) don't need a migration.
+export const toolConnections = pgTable(
+  "tool_connections",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["postgres", "mcp", "slack"] }).notNull(),
+    description: text("description"),
+    configJson: jsonb("config_json").notNull(),
+    secretsCiphertext: text("secrets_ciphertext").notNull(),
+    secretsNonce: text("secrets_nonce").notNull(),
+    secretsAuthTag: text("secrets_auth_tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    scope: text("scope").notNull().default("global"),
+    createdBy: text("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("tool_connections_name_idx").on(table.name),
+    index("tool_connections_kind_idx").on(table.kind),
+    index("tool_connections_scope_idx").on(table.scope),
+  ],
+);
+
+export type ToolConnection = typeof toolConnections.$inferSelect;
+export type NewToolConnection = typeof toolConnections.$inferInsert;

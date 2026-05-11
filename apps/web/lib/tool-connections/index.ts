@@ -1,0 +1,38 @@
+export {
+  ciphertextEquals,
+  decryptSecrets,
+  type EncryptedSecrets,
+  encryptSecrets,
+  loadEncryptionKey,
+  ToolConnectionsCryptoError,
+} from "./encryption";
+export {
+  type CreateToolConnectionInput,
+  createToolConnection,
+  decryptRow,
+  deleteToolConnection,
+  getToolConnectionById,
+  getToolConnectionByName,
+  listToolConnections,
+  resolveToolConnection,
+  ToolConnectionRepositoryError,
+  type UpdateToolConnectionInput,
+  updateToolConnection,
+} from "./repository";
+export {
+  formatScope,
+  type McpConnectionConfig,
+  type McpConnectionSecrets,
+  parseScope,
+  type PostgresConnectionConfig,
+  type PostgresConnectionSecrets,
+  type ResolvedConnection,
+  type SlackConnectionConfig,
+  type SlackConnectionSecrets,
+  TOOL_CONNECTION_KINDS,
+  type ToolConnectionKind,
+  type ToolConnectionScope,
+  ToolConnectionValidationError,
+  validateConfigForKind,
+  validateSecretsForKind,
+} from "./types";

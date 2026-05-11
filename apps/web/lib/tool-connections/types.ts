@@ -1,0 +1,211 @@
+import { z } from "zod";
+
+// Non-secret config shapes per connection kind. Anything sensitive
+// (password, token, signing secret) is encrypted into
+// `secretsCiphertext` instead. These schemas validate the public
+// half on insert/update so the resolver can trust the data it
+// reads back.
+
+const PostgresConfigSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().positive().max(65535).default(5432),
+  database: z.string().min(1),
+  user: z.string().min(1),
+  // SSL mode follows libpq conventions. `require` is the default
+  // because most cloud Postgres providers require TLS; admins can
+  // explicitly downgrade for local dev databases.
+  sslMode: z
+    .enum(["disable", "require", "verify-ca", "verify-full"])
+    .default("require"),
+  // Optional read-only enforcement marker. Tools that consume the
+  // connection (e.g. `database_query`) may refuse write statements
+  // when this is true. Independent of any role-level grants in the
+  // database itself.
+  readOnly: z.boolean().default(true),
+  // Per-call defaults. Tools that don't override these use them as
+  // the upper bound on resource use.
+  defaultStatementTimeoutMs: z.number().int().positive().default(30_000),
+  defaultRowLimit: z.number().int().positive().default(1000),
+});
+
+const PostgresSecretsSchema = z.object({
+  password: z.string().min(1),
+});
+
+const McpConfigSchema = z.object({
+  // The MCP server URL (HTTPS) or a stdio command line. Stored as a
+  // discriminated union so the consumer can branch on transport.
+  transport: z.enum(["http", "stdio"]),
+  // HTTP transport: URL the MCP client POSTs to.
+  url: z.string().url().optional(),
+  // stdio transport: command + args to spawn. Used only for trusted
+  // first-party MCP servers — never user-provided binaries.
+  command: z.string().optional(),
+  args: z.array(z.string()).default([]),
+  // Per-call defaults; same rationale as Postgres.
+  defaultTimeoutMs: z.number().int().positive().default(60_000),
+});
+
+const McpSecretsSchema = z.object({
+  // HTTP transport typically carries an OAuth/bearer token; stdio
+  // transport rarely needs one but allow for sidecar credentials.
+  // Both fields are optional so an unauthenticated dev MCP server
+  // can still be represented.
+  bearerToken: z.string().optional(),
+  // Free-form key/value bag for transports that need extra headers
+  // or environment variables (e.g. `GITHUB_TOKEN`, `LINEAR_API_KEY`).
+  // Stored encrypted alongside the bearer token.
+  env: z.record(z.string(), z.string()).optional(),
+});
+
+const SlackConfigSchema = z.object({
+  // Channel ID or webhook target description. The webhook URL itself
+  // is a secret (it carries authentication).
+  channel: z.string().min(1),
+  // Optional bot display name override.
+  username: z.string().optional(),
+});
+
+const SlackSecretsSchema = z.object({
+  webhookUrl: z.string().url(),
+});
+
+export const TOOL_CONNECTION_KINDS = ["postgres", "mcp", "slack"] as const;
+export type ToolConnectionKind = (typeof TOOL_CONNECTION_KINDS)[number];
+
+const KIND_CONFIG_SCHEMAS = {
+  postgres: PostgresConfigSchema,
+  mcp: McpConfigSchema,
+  slack: SlackConfigSchema,
+} as const;
+
+const KIND_SECRETS_SCHEMAS = {
+  postgres: PostgresSecretsSchema,
+  mcp: McpSecretsSchema,
+  slack: SlackSecretsSchema,
+} as const;
+
+export type PostgresConnectionConfig = z.infer<typeof PostgresConfigSchema>;
+export type PostgresConnectionSecrets = z.infer<typeof PostgresSecretsSchema>;
+export type McpConnectionConfig = z.infer<typeof McpConfigSchema>;
+export type McpConnectionSecrets = z.infer<typeof McpSecretsSchema>;
+export type SlackConnectionConfig = z.infer<typeof SlackConfigSchema>;
+export type SlackConnectionSecrets = z.infer<typeof SlackSecretsSchema>;
+
+// Tagged discriminated union of (config, secrets) keyed on kind. The
+// resolver hands one of these back to a tool, fully validated.
+export type ResolvedConnection =
+  | {
+      id: string;
+      name: string;
+      kind: "postgres";
+      scope: string;
+      config: PostgresConnectionConfig;
+      secrets: PostgresConnectionSecrets;
+    }
+  | {
+      id: string;
+      name: string;
+      kind: "mcp";
+      scope: string;
+      config: McpConnectionConfig;
+      secrets: McpConnectionSecrets;
+    }
+  | {
+      id: string;
+      name: string;
+      kind: "slack";
+      scope: string;
+      config: SlackConnectionConfig;
+      secrets: SlackConnectionSecrets;
+    };
+
+// Single error class for every shape-level validation failure so this
+// file stays under the "one class per file" lint rule. Discriminate
+// via `code` to react to a specific cause.
+export class ToolConnectionValidationError extends Error {
+  readonly code: "config" | "secrets" | "scope";
+  readonly kind?: string;
+  readonly issues?: z.ZodIssue[];
+  constructor(input: {
+    code: "config" | "secrets" | "scope";
+    message: string;
+    kind?: string;
+    issues?: z.ZodIssue[];
+  }) {
+    super(input.message);
+    this.name = "ToolConnectionValidationError";
+    this.code = input.code;
+    if (input.kind !== undefined) this.kind = input.kind;
+    if (input.issues !== undefined) this.issues = input.issues;
+  }
+}
+
+export function validateConfigForKind<K extends ToolConnectionKind>(
+  kind: K,
+  config: unknown,
+): z.infer<(typeof KIND_CONFIG_SCHEMAS)[K]> {
+  const schema = KIND_CONFIG_SCHEMAS[kind];
+  const result = schema.safeParse(config);
+  if (!result.success) {
+    throw new ToolConnectionValidationError({
+      code: "config",
+      kind,
+      issues: result.error.issues,
+      message: `tool_connections.config_json for kind '${kind}' failed validation: ${formatIssues(result.error.issues)}`,
+    });
+  }
+  return result.data as z.infer<(typeof KIND_CONFIG_SCHEMAS)[K]>;
+}
+
+export function validateSecretsForKind<K extends ToolConnectionKind>(
+  kind: K,
+  secrets: unknown,
+): z.infer<(typeof KIND_SECRETS_SCHEMAS)[K]> {
+  const schema = KIND_SECRETS_SCHEMAS[kind];
+  const result = schema.safeParse(secrets);
+  if (!result.success) {
+    throw new ToolConnectionValidationError({
+      code: "secrets",
+      kind,
+      issues: result.error.issues,
+      message: `tool_connections secrets payload for kind '${kind}' failed validation: ${formatIssues(result.error.issues)}`,
+    });
+  }
+  return result.data as z.infer<(typeof KIND_SECRETS_SCHEMAS)[K]>;
+}
+
+// Scope syntax — kept as a parsed shape so callers can match by
+// specialist name without re-parsing the string everywhere. `global`
+// matches any caller; `specialist:<name>` matches only when the
+// caller's specialist name equals `<name>`.
+export type ToolConnectionScope =
+  | { kind: "global" }
+  | { kind: "specialist"; specialistName: string };
+
+export function parseScope(raw: string): ToolConnectionScope {
+  if (raw === "global") return { kind: "global" };
+  if (raw.startsWith("specialist:")) {
+    const specialistName = raw.slice("specialist:".length);
+    if (!specialistName) {
+      throw new ToolConnectionValidationError({
+        code: "scope",
+        message: `tool_connections.scope value '${raw}' is invalid: specialist name is empty`,
+      });
+    }
+    return { kind: "specialist", specialistName };
+  }
+  throw new ToolConnectionValidationError({
+    code: "scope",
+    message: `tool_connections.scope value '${raw}' is invalid: expected 'global' or 'specialist:<name>'`,
+  });
+}
+
+export function formatScope(scope: ToolConnectionScope): string {
+  if (scope.kind === "global") return "global";
+  return `specialist:${scope.specialistName}`;
+}
+
+function formatIssues(issues: z.ZodIssue[]): string {
+  return issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+}
