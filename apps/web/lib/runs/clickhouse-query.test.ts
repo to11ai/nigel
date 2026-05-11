@@ -201,13 +201,26 @@ describe("createClickhouseQueryCallback — read-only enforcement", () => {
     }
   });
 
-  test("accepts DESCRIBE TABLE on a read-only connection", async () => {
+  test("accepts DESC TABLE on a read-only connection", async () => {
     await seedClickhouseConnection({ readOnly: true });
     const cb = createClickhouseQueryCallback({
       specialistName: "data-analyst",
     });
     try {
       await cb({ connectionName: "test-ch", sql: "DESC TABLE events" });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as ClickhouseQueryError).code).toBe("execution_failed");
+    }
+  });
+
+  test("accepts DESCRIBE TABLE on a read-only connection (long-form synonym)", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    try {
+      await cb({ connectionName: "test-ch", sql: "DESCRIBE TABLE events" });
       throw new Error("expected execution failure");
     } catch (err) {
       expect((err as ClickhouseQueryError).code).toBe("execution_failed");

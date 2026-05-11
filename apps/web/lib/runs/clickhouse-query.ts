@@ -15,7 +15,12 @@ import {
 // literals). ClickHouse's verb surface is a superset of standard SQL,
 // so we add its server-side admin commands and the lightweight DML
 // forms.
-const READ_ONLY_LEADING_VERB_REGEX = /^(?:select|with|explain|show|desc)\b/i;
+// `desc\b` would match `DESC TABLE x` but NOT `DESCRIBE TABLE x`
+// because `\b` requires a non-word char after `desc` and the next
+// char in `DESCRIBE` is `r` (a word char). ClickHouse treats DESC
+// and DESCRIBE as synonyms; match both.
+const READ_ONLY_LEADING_VERB_REGEX =
+  /^(?:select|with|explain|show|desc(?:ribe)?)\b/i;
 const FORBIDDEN_WRITE_KEYWORDS = [
   // Core DML
   "insert",
@@ -253,8 +258,11 @@ async function executeQuery(input: {
   rowCount: number;
   truncated: boolean;
 }> {
+  // IPv6 hosts must be bracketed in URL form (`http://[::1]:8123/`).
+  // Mirrors the same helper `database-query.ts` uses for Postgres URLs.
+  const host = formatHostForUrl(input.config.host);
   const url = new URL(
-    `${input.config.protocol}://${input.config.host}:${input.config.port}/`,
+    `${input.config.protocol}://${host}:${input.config.port}/`,
   );
   url.searchParams.set("database", input.config.database);
   // Structured JSON response: ClickHouse returns {meta, data, rows,
@@ -275,10 +283,16 @@ async function executeQuery(input: {
   );
   if (input.config.readOnly) {
     // Defense in depth on top of the keyword scan: ClickHouse's
-    // `readonly=1` blocks all DML/DDL/admin server-side, so even if
-    // our prompt-side gate ever misses something, the server still
-    // refuses to write.
-    url.searchParams.set("readonly", "1");
+    // `readonly` setting blocks DDL/DML server-side, so even if our
+    // prompt-side gate misses something, the server still refuses
+    // the write. We use `readonly=2` — NOT `readonly=1` — because
+    // `readonly=1` rejects ALL setting overrides in the same
+    // request, which would make `max_result_rows`,
+    // `result_overflow_mode`, and `max_execution_time` (set above)
+    // fail with "Cannot override setting in readonly mode" and break
+    // every query. `readonly=2` blocks the same DML/DDL surface but
+    // permits the read-side setting overrides we need.
+    url.searchParams.set("readonly", "2");
   }
   // Named parameter bindings — ClickHouse pulls these out of the URL
   // query string and substitutes them into `{name:Type}` placeholders
@@ -346,3 +360,18 @@ type ClickhouseJsonResponse = {
   data?: Array<Record<string, unknown>>;
   rows?: number;
 };
+
+// URL hosts can't be percent-encoded the way path/query components
+// can: `encodeURIComponent` mangles IPv6 (`::1` → `%3A%3A1`) and the
+// brackets that wrap it. Treat the host as opaque and only normalize
+// the IPv6 bracket convention. Named hosts and IPv4 pass through
+// unchanged; bare IPv6 gets wrapped in `[...]`.
+function formatHostForUrl(host: string): string {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host;
+  }
+  if (host.includes(":")) {
+    return `[${host}]`;
+  }
+  return host;
+}
