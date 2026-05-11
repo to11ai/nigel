@@ -11,41 +11,156 @@ import {
   type ToolConnectionScope,
 } from "@/lib/tool-connections";
 
-// Read-only enforcement: when the connection's config has
-// `readOnly: true`, the only verbs we accept are SELECT, WITH, and
-// EXPLAIN. We strip leading comments and whitespace before
-// classifying so an LLM that prefixes its SQL with a `/* … */` block
-// doesn't accidentally tunnel writes past us. This is a defense
-// layer; the actual GRANTs in the target database should also limit
-// the user to read-only. Both layers together make a write
-// substantially less likely.
-const READ_ONLY_VERB_REGEX = /^\s*(?:select|with|explain)\b/i;
+// Read-only enforcement is two-step:
+//
+//   1. The leading verb (after stripping leading whitespace + comments)
+//      must be SELECT, WITH, or EXPLAIN.
+//   2. NO data-modifying keyword may appear anywhere in the statement
+//      (after stripping all comments and string/identifier literals).
+//
+// Step 2 is the important one. Postgres lets data-modifying statements
+// live inside CTEs — `WITH deleted AS (DELETE FROM users RETURNING *)
+// SELECT * FROM deleted` starts with `WITH` and would pass step 1 alone
+// but executes a DELETE. Treat the `readOnly` flag as a real
+// enforcement layer, not just a hint to GRANT-config the database with.
+//
+// This is still defense in depth: the target database's GRANTs are the
+// authoritative layer (e.g. via a dedicated read-only role). Operators
+// who set `readOnly: true` and ALSO restrict the connection's user to
+// SELECT-only get the tightest guarantee.
+const READ_ONLY_LEADING_VERB_REGEX = /^(?:select|with|explain)\b/i;
+const FORBIDDEN_WRITE_KEYWORDS = [
+  "insert",
+  "update",
+  "delete",
+  "merge",
+  "truncate",
+  "drop",
+  "alter",
+  "create",
+  "grant",
+  "revoke",
+  "lock",
+  "vacuum",
+  "analyze",
+  "reindex",
+  "cluster",
+  "copy",
+  "comment",
+  "do",
+  "call",
+  "refresh",
+  "reset",
+  "set",
+  "discard",
+];
+const WRITE_KEYWORD_REGEX = new RegExp(
+  `\\b(?:${FORBIDDEN_WRITE_KEYWORDS.join("|")})\\b`,
+  "i",
+);
 
-// Strip /* … */ block comments and -- line comments from the head of
-// the statement before checking the leading verb. We don't try to
-// fully parse SQL — a determined attacker could still craft something
-// the GRANTs would block — but we close the obvious holes (multi-line
-// header comments, leading whitespace).
-function stripLeadingComments(sql: string): string {
+// Strip /* … */ block comments, -- line comments, single-quoted
+// strings, dollar-quoted strings ($tag$...$tag$), and double-quoted
+// identifiers from the SQL. The result is positionally meaningless
+// but preserves keyword presence/absence for the read-only scan, so
+// `WHERE name = 'INSERT INTO'` no longer registers as a write.
+// Comment + string stripping is done with hand-written tokenization
+// because the postgres lexer is more nuanced than a single regex.
+function stripCommentsAndLiterals(sql: string): string {
+  const out: string[] = [];
   let cursor = 0;
   while (cursor < sql.length) {
-    // Skip whitespace.
-    while (cursor < sql.length && /\s/.test(sql[cursor]!)) cursor++;
-    if (sql.startsWith("--", cursor)) {
-      const newline = sql.indexOf("\n", cursor);
-      if (newline === -1) return "";
-      cursor = newline + 1;
+    const ch = sql[cursor]!;
+    // -- line comment
+    if (ch === "-" && sql[cursor + 1] === "-") {
+      const nl = sql.indexOf("\n", cursor + 2);
+      cursor = nl === -1 ? sql.length : nl;
       continue;
     }
-    if (sql.startsWith("/*", cursor)) {
-      const end = sql.indexOf("*/", cursor + 2);
-      if (end === -1) return "";
-      cursor = end + 2;
+    // /* block comment */ — nesting matters in Postgres.
+    if (ch === "/" && sql[cursor + 1] === "*") {
+      let depth = 1;
+      cursor += 2;
+      while (cursor < sql.length && depth > 0) {
+        if (sql[cursor] === "/" && sql[cursor + 1] === "*") {
+          depth++;
+          cursor += 2;
+        } else if (sql[cursor] === "*" && sql[cursor + 1] === "/") {
+          depth--;
+          cursor += 2;
+        } else {
+          cursor++;
+        }
+      }
       continue;
     }
-    break;
+    // 'single-quoted string' — Postgres escapes a literal quote by
+    // doubling it (''). Skip until an unescaped closing quote.
+    if (ch === "'") {
+      cursor++;
+      while (cursor < sql.length) {
+        if (sql[cursor] === "'" && sql[cursor + 1] === "'") {
+          cursor += 2;
+          continue;
+        }
+        if (sql[cursor] === "'") {
+          cursor++;
+          break;
+        }
+        cursor++;
+      }
+      continue;
+    }
+    // "double-quoted identifier" — same doubling rule for embedded ".
+    if (ch === '"') {
+      cursor++;
+      while (cursor < sql.length) {
+        if (sql[cursor] === '"' && sql[cursor + 1] === '"') {
+          cursor += 2;
+          continue;
+        }
+        if (sql[cursor] === '"') {
+          cursor++;
+          break;
+        }
+        cursor++;
+      }
+      continue;
+    }
+    // $tag$ ... $tag$ — Postgres dollar-quoted strings. Tag may be empty.
+    if (ch === "$") {
+      const tagEnd = sql.indexOf("$", cursor + 1);
+      // The tag may contain letters/digits/underscores only. Anything
+      // else (e.g. `$1` for a parameter placeholder) means this isn't
+      // a dollar-quote opening.
+      if (
+        tagEnd !== -1 &&
+        /^[a-zA-Z0-9_]*$/.test(sql.slice(cursor + 1, tagEnd))
+      ) {
+        const tag = sql.slice(cursor, tagEnd + 1);
+        const close = sql.indexOf(tag, tagEnd + 1);
+        cursor = close === -1 ? sql.length : close + tag.length;
+        continue;
+      }
+    }
+    out.push(ch);
+    cursor++;
   }
-  return sql.slice(cursor);
+  return out.join("");
+}
+
+// Returns a typed reason when the SQL should be refused. `null` means
+// the statement passes both gates and may proceed to the executor.
+function classifyReadOnlyViolation(sql: string): string | null {
+  const stripped = stripCommentsAndLiterals(sql).trim();
+  if (!READ_ONLY_LEADING_VERB_REGEX.test(stripped)) {
+    return "only SELECT, WITH, and EXPLAIN statements are accepted";
+  }
+  const match = WRITE_KEYWORD_REGEX.exec(stripped);
+  if (match) {
+    return `forbidden keyword '${match[0]}' is not permitted (CTEs and other data-modifying constructs are blocked even when the leading verb is SELECT/WITH/EXPLAIN)`;
+  }
+  return null;
 }
 
 export class DatabaseQueryError extends Error {
@@ -104,11 +219,11 @@ export function createDatabaseQueryCallback(
       );
     }
     if (resolved.config.readOnly) {
-      const stripped = stripLeadingComments(call.sql);
-      if (!READ_ONLY_VERB_REGEX.test(stripped)) {
+      const reason = classifyReadOnlyViolation(call.sql);
+      if (reason) {
         throw new DatabaseQueryError(
           "read_only_violation",
-          `connection '${call.connectionName}' is read-only; only SELECT, WITH, and EXPLAIN statements are accepted`,
+          `connection '${call.connectionName}' is read-only; ${reason}`,
         );
       }
     }
@@ -185,11 +300,23 @@ async function executeQuery(input: {
     // client, which only ever runs the one user query after this.
     await sql.unsafe(`SET statement_timeout = ${input.statementTimeoutMs}`);
     const params = (input.params ?? []) as readonly unknown[];
-    const result = await sql.unsafe(input.sql, params as never[]);
-    const truncated = result.length > input.rowLimit;
-    const rows = (truncated ? result.slice(0, input.rowLimit) : result).map(
-      (r) => ({ ...(r as Record<string, unknown>) }),
-    );
+    // Cursor instead of buffered `sql.unsafe(...)` so a SELECT without
+    // a LIMIT can't OOM the agent process before our row-limit slice
+    // runs. We pull one row at a time and stop the iterator as soon
+    // as we've collected `rowLimit + 1` (the extra row is how we
+    // detect truncation without fetching more than necessary).
+    const rows: DatabaseQueryResultRow[] = [];
+    let truncated = false;
+    const cursor = sql
+      .unsafe(input.sql, params as never[])
+      .cursor() as AsyncIterable<Record<string, unknown>>;
+    for await (const row of cursor) {
+      if (rows.length >= input.rowLimit) {
+        truncated = true;
+        break;
+      }
+      rows.push({ ...row });
+    }
     const columnNames = rows.length > 0 ? Object.keys(rows[0]!) : [];
     return {
       rows,

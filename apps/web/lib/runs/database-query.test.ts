@@ -170,6 +170,69 @@ describe("createDatabaseQueryCallback — read-only enforcement", () => {
     }
   });
 
+  test("rejects WITH … DELETE CTE on a read-only connection (Greptile P1)", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    await expect(
+      cb({
+        connectionName: "test-pg",
+        sql: "WITH deleted AS (DELETE FROM users RETURNING *) SELECT * FROM deleted",
+      }),
+    ).rejects.toMatchObject({ code: "read_only_violation" });
+  });
+
+  test("rejects WITH … INSERT CTE on a read-only connection", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    await expect(
+      cb({
+        connectionName: "test-pg",
+        sql: "WITH ins AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM ins",
+      }),
+    ).rejects.toMatchObject({ code: "read_only_violation" });
+  });
+
+  test("rejects SELECT followed by a second DML statement", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    await expect(
+      cb({
+        connectionName: "test-pg",
+        sql: "SELECT 1; UPDATE users SET name = 'x'",
+      }),
+    ).rejects.toMatchObject({ code: "read_only_violation" });
+  });
+
+  test("does NOT reject a SELECT that contains a write-keyword inside a string literal", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    // 'INSERT INTO' is inside a quoted literal, not actual SQL.
+    // Should pass the read-only gate and proceed to the executor.
+    try {
+      await cb({
+        connectionName: "test-pg",
+        sql: "SELECT * FROM events WHERE message = 'INSERT INTO logs'",
+      });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as DatabaseQueryError).code).toBe("execution_failed");
+    }
+  });
+
+  test("does NOT reject a SELECT against a table named like a write keyword", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    try {
+      await cb({
+        connectionName: "test-pg",
+        sql: 'SELECT * FROM "insert_log" WHERE id = 1',
+      });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as DatabaseQueryError).code).toBe("execution_failed");
+    }
+  });
+
   test("accepts WITH … SELECT (CTE) on a read-only connection", async () => {
     await seedPostgresConnection({ readOnly: true });
     const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
