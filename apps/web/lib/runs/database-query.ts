@@ -300,22 +300,28 @@ async function executeQuery(input: {
     // client, which only ever runs the one user query after this.
     await sql.unsafe(`SET statement_timeout = ${input.statementTimeoutMs}`);
     const params = (input.params ?? []) as readonly unknown[];
-    // Cursor instead of buffered `sql.unsafe(...)` so a SELECT without
-    // a LIMIT can't OOM the agent process before our row-limit slice
-    // runs. We pull one row at a time and stop the iterator as soon
-    // as we've collected `rowLimit + 1` (the extra row is how we
-    // detect truncation without fetching more than necessary).
+    // Cursor instead of buffered `sql.unsafe(...)` so a SELECT
+    // without a LIMIT can't OOM the agent process before our
+    // row-limit slice runs. postgres-js v3 cursors yield **batches**
+    // (arrays), not individual rows — iterating without destructuring
+    // would spread an array into `{ "0": row }`. We pass an explicit
+    // batch size and inner-loop the rows so the iteration shape is
+    // unambiguous.
     const rows: DatabaseQueryResultRow[] = [];
     let truncated = false;
+    const CURSOR_BATCH_SIZE = 100;
     const cursor = sql
       .unsafe(input.sql, params as never[])
-      .cursor() as AsyncIterable<Record<string, unknown>>;
-    for await (const row of cursor) {
-      if (rows.length >= input.rowLimit) {
-        truncated = true;
-        break;
+      .cursor(CURSOR_BATCH_SIZE) as AsyncIterable<Record<string, unknown>[]>;
+    for await (const batch of cursor) {
+      for (const row of batch) {
+        if (rows.length >= input.rowLimit) {
+          truncated = true;
+          break;
+        }
+        rows.push({ ...row });
       }
-      rows.push({ ...row });
+      if (truncated) break;
     }
     const columnNames = rows.length > 0 ? Object.keys(rows[0]!) : [];
     return {
