@@ -435,7 +435,7 @@ const plannerPreset: CodePreset = {
     "  coordination, not execution. Use your direct file/shell access for verification",
     "  and trivial patches only.",
     "- After every code-touching dispatch, consider running the appropriate verification",
-    "  specialist (linter, type-checker, unit-tester) before declaring success.",
+    "  specialists (formatter, linter, type-checker, unit-tester) before declaring success.",
     "- The root budget caps total spend across all your dispatches. If you receive a",
     "  budget-exhausted error, stop and report what was accomplished plus what remained.",
     "- If a dispatch returns a meaningful failure or refusal, treat that as a real signal —",
