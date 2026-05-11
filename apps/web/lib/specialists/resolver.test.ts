@@ -152,6 +152,24 @@ describe("getSpecialist", () => {
     expect(adv?.needsLocalStack).toBe(false);
   });
 
+  test("researcher preset resolves with the expected shape", async () => {
+    const r = await getSpecialist("researcher");
+    expect(r).not.toBeNull();
+    expect(r?.name).toBe("researcher");
+    expect(r?.kind).toBe("preset");
+    expect(r?.systemPrompt).toContain("researcher");
+    expect(r?.model).toBe("anthropic/claude-sonnet-4.6");
+    // Spec lists may_recurse=true + dispatch_specialist tool, both
+    // deferred until the dispatch_specialist tool ships. Until then
+    // researcher is non-recursive: web + file_read + search only.
+    expect(r?.toolAllowlist).toEqual(["web", "file_read", "search"]);
+    expect(r?.sandboxPolicy).toBe("inherit");
+    expect(r?.mayRecurse).toBe(false);
+    expect(r?.maxChildren).toBe(0);
+    expect(r?.budgetUsdDefaultMicros).toBe(4_000_000);
+    expect(r?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),

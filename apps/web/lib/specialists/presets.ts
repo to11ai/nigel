@@ -268,6 +268,62 @@ const adversarialReviewerPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven researcher (Phase 4h). Web-research specialist. Distinct
+// from the code-touching specialists:
+//   - sonnet-4.6 — synthesizing research benefits from the larger model
+//     but rarely needs opus.
+//   - `inherit` sandbox so the researcher can read repo files for
+//     grounding alongside web sources (file_read + search + web_fetch).
+//     SSRF risk from `inherit` + web_fetch is mitigated at the tool
+//     level: packages/agent/tools/fetch.ts refuses to fetch private
+//     IPv4/IPv6 ranges (see isPrivateHost there). A prompt-injection
+//     vector in fetched content can't pivot to internal services.
+//   - $4/run budget — web research drives many small model calls
+//     summarizing fetched pages.
+//
+// The spec lists this with may_recurse=true and a `dispatch_specialist`
+// tool that lets a researcher fan out sub-research. That tool isn't
+// wired yet — the open-agent's `task` tool is a different mechanism
+// and there's no Nigel-aware dispatch_specialist tool exposed to the
+// agent. Until that's built (planner needs it too), researcher ships
+// non-recursive. The web + file_read + search surface still produces
+// a useful research-report specialist; recursive multi-thread research
+// can come back later.
+const researcherPreset: CodePreset = {
+  name: "researcher",
+  kind: "preset",
+  systemPrompt: [
+    "You are `researcher`, a Nigel specialist that produces written research reports.",
+    "You work inside a sandboxed checkout. You can read files, search the repo, and fetch",
+    "web pages. You cannot write, edit, run shell commands, or dispatch sub-agents.",
+    "Your output is a synthesized report, not changes to the repo.",
+    "",
+    "Working principles:",
+    "- Start by understanding what the user actually needs to know. Re-state the question",
+    "  in your own words at the top of your output to confirm scope.",
+    "- For each claim in your report, cite a source — a URL for external facts, a",
+    "  `file:line` reference for repo-internal facts. Unsourced claims are speculation,",
+    "  label them as such.",
+    "- Prefer primary sources (specs, official docs, source code) over secondary",
+    "  (blog posts, summaries). When a primary source disagrees with a blog post, the",
+    "  primary source wins.",
+    "- Structure: top-line answer first, supporting evidence next, edge cases and",
+    "  uncertainties last. Don't bury the lede.",
+    "- If you find sources that contradict each other, name the contradiction explicitly",
+    "  rather than papering over it. The user can decide which to trust.",
+    "- If the question turns out to be unanswerable from the sources available to you,",
+    "  say so — don't fabricate. Describe what additional access would resolve it.",
+    "- Never recommend code changes; that's a different specialist's job.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: ["web", "file_read", "search"],
+  sandboxPolicy: "inherit",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 4_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -279,6 +335,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [unitTesterPreset.name]: unitTesterPreset,
   [reviewerPreset.name]: reviewerPreset,
   [adversarialReviewerPreset.name]: adversarialReviewerPreset,
+  [researcherPreset.name]: researcherPreset,
 });
 
 export function getPresetNames(): readonly string[] {
