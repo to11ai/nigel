@@ -73,6 +73,17 @@ envVar("POSTGRES_URL", postgresUrl, { sensitive: true });
 envVar("BETTER_AUTH_SECRET", config.requireSecret("betterAuthSecret"), {
   sensitive: true,
 });
+// Encryption key for tool_connections.secrets_ciphertext (Phase 5a).
+// 32 bytes of base64-encoded random. Same value targets production and
+// preview so secrets written in one env can be decrypted in the other
+// (Neon DB branching forks rows across the two). Rotating this key
+// invalidates every stored ciphertext until a re-encrypt migration
+// exists, so set it once and leave it.
+envVar(
+  "TOOL_CONNECTIONS_ENC_KEY",
+  config.requireSecret("toolConnectionsEncKey"),
+  { sensitive: true },
+);
 
 // Better Auth's allowed-hosts list pulls from BETTER_AUTH_URL +
 // VERCEL_PROJECT_PRODUCTION_URL. Without these the custom domain isn't on the
