@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { DispatchSpecialistCallback } from "@nigel/agent";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import type { AgentRun } from "./types";
 
 type CapturedSettings = {
   tools: Record<string, unknown>;
-  experimental_context: { sandbox: unknown; model: unknown };
+  experimental_context: {
+    sandbox: unknown;
+    model: unknown;
+    dispatchSpecialist: DispatchSpecialistCallback;
+  };
   prepareStep: (args: unknown) => Promise<unknown>;
   onStepFinish: (step: unknown) => Promise<unknown>;
 };
@@ -42,10 +47,13 @@ mock.module("@nigel/agent", () => ({
     glob: { _kind: "tool" },
     bash: { _kind: "tool" },
     task: { _kind: "tool" },
+    web_fetch: { _kind: "tool" },
+    dispatch_specialist: { _kind: "tool" },
   },
 }));
 
-const { executeSpecialistViaLLM } = await import("./specialist-execution");
+const { executeSpecialistViaLLM, shouldForwardInheritedSandbox } =
+  await import("./specialist-execution");
 
 // Stubs for the budget/repository functions are passed via the injection
 // seam on ExecuteSpecialistInput.deps rather than mocked at the module
@@ -116,6 +124,7 @@ function call(
     run?: Partial<AgentRun>;
     specialist?: Partial<ResolvedSpecialist>;
     task?: string;
+    dispatchSpecialist?: DispatchSpecialistCallback;
   } = {},
 ) {
   return executeSpecialistViaLLM({
@@ -126,6 +135,9 @@ function call(
     deps: {
       checkRootBudget: checkRootBudgetStub,
       addCostMicros: addCostMicrosStub,
+      ...(overrides.dispatchSpecialist
+        ? { dispatchSpecialist: overrides.dispatchSpecialist }
+        : {}),
     },
   });
 }
@@ -239,5 +251,79 @@ describe("executeSpecialistViaLLM", () => {
     await call();
     expect(captured().experimental_context.sandbox).toBeTruthy();
     expect(captured().experimental_context.model).toBeTruthy();
+  });
+
+  test("experimental_context carries dispatchSpecialist callback", async () => {
+    await call();
+    expect(typeof captured().experimental_context.dispatchSpecialist).toBe(
+      "function",
+    );
+  });
+
+  test("planner allowlist surfaces dispatch_specialist alongside file/search/shell/git/web", async () => {
+    await call({
+      specialist: {
+        toolAllowlist: [
+          "file",
+          "search",
+          "shell",
+          "git",
+          "web",
+          "dispatch_specialist",
+        ],
+      },
+    });
+    expect(Object.keys(captured().tools).sort()).toEqual([
+      "bash",
+      "dispatch_specialist",
+      "edit",
+      "glob",
+      "grep",
+      "read",
+      "web_fetch",
+      "write",
+    ]);
+  });
+});
+
+describe("shouldForwardInheritedSandbox", () => {
+  const state = { type: "vercel" as const, sandboxId: "s1", expiresAt: 1 };
+
+  test("returns false when there is no parent sandbox state", () => {
+    expect(shouldForwardInheritedSandbox(null, undefined)).toBe(false);
+    expect(shouldForwardInheritedSandbox(undefined, "inherit")).toBe(false);
+    expect(shouldForwardInheritedSandbox(null, "fresh")).toBe(false);
+  });
+
+  test("forwards inheritance when override is omitted (specialist preset wins)", () => {
+    expect(shouldForwardInheritedSandbox(state, undefined)).toBe(true);
+  });
+
+  test("forwards inheritance when override is explicitly 'inherit'", () => {
+    expect(shouldForwardInheritedSandbox(state, "inherit")).toBe(true);
+  });
+
+  test("withholds inheritance when override is 'fresh'", () => {
+    expect(shouldForwardInheritedSandbox(state, "fresh")).toBe(false);
+  });
+
+  test("withholds inheritance when override is 'fresh_clean'", () => {
+    expect(shouldForwardInheritedSandbox(state, "fresh_clean")).toBe(false);
+  });
+});
+
+describe("dispatchSpecialist callback wiring", () => {
+  test("injected dispatchSpecialist callback is used when provided in deps", async () => {
+    const dispatchStub = mock(async (input: { task: string }) => ({
+      output: `dispatched: ${input.task}`,
+    }));
+    await call({ dispatchSpecialist: dispatchStub });
+    const cb = captured().experimental_context.dispatchSpecialist;
+    const result = await cb({
+      specialistName: "coder",
+      task: "make a fix",
+    });
+    expect(result.output).toBe("dispatched: make a fix");
+    expect(dispatchStub).toHaveBeenCalledTimes(1);
   });
 });

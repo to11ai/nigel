@@ -170,6 +170,28 @@ describe("getSpecialist", () => {
     expect(r?.needsLocalStack).toBe(false);
   });
 
+  test("planner preset resolves with the expected shape", async () => {
+    const p = await getSpecialist("planner");
+    expect(p).not.toBeNull();
+    expect(p?.name).toBe("planner");
+    expect(p?.kind).toBe("preset");
+    expect(p?.systemPrompt).toContain("planner");
+    expect(p?.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(p?.toolAllowlist).toEqual([
+      "file",
+      "search",
+      "shell",
+      "git",
+      "web",
+      "dispatch_specialist",
+    ]);
+    expect(p?.sandboxPolicy).toBe("inherit");
+    expect(p?.mayRecurse).toBe(true);
+    expect(p?.maxChildren).toBe(10);
+    expect(p?.budgetUsdDefaultMicros).toBe(10_000_000);
+    expect(p?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),

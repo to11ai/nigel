@@ -4,7 +4,7 @@ import type { ToolSet } from "ai";
 // open-agent tool names that implement it. Categories not in this map
 // are silently ignored — they correspond to tools that this PR doesn't
 // wire up (e.g. `database:*`, `mcp:pulumi`, `cloud:*`, `linear`,
-// `dispatch_specialist`, `screenshot_matrix`).
+// `screenshot_matrix`).
 const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   file: ["read", "write", "edit"],
   // Read-only file access for review/audit specialists. The spec calls
@@ -17,6 +17,10 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // Until a structured git tool exists, the agent uses bash for git ops.
   git: ["bash"],
   web: ["web_fetch"],
+  // Recursion gate — only specialists with `may_recurse: true` (e.g.
+  // `planner`) should include this category. dispatch.ts also enforces
+  // may_recurse at runtime; the allowlist is the first line of defense.
+  dispatch_specialist: ["dispatch_specialist"],
 };
 
 export function filterAgentTools<T extends ToolSet>(

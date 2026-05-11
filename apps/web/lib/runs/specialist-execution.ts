@@ -1,4 +1,6 @@
+import type { DispatchSpecialistCallback } from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
+import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
 import type { ResolvedSpecialist } from "@/lib/specialists";
@@ -7,7 +9,21 @@ import { computeCostMicros } from "./cost";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
 import { filterAgentTools } from "./tool-allowlist";
-import type { AgentRun } from "./types";
+import type { AgentRun, SandboxPolicy } from "./types";
+
+// `provisionSandboxForRun` decides inherit-vs-fresh from `inheritFrom`
+// only and does not look at the child run's sandboxPolicy. So a
+// `fresh`/`fresh_clean` override from the LLM gets silently negated if
+// we also forward the parent's sandbox state. Return true only when
+// inheritance is actually permitted by the override (or omitted, in
+// which case the specialist's own preset wins downstream).
+export function shouldForwardInheritedSandbox(
+  state: SandboxState | null | undefined,
+  override: SandboxPolicy | undefined,
+): state is SandboxState {
+  if (!state) return false;
+  return override === undefined || override === "inherit";
+}
 
 const MAX_STEPS = 50;
 
@@ -24,6 +40,13 @@ export type ExecuteSpecialistInput = {
   deps?: {
     checkRootBudget?: (rootRunId: string) => Promise<void>;
     addCostMicros?: (runId: string, deltaMicros: number) => Promise<void>;
+    // Curried dispatch callback handed to the dispatch_specialist tool.
+    // The tool calls this with { specialistName, task, ... }; the wrapper
+    // is responsible for filling in parentRunId + inheritSandboxState
+    // before calling dispatchSpecialist() proper. Defaults to a binding
+    // around the real dispatch function (set up at call time so we
+    // avoid an import cycle).
+    dispatchSpecialist?: DispatchSpecialistCallback;
   };
 };
 
@@ -49,6 +72,37 @@ export async function executeSpecialistViaLLM(
   }
   const checkRootBudget = deps?.checkRootBudget ?? defaultCheckRootBudget;
   const addCostMicros = deps?.addCostMicros ?? defaultAddCostMicros;
+  // The dispatch_specialist tool, exposed via experimental_context,
+  // calls this curried callback. The wrapper supplies a default that
+  // imports dispatchSpecialist lazily (inside the call) to avoid a
+  // module-load-time circular import between dispatch.ts and
+  // specialist-execution.ts.
+  const dispatchSpecialistFn: DispatchSpecialistCallback =
+    deps?.dispatchSpecialist ??
+    (async (callInput) => {
+      // Lazy import: dispatch.ts depends on specialist-execution.ts,
+      // and a top-level import here would create a cycle that breaks
+      // when tests mock either module.
+      const { dispatchSpecialist } = await import("./dispatch");
+      const result = await dispatchSpecialist({
+        parentRunId: run.id,
+        specialistName: callInput.specialistName,
+        task: callInput.task,
+        ...(callInput.budgetUsdMicros !== undefined
+          ? { budgetUsdMicros: callInput.budgetUsdMicros }
+          : {}),
+        ...(callInput.sandboxPolicyOverride !== undefined
+          ? { sandboxPolicyOverride: callInput.sandboxPolicyOverride }
+          : {}),
+        ...(shouldForwardInheritedSandbox(
+          sandbox.state,
+          callInput.sandboxPolicyOverride,
+        )
+          ? { inheritSandboxState: sandbox.state }
+          : {}),
+      });
+      return { output: result.output };
+    });
 
   const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
   const callModel = gateway(specialist.model);
@@ -67,6 +121,7 @@ export async function executeSpecialistViaLLM(
     experimental_context: {
       sandbox,
       model: callModel,
+      dispatchSpecialist: dispatchSpecialistFn,
     },
     prepareStep: async () => {
       await checkRootBudget(run.rootRunId);

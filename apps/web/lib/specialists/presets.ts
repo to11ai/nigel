@@ -324,6 +324,91 @@ const researcherPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven planner (Phase 4i). The first specialist that can fan work
+// out to other specialists via the `dispatch_specialist` tool. The
+// planner's job is to decompose a multi-step task, dispatch the right
+// specialist for each step, and synthesize the results.
+//
+// Differs from the workhorse specialists shipped so far:
+//   - sonnet-4.6 — decomposition and coordination benefit from the
+//     larger model; haiku tends to dispatch redundantly or miss steps.
+//   - `inherit` sandbox — the planner attaches to the parent run's
+//     sandbox so dispatched children can also inherit it and see the
+//     same working tree.
+//   - `may_recurse: true` — the whole point of this preset. Recursion
+//     is bounded by the root budget (children's cost rolls up) and by
+//     `maxChildren` per-step. The dispatch path additionally refuses
+//     dispatch when the parent specialist's `mayRecurse` is false, so
+//     this flag is the runtime gate.
+//   - `maxChildren: 10` — sensible cap to prevent runaway fan-out. A
+//     single planner step that needs to dispatch more than ten distinct
+//     specialists is almost certainly poorly decomposed.
+//   - $10/run budget — planning runs longer than a focused fix because
+//     the planner is also reading dispatched-child output and deciding
+//     next steps. Root-budget rollup means the planner's nominal budget
+//     is shared across the children it dispatches.
+//
+// Allowlist includes `dispatch_specialist` (the recursion tool) plus
+// the full read/write/shell surface so the planner can sanity-check
+// child output and patch trivial things directly when it's cheaper than
+// re-dispatching. `web` is included for grounded research while
+// planning.
+const plannerPreset: CodePreset = {
+  name: "planner",
+  kind: "preset",
+  systemPrompt: [
+    "You are `planner`, a Nigel specialist that decomposes complex tasks into a sequence of",
+    "sub-tasks and dispatches the right specialist for each. You work inside a sandboxed",
+    "checkout. You can read, write, edit, search, run shell commands (including git), fetch",
+    "web pages, and — critically — dispatch other Nigel specialists via the",
+    "`dispatch_specialist` tool.",
+    "",
+    "Available specialists you can dispatch:",
+    "- `coder`: makes minimal, correct code changes. Use for the actual edit work.",
+    "- `linter`: fixes lint failures after a code change.",
+    "- `type-checker`: fixes type errors after a code change.",
+    "- `unit-tester`: fixes failing unit tests, or writes new ones for added behavior.",
+    "- `reviewer`: read-only friendly review. Surfaces obvious issues.",
+    "- `adversarial-reviewer`: read-only deep audit for security/race/idempotency holes.",
+    "  Expensive; use only when the change warrants it.",
+    "- `researcher`: produces a written research report from web + repo sources. Use when",
+    "  the task requires background knowledge you don't have.",
+    "",
+    "Working principles:",
+    "- Start by re-stating the task in your own words. If it's ambiguous, return a request",
+    "  for clarification instead of guessing.",
+    "- Decompose into the smallest sequence of dispatches that accomplishes the task.",
+    "  Each dispatched specialist starts with no memory of your conversation, so write",
+    "  each dispatched task as a self-contained instruction.",
+    "- Dispatch one specialist at a time and read its output before dispatching the next.",
+    "  Use child output to decide what's next; don't pre-commit to a fixed plan.",
+    "- Prefer dispatching specialists over doing the work yourself. Your edge is",
+    "  coordination, not execution. Use your direct file/shell access for verification",
+    "  and trivial patches only.",
+    "- After every code-touching dispatch, consider running the appropriate verification",
+    "  specialist (linter, type-checker, unit-tester) before declaring success.",
+    "- The root budget caps total spend across all your dispatches. If you receive a",
+    "  budget-exhausted error, stop and report what was accomplished plus what remained.",
+    "- If a dispatch returns a meaningful failure or refusal, treat that as a real signal —",
+    "  do not retry blindly with the same prompt. Reformulate or escalate.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: [
+    "file",
+    "search",
+    "shell",
+    "git",
+    "web",
+    "dispatch_specialist",
+  ],
+  sandboxPolicy: "inherit",
+  mayRecurse: true,
+  maxChildren: 10,
+  budgetUsdDefaultMicros: 10_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -336,6 +421,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [reviewerPreset.name]: reviewerPreset,
   [adversarialReviewerPreset.name]: adversarialReviewerPreset,
   [researcherPreset.name]: researcherPreset,
+  [plannerPreset.name]: plannerPreset,
 });
 
 export function getPresetNames(): readonly string[] {
