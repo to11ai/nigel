@@ -135,6 +135,23 @@ describe("getSpecialist", () => {
     expect(rev?.needsLocalStack).toBe(false);
   });
 
+  test("adversarial-reviewer preset resolves with the expected shape", async () => {
+    const adv = await getSpecialist("adversarial-reviewer");
+    expect(adv).not.toBeNull();
+    expect(adv?.name).toBe("adversarial-reviewer");
+    expect(adv?.kind).toBe("preset");
+    expect(adv?.systemPrompt).toContain("adversarial-reviewer");
+    expect(adv?.model).toBe("anthropic/claude-opus-4.7");
+    // Spec lists "shell (read-only)" but shell-readonly is its own
+    // feature; deferred. file_read + search until then.
+    expect(adv?.toolAllowlist).toEqual(["file_read", "search"]);
+    expect(adv?.sandboxPolicy).toBe("fresh_clean");
+    expect(adv?.mayRecurse).toBe(false);
+    expect(adv?.maxChildren).toBe(0);
+    expect(adv?.budgetUsdDefaultMicros).toBe(10_000_000);
+    expect(adv?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),
