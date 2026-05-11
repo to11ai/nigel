@@ -133,10 +133,22 @@ function stripCommentsAndLiterals(sql: string): string {
   return out.join("");
 }
 
+// `SHOW CREATE ...` is the standard read-only way to inspect a
+// table / view / database / dictionary / function / user / role
+// / quota / profile / policy DDL in ClickHouse — it returns the
+// CREATE statement as a string, it does NOT execute one. Treat it
+// as a read and skip the keyword scan that would otherwise reject
+// it on `create`. Same logic that lets `EXPLAIN ANALYZE SELECT`
+// past the Postgres gate.
+const SHOW_CREATE_REGEX = /^show\s+create\b/i;
+
 function classifyReadOnlyViolation(sql: string): string | null {
   const stripped = stripCommentsAndLiterals(sql).trim();
   if (!READ_ONLY_LEADING_VERB_REGEX.test(stripped)) {
     return "only SELECT, WITH, EXPLAIN, SHOW, and DESC statements are accepted";
+  }
+  if (SHOW_CREATE_REGEX.test(stripped)) {
+    return null;
   }
   const match = WRITE_KEYWORD_REGEX.exec(stripped);
   if (match) {

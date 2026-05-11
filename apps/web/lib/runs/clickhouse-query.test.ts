@@ -214,6 +214,42 @@ describe("createClickhouseQueryCallback — read-only enforcement", () => {
     }
   });
 
+  test("accepts SHOW CREATE TABLE on a read-only connection (core analyst use case)", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    try {
+      await cb({ connectionName: "test-ch", sql: "SHOW CREATE TABLE events" });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as ClickhouseQueryError).code).toBe("execution_failed");
+    }
+  });
+
+  test("accepts SHOW CREATE VIEW on a read-only connection", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    try {
+      await cb({ connectionName: "test-ch", sql: "SHOW CREATE VIEW v" });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as ClickhouseQueryError).code).toBe("execution_failed");
+    }
+  });
+
+  test("rejects bare CREATE TABLE on a read-only connection (not a SHOW CREATE)", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    await expect(
+      cb({ connectionName: "test-ch", sql: "CREATE TABLE t (id UInt64)" }),
+    ).rejects.toMatchObject({ code: "read_only_violation" });
+  });
+
   test("accepts DESCRIBE TABLE on a read-only connection (long-form synonym)", async () => {
     await seedClickhouseConnection({ readOnly: true });
     const cb = createClickhouseQueryCallback({
