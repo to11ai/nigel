@@ -42,7 +42,12 @@ const FORBIDDEN_WRITE_KEYWORDS = [
   "revoke",
   "lock",
   "vacuum",
-  "analyze",
+  // `analyze` is intentionally *not* listed: it would block
+  // `EXPLAIN ANALYZE SELECT ...`, the standard query-plan inspection
+  // tool db-analyst lives for. Standalone `ANALYZE` (which updates
+  // pg_statistic) is already blocked by the leading-verb check; any
+  // DML nested inside `EXPLAIN ANALYZE` is independently caught by
+  // INSERT/UPDATE/DELETE/etc.
   "reindex",
   "cluster",
   "copy",
@@ -53,6 +58,15 @@ const FORBIDDEN_WRITE_KEYWORDS = [
   "reset",
   "set",
   "discard",
+  // `into` closes the `SELECT * INTO new_table FROM ...` hole — the
+  // Postgres-specific shorthand for `CREATE TABLE AS SELECT`. It
+  // passes the leading-verb check (SELECT) and contains no other
+  // forbidden keyword, so without this it would bypass the gate. Every
+  // legitimate use of `INTO` in raw SQL is a write (INSERT INTO,
+  // MERGE INTO, SELECT INTO); the PL/pgSQL `SELECT ... INTO var`
+  // form only appears inside function bodies, not in the kind of
+  // ad-hoc SQL this tool runs.
+  "into",
 ];
 const WRITE_KEYWORD_REGEX = new RegExp(
   `\\b(?:${FORBIDDEN_WRITE_KEYWORDS.join("|")})\\b`,

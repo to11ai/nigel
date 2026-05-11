@@ -219,6 +219,33 @@ describe("createDatabaseQueryCallback — read-only enforcement", () => {
     }
   });
 
+  test("rejects SELECT INTO new_table on a read-only connection (CREATE TABLE AS shorthand)", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    await expect(
+      cb({
+        connectionName: "test-pg",
+        sql: "SELECT * INTO new_table FROM events",
+      }),
+    ).rejects.toMatchObject({ code: "read_only_violation" });
+  });
+
+  test("accepts EXPLAIN ANALYZE SELECT on a read-only connection (core db-analyst use case)", async () => {
+    await seedPostgresConnection({ readOnly: true });
+    const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
+    try {
+      await cb({
+        connectionName: "test-pg",
+        sql: "EXPLAIN ANALYZE SELECT * FROM events WHERE id = 1",
+      });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      // Must reach the executor (no fake host listening) — proves the
+      // read-only gate did NOT reject the query.
+      expect((err as DatabaseQueryError).code).toBe("execution_failed");
+    }
+  });
+
   test("does NOT reject a SELECT against a table named like a write keyword", async () => {
     await seedPostgresConnection({ readOnly: true });
     const cb = createDatabaseQueryCallback({ specialistName: "db-analyst" });
