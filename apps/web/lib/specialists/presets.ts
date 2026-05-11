@@ -84,6 +84,54 @@ const linterPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven formatter (Phase 4j). Runs the repo's format command and
+// applies the resulting changes. Same shape as `linter`/`type-checker`
+// at the orchestration level: haiku for cheap formulaic edits, `fresh`
+// sandbox so each run starts from a clean checkout, `may_recurse:
+// false`. The only meaningful difference from `linter` is the prompt
+// telling the agent which command to invoke and what kind of
+// remediation is in scope (whitespace, quoting, import order — not
+// semantic refactors).
+const formatterPreset: CodePreset = {
+  name: "formatter",
+  kind: "preset",
+  systemPrompt: [
+    "You are `formatter`, a Nigel specialist that applies the repository's code-formatting",
+    "rules. You work inside a sandboxed checkout that starts from a clean `git` state, and",
+    "you can read, write, search, and run shell commands.",
+    "",
+    "Working principles:",
+    "- First identify the repo's two formatter modes: the apply mode (typically `bun run",
+    "  format`, `bun run fix`, `prettier --write`) and the check mode (typically `bun run",
+    "  check`, `prettier --check`, or the same command with `--check`/`--list-different`).",
+    "  If only an apply mode exists, treat `git diff --quiet` after the apply as the check.",
+    "- Run the apply mode. Most write-mode formatters exit 0 regardless of whether they",
+    "  changed anything, so the apply command's exit code is NOT a stop signal — you must",
+    "  run the check mode afterwards to know if the tree is actually clean.",
+    "- Stop when the **check command** exits 0 (or `git diff --quiet` succeeds when no check",
+    "  mode exists). Stop after two apply→check cycles without progress, reporting the",
+    "  files still failing and why.",
+    "- Stay strictly within formatting scope: whitespace, indentation, quote style, trailing",
+    "  commas, import ordering, and other syntactic concerns the formatter itself owns.",
+    "  Do NOT rename identifiers, restructure code, or fix lint/type errors — those are",
+    "  other specialists' jobs.",
+    "- If a formatter rewrite produces clearly-broken code (e.g. introduces a syntax error",
+    "  in a file the formatter touched), recover with `git restore <file>` — the sandbox",
+    "  starts from a clean checkout, so `git restore` returns the file to its pre-format",
+    "  state — and report the formatter bug rather than papering over it. Do NOT rely on",
+    "  having pre-read the file content; the formatter writes via a shell command, not via",
+    "  your file tools, so the prior contents may not be in your context.",
+    "- Never edit files outside the cloned repo's working tree.",
+  ].join("\n"),
+  model: "anthropic/claude-haiku-4.5",
+  toolAllowlist: ["file", "search", "shell"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 2_000_000,
+  needsLocalStack: false,
+};
+
 // LLM-driven type-checker (Phase 4d). Runs the repo's type-check command,
 // reads failures, fixes them. Same shape as linter but tuned for type
 // errors: same model (haiku — most type fixes are local), same allowlist,
@@ -366,6 +414,7 @@ const plannerPreset: CodePreset = {
     "Available specialists you can dispatch:",
     "- `coder`: makes minimal, correct code changes. Use for the actual edit work.",
     "- `linter`: fixes lint failures after a code change.",
+    "- `formatter`: applies the repository's formatter (whitespace, quoting, import order).",
     "- `type-checker`: fixes type errors after a code change.",
     "- `unit-tester`: fixes failing unit tests, or writes new ones for added behavior.",
     "- `reviewer`: read-only friendly review. Surfaces obvious issues.",
@@ -386,7 +435,7 @@ const plannerPreset: CodePreset = {
     "  coordination, not execution. Use your direct file/shell access for verification",
     "  and trivial patches only.",
     "- After every code-touching dispatch, consider running the appropriate verification",
-    "  specialist (linter, type-checker, unit-tester) before declaring success.",
+    "  specialists (formatter, linter, type-checker, unit-tester) before declaring success.",
     "- The root budget caps total spend across all your dispatches. If you receive a",
     "  budget-exhausted error, stop and report what was accomplished plus what remained.",
     "- If a dispatch returns a meaningful failure or refusal, treat that as a real signal —",
@@ -416,6 +465,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [echoPreset.name]: echoPreset,
   [coderPreset.name]: coderPreset,
   [linterPreset.name]: linterPreset,
+  [formatterPreset.name]: formatterPreset,
   [typeCheckerPreset.name]: typeCheckerPreset,
   [unitTesterPreset.name]: unitTesterPreset,
   [reviewerPreset.name]: reviewerPreset,
