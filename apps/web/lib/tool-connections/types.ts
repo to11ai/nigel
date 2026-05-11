@@ -223,6 +223,17 @@ export function parseScope(raw: string): ToolConnectionScope {
 
 export function formatScope(scope: ToolConnectionScope): string {
   if (scope.kind === "global") return "global";
+  // Guard against the asymmetric case where `formatScope` would
+  // happily write `"specialist:"` to the row but `parseScope` later
+  // rejects that same string — the connection would be persisted
+  // but permanently unresolvable. Reject here instead.
+  if (!scope.specialistName) {
+    throw new ToolConnectionValidationError({
+      code: "scope",
+      message:
+        "tool_connections.scope: specialistName must be non-empty for kind='specialist'",
+    });
+  }
   return `specialist:${scope.specialistName}`;
 }
 

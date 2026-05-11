@@ -159,6 +159,12 @@ describe("parseScope / formatScope", () => {
     );
   });
 
+  test("formatScope rejects an empty specialistName (matches parseScope)", () => {
+    expect(() =>
+      formatScope({ kind: "specialist", specialistName: "" }),
+    ).toThrow(ToolConnectionValidationError);
+  });
+
   test("formatScope roundtrips parseScope", () => {
     for (const raw of ["global", "specialist:coder", "specialist:planner"]) {
       expect(formatScope(parseScope(raw))).toBe(raw);
