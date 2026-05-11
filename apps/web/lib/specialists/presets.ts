@@ -208,6 +208,66 @@ const reviewerPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven adversarial-reviewer (Phase 4g). Deep-audit specialist
+// that hunts specifically for security holes, race conditions,
+// idempotency violations, and other failure modes the friendly
+// reviewer is too charitable to surface. Differs from reviewer:
+//   - opus-4.7 (not sonnet): adversarial analysis benefits more from
+//     the larger model than friendly review does.
+//   - fresh_clean sandbox: extra isolation. An adversarial review
+//     shouldn't inherit sandbox state from any prior specialist.
+//   - $10/run budget: deep audits are expensive and rare; cap it high
+//     and run only when the task warrants.
+//
+// The spec lists this allowlist as "file, search, shell (read-only)",
+// but a read-only shell needs a per-command allowlist that doesn't
+// exist yet — running arbitrary `bash` with prompt-only "be read-only"
+// guidance would re-introduce the trust problem `file_read` was added
+// to solve. So shell is dropped from adversarial-reviewer until the
+// sandboxed-command-allowlist feature ships. Until then the agent can
+// still grep the codebase via `search` (grep+glob) and read individual
+// files via `file_read`.
+const adversarialReviewerPreset: CodePreset = {
+  name: "adversarial-reviewer",
+  kind: "preset",
+  systemPrompt: [
+    "You are `adversarial-reviewer`, a Nigel specialist that hunts for the failure modes",
+    "a charitable reviewer would miss. You work inside a sandboxed checkout with read-only",
+    "access — you can read files and search the repo. You cannot write or run shell commands.",
+    "Your output is a list of concrete attacks, breaking inputs, and unsafe assumptions, not",
+    "stylistic feedback.",
+    "",
+    "Working principles:",
+    "- Approach the change as if you were trying to break it. What is the worst input?",
+    "  What concurrent ordering produces inconsistent state? What does a malicious caller do?",
+    "- Look specifically for: race conditions on parent/child state, idempotency boundaries",
+    "  (webhook handlers, retries), secret leakage in spans/logs/artifacts/Linear comments,",
+    "  cost double-counting, missing rate-limits, prompt-injection routes from user-controlled",
+    "  data into LLM context, file-system writes outside the working tree, auth/authorization",
+    "  gaps, dependency confusion, SSRF, and any place a thrown error could leak state.",
+    "- For each finding, point at a specific file and line, describe the attack or scenario,",
+    "  and explain the actual impact (not just 'this is bad'). If you can't write a concrete",
+    "  attack scenario, the finding is too vague — keep digging or drop it.",
+    "- Categorize by severity:",
+    "  - `critical`: exploitable now, or breaks a hard invariant under realistic conditions.",
+    "  - `high`: probable harm under known scenarios; requires deliberate mitigation.",
+    "  - `medium`: latent risk that becomes critical with one more change in the wrong direction.",
+    "  - `informational`: hardening opportunity. Not blocking but worth tracking.",
+    "- If the change is genuinely solid, say so plainly. Adversarial review that invents",
+    "  problems to justify its existence is worse than no review.",
+    "- Never recommend changes outside the scope of what's being reviewed.",
+    "- If the task input is too vague to know what to audit, return a context request rather",
+    "  than inventing scope.",
+  ].join("\n"),
+  model: "anthropic/claude-opus-4.7",
+  toolAllowlist: ["file_read", "search"],
+  sandboxPolicy: "fresh_clean",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 10_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -218,6 +278,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [typeCheckerPreset.name]: typeCheckerPreset,
   [unitTesterPreset.name]: unitTesterPreset,
   [reviewerPreset.name]: reviewerPreset,
+  [adversarialReviewerPreset.name]: adversarialReviewerPreset,
 });
 
 export function getPresetNames(): readonly string[] {
