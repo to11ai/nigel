@@ -279,6 +279,54 @@ describe("createClickhouseQueryCallback — read-only enforcement", () => {
     }
   });
 
+  test("accepts SELECT against system.tables (Bugbot High false-positive guard)", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    try {
+      await cb({
+        connectionName: "test-ch",
+        sql: "SELECT name FROM system.tables WHERE database = 'default'",
+      });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as ClickhouseQueryError).code).toBe("execution_failed");
+    }
+  });
+
+  test("accepts SELECT using the merge() table function", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    try {
+      await cb({
+        connectionName: "test-ch",
+        sql: "SELECT count() FROM merge('default', '^events_')",
+      });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as ClickhouseQueryError).code).toBe("execution_failed");
+    }
+  });
+
+  test("accepts SELECT using replaceAll() string function", async () => {
+    await seedClickhouseConnection({ readOnly: true });
+    const cb = createClickhouseQueryCallback({
+      specialistName: "data-analyst",
+    });
+    try {
+      await cb({
+        connectionName: "test-ch",
+        sql: "SELECT replaceAll(name, '-', '_') FROM events",
+      });
+      throw new Error("expected execution failure");
+    } catch (err) {
+      expect((err as ClickhouseQueryError).code).toBe("execution_failed");
+    }
+  });
+
   test("does NOT reject a SELECT against a backtick-quoted identifier matching a write keyword", async () => {
     await seedClickhouseConnection({ readOnly: true });
     const cb = createClickhouseQueryCallback({

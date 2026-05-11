@@ -7,8 +7,8 @@ import {
   type ClickhouseConnectionSecrets,
   type ResolvedConnection,
   resolveToolConnection,
-  type ToolConnectionScope,
 } from "@/lib/tool-connections";
+import { clampPositive, formatHostForUrl, scopeAllows } from "./query-shared";
 
 // Read-only enforcement mirrors `database-query.ts`: leading-verb gate
 // + keyword denylist (after stripping comments + string/identifier
@@ -21,12 +21,29 @@ import {
 // and DESCRIBE as synonyms; match both.
 const READ_ONLY_LEADING_VERB_REGEX =
   /^(?:select|with|explain|show|desc(?:ribe)?)\b/i;
+// Three things shape this list:
+//   1. The leading-verb gate already rejects standalone admin
+//      statements that don't start SELECT/WITH/EXPLAIN/SHOW/DESC —
+//      so SYSTEM RELOAD, OPTIMIZE TABLE, KILL QUERY, etc. as a whole
+//      statement are already blocked, and we don't need to re-list
+//      those verbs here as long as they couldn't appear *inside* a
+//      legitimate SELECT.
+//   2. Keywords that ARE legitimate inside SELECTs (the `system.*`
+//      metadata tables, the `merge()` table function, the
+//      `replace()` / `replaceAll()` string functions) MUST be left
+//      out — otherwise `SELECT * FROM system.tables` and friends
+//      get rejected. Word boundaries don't help: `\bsystem\b`
+//      matches inside `system.tables` because `.` is a non-word char.
+//   3. Anything that could appear inside a CTE / subquery and write
+//      data (INSERT/UPDATE/DELETE/MERGE-INTO/CREATE/DROP/ALTER/
+//      ATTACH/DETACH/EXCHANGE/RENAME/TRUNCATE/GRANT/REVOKE/SET/USE/
+//      INTO) MUST be listed.
 const FORBIDDEN_WRITE_KEYWORDS = [
-  // Core DML
+  // Core DML (note: `merge` is omitted on purpose — it's a legit
+  // table function in SELECTs; `MERGE INTO` is blocked via `into`).
   "insert",
   "update",
   "delete",
-  "merge",
   "truncate",
   // DDL
   "drop",
@@ -36,23 +53,16 @@ const FORBIDDEN_WRITE_KEYWORDS = [
   "attach",
   "detach",
   "exchange",
-  // Server-side admin / maintenance
-  "optimize",
-  "system",
-  "kill",
-  "check",
-  "freeze",
-  "unfreeze",
-  "fetch",
-  "replace",
   // Access control
   "grant",
   "revoke",
   // Session / settings mutation
   "set",
   "use",
-  // Same `INTO` rationale as Postgres — `SELECT … INTO OUTFILE` writes
-  // to disk; block it.
+  // Same `INTO` rationale as Postgres — `SELECT … INTO OUTFILE`
+  // writes to disk; block it. Also covers `INSERT INTO` (which is
+  // already caught by `insert`) and `MERGE INTO` (which is the only
+  // way `merge` performs writes from inside a SELECT context).
   "into",
 ];
 const WRITE_KEYWORD_REGEX = new RegExp(
@@ -241,19 +251,6 @@ async function tryResolveConnection(name: string): Promise<ResolvedConnection> {
   }
 }
 
-function scopeAllows(
-  scope: ToolConnectionScope,
-  specialistName: string,
-): boolean {
-  if (scope.kind === "global") return true;
-  return scope.specialistName === specialistName;
-}
-
-function clampPositive(value: number, cap: number): number {
-  if (!Number.isFinite(value) || value <= 0) return cap;
-  return Math.min(value, cap);
-}
-
 async function executeQuery(input: {
   config: ClickhouseConnectionConfig;
   secrets: ClickhouseConnectionSecrets;
@@ -372,18 +369,3 @@ type ClickhouseJsonResponse = {
   data?: Array<Record<string, unknown>>;
   rows?: number;
 };
-
-// URL hosts can't be percent-encoded the way path/query components
-// can: `encodeURIComponent` mangles IPv6 (`::1` → `%3A%3A1`) and the
-// brackets that wrap it. Treat the host as opaque and only normalize
-// the IPv6 bracket convention. Named hosts and IPv4 pass through
-// unchanged; bare IPv6 gets wrapped in `[...]`.
-function formatHostForUrl(host: string): string {
-  if (host.startsWith("[") && host.endsWith("]")) {
-    return host;
-  }
-  if (host.includes(":")) {
-    return `[${host}]`;
-  }
-  return host;
-}
