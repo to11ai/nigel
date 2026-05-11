@@ -21,6 +21,10 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // `planner`) should include this category. dispatch.ts also enforces
   // may_recurse at runtime; the allowlist is the first line of defense.
   dispatch_specialist: ["dispatch_specialist"],
+  // SQL against a registered tool_connection of kind 'postgres'. The
+  // tool callback enforces scope + read-only at runtime; the
+  // allowlist is the first gate.
+  database_query: ["database_query"],
 };
 
 export function filterAgentTools<T extends ToolSet>(

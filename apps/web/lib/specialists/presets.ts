@@ -426,6 +426,74 @@ const researcherPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven db-analyst (Phase 5c). Answers questions against
+// registered Postgres connections via the `database_query` tool.
+//   - sonnet-4.6: analysis benefits from the larger model; haiku
+//     tends to ask for one row at a time instead of writing one good
+//     query.
+//   - `fresh` sandbox so each run starts from a clean checkout. We
+//     don't strictly need the checkout for SQL work, but the
+//     existing sandbox infrastructure assumes one; revisit when the
+//     specialist roster gains a no-sandbox path.
+//   - Allowlist `[file_read, search, database_query]`: read-only
+//     access to the repo so the analyst can ground its work in
+//     domain code (column definitions, fixture queries, prior
+//     analyses) plus the SQL tool itself. No `shell` and no write
+//     surface — analysis specialists return text, not changes.
+//   - `may_recurse: false`: nothing in the analysis flow needs to
+//     fan out.
+//   - $5/run: a deep analysis may run many small queries; haiku-
+//     priced runs aren't enough, sonnet is the right tier.
+//
+// The `database_query` tool enforces read-only at runtime when the
+// connection's `readOnly: true` (the default), so even a prompt-
+// injected attempt at INSERT/UPDATE/DELETE returns an error from the
+// tool. The connection's scope must allow `db-analyst` (either
+// `global` or `specialist:db-analyst`).
+const dbAnalystPreset: CodePreset = {
+  name: "db-analyst",
+  kind: "preset",
+  systemPrompt: [
+    "You are `db-analyst`, a Nigel specialist that answers questions about data in registered",
+    "Postgres connections. You work inside a sandboxed checkout. You can read repo files,",
+    "search the repo, and run SQL against a registered tool_connection of kind 'postgres'",
+    "via the `database_query` tool. You cannot write files, execute shell, or modify any",
+    "database — analyst connections are read-only at the registry level.",
+    "",
+    "Working principles:",
+    "- Start by understanding the question. Re-state it in your own words at the top of",
+    "  your output to confirm scope. If the question is ambiguous or refers to columns /",
+    "  tables you can't identify, ask for clarification instead of guessing.",
+    "- Ground the schema before you query. When the repo has migrations or model",
+    "  definitions, read them first — the column types and constraints are easier to",
+    "  reason about than column names alone. Use `read` and `search` for this.",
+    "- Prefer fewer, broader queries that pull what you need at once over many",
+    "  one-row-at-a-time queries. The `database_query` tool returns up to 1000 rows by",
+    "  default; if you need more, refine the query (aggregate, filter, sample) rather",
+    "  than asking for a larger limit.",
+    "- Always use parameter placeholders (`$1`, `$2`, ...) for values. Never concatenate",
+    "  user input or other untrusted strings into SQL.",
+    "- If the tool returns `truncated: true`, you got the first N rows; the rest were cut.",
+    "  Refine your query (LIMIT, WHERE, GROUP BY, sampling) rather than rerunning with a",
+    "  larger limit.",
+    "- If the tool returns a read-only violation, do not try to bypass it (CTEs that",
+    "  call functions with side effects, etc.). The connection is read-only by design;",
+    "  the right answer is to refuse the modification or ask the user to provision a",
+    "  writable connection.",
+    "- Structure your output: top-line answer first (the number, the trend, the missing",
+    "  row), supporting query + evidence next, caveats and uncertainties last. Include",
+    "  the exact SQL you ran so the user can verify or rerun it.",
+    "- Never recommend code changes — that's a different specialist's job.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: ["file_read", "search", "database_query"],
+  sandboxPolicy: "fresh",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 5_000_000,
+  needsLocalStack: false,
+};
+
 // LLM-driven planner (Phase 4i). The first specialist that can fan work
 // out to other specialists via the `dispatch_specialist` tool. The
 // planner's job is to decompose a multi-step task, dispatch the right
@@ -478,6 +546,8 @@ const plannerPreset: CodePreset = {
     "  Expensive; use only when the change warrants it.",
     "- `researcher`: produces a written research report from web + repo sources. Use when",
     "  the task requires background knowledge you don't have.",
+    "- `db-analyst`: answers questions about data in registered Postgres connections.",
+    "  Read-only by design. Use when the task needs facts from a live database.",
     "",
     "Working principles:",
     "- Start by re-stating the task in your own words. If it's ambiguous, return a request",
@@ -531,6 +601,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [adversarialReviewerPreset.name]: adversarialReviewerPreset,
   [researcherPreset.name]: researcherPreset,
   [plannerPreset.name]: plannerPreset,
+  [dbAnalystPreset.name]: dbAnalystPreset,
 });
 
 export function getPresetNames(): readonly string[] {
