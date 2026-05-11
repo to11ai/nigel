@@ -7,6 +7,11 @@ import type { ToolSet } from "ai";
 // `dispatch_specialist`, `screenshot_matrix`).
 const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   file: ["read", "write", "edit"],
+  // Read-only file access for review/audit specialists. The spec calls
+  // these "file (read-only)" but the in-code category gets its own name
+  // so the runtime can enforce the constraint via the allowlist rather
+  // than trusting the system prompt.
+  file_read: ["read"],
   search: ["grep", "glob"],
   shell: ["bash"],
   // Until a structured git tool exists, the agent uses bash for git ops.

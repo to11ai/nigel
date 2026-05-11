@@ -27,6 +27,19 @@ describe("filterAgentTools", () => {
     expect(Object.keys(out).sort()).toEqual(["glob", "grep"]);
   });
 
+  test("file_read expands to read only (no write or edit)", () => {
+    const out = filterAgentTools(["file_read"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["read"]);
+  });
+
+  test("reviewer allowlist [file_read, search] yields read+glob+grep", () => {
+    const out = filterAgentTools(
+      ["file_read", "search"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["glob", "grep", "read"]);
+  });
+
   test("shell expands to bash", () => {
     const out = filterAgentTools(["shell"], allTools as unknown as ToolSet);
     expect(Object.keys(out).sort()).toEqual(["bash"]);

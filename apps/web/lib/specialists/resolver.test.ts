@@ -119,6 +119,22 @@ describe("getSpecialist", () => {
     expect(ut?.needsLocalStack).toBe(false);
   });
 
+  test("reviewer preset resolves with the expected shape (read-only)", async () => {
+    const rev = await getSpecialist("reviewer");
+    expect(rev).not.toBeNull();
+    expect(rev?.name).toBe("reviewer");
+    expect(rev?.kind).toBe("preset");
+    expect(rev?.systemPrompt).toContain("reviewer");
+    expect(rev?.model).toBe("anthropic/claude-sonnet-4.6");
+    // file_read (not file) — runtime enforces no-writes via the allowlist.
+    expect(rev?.toolAllowlist).toEqual(["file_read", "search"]);
+    expect(rev?.sandboxPolicy).toBe("fresh");
+    expect(rev?.mayRecurse).toBe(false);
+    expect(rev?.maxChildren).toBe(0);
+    expect(rev?.budgetUsdDefaultMicros).toBe(5_000_000);
+    expect(rev?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),
