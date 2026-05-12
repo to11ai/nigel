@@ -200,6 +200,14 @@ async function runOperation(input: {
 // happens here at the await site instead, where it's easier to read
 // and reason about. `clearTimeout` in the finally avoids a leaked
 // handle when the inner promise wins the race.
+//
+// When the timeout wins, the original `promise` keeps running and
+// may later reject (e.g. `client.connect()` rejecting after the
+// caller's `finally` calls `client.close()`). Without an owner,
+// that rejection becomes an unhandled promise rejection — fatal in
+// Node 15+ / Vercel serverless. Attach a silent `.catch` so the
+// rejection has a handler regardless of which side of the race
+// wins.
 const TIMEOUT_SENTINEL = Symbol("mcp-call-timeout");
 
 async function withTimeout<T>(
@@ -207,6 +215,7 @@ async function withTimeout<T>(
   ms: number,
   label: string,
 ): Promise<T> {
+  promise.catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
     timer = setTimeout(() => resolve(TIMEOUT_SENTINEL), ms);
