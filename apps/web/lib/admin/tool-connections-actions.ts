@@ -1,8 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { isUserAdmin } from "@/lib/db/users";
-import { getServerSession } from "@/lib/session/get-server-session";
 import {
   type CreateToolConnectionInput,
   createToolConnection as repoCreate,
@@ -12,41 +10,24 @@ import {
   type ToolConnectionKind,
   ToolConnectionRepositoryError,
   ToolConnectionValidationError,
-  type UpdateToolConnectionInput,
-  updateToolConnection as repoUpdate,
 } from "@/lib/tool-connections";
-
-// All admin server actions guard on the same admin check pattern used
-// elsewhere in `lib/admin/actions.ts`. Returns the user id when
-// authorized; throws otherwise.
-async function requireAdmin(): Promise<string> {
-  const session = await getServerSession();
-  if (!session?.user?.id) {
-    throw new Error("Not authenticated");
-  }
-  const admin = await isUserAdmin(session.user.id);
-  if (!admin) {
-    throw new Error("Forbidden");
-  }
-  return session.user.id;
-}
+import { requireAdmin } from "./require-admin";
 
 const ADMIN_PATH = "/settings/admin/tool-connections";
 
-// Shape returned to the UI. Strips encrypted columns from the row —
-// admins listing/deleting connections never need the ciphertext or
-// the underlying secret payload; only the writes path touches those.
+// Shape returned to the UI. Strips encrypted columns AND the
+// `configJson` payload from the wire — admins listing/deleting
+// connections never need the host / user / database / etc., the UI
+// has no column for them, and shipping them to the browser would
+// leak operational detail that doesn't belong in a client bundle.
+// The per-row write path still reads `configJson` server-side via
+// the repository when an update lands.
 export type ToolConnectionListItem = {
   id: string;
   name: string;
   kind: ToolConnectionKind;
   description: string | null;
   scope: string;
-  // Stored as jsonb; we cast to the per-kind shape only when the
-  // resolving tool callback reads it. The UI shows it raw (after
-  // redacting obvious sensitive keys) so admins can verify the
-  // connection is pointed at what they intend.
-  configJson: unknown;
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -73,7 +54,6 @@ export async function adminListToolConnections(): Promise<
         kind: r.kind as ToolConnectionKind,
         description: r.description,
         scope: r.scope,
-        configJson: r.configJson,
         createdBy: r.createdBy,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
@@ -125,35 +105,9 @@ export async function adminCreateToolConnection(
   }
 }
 
-export type AdminUpdateInput = {
-  id: string;
-  description?: string | null;
-  config?: unknown;
-  secrets?: unknown;
-  scope?: { kind: "global" } | { kind: "specialist"; specialistName: string };
-};
-
-export async function adminUpdateToolConnection(
-  input: AdminUpdateInput,
-): Promise<ActionResult> {
-  try {
-    await requireAdmin();
-    const update: UpdateToolConnectionInput = {
-      id: input.id,
-      ...(input.description !== undefined
-        ? { description: input.description }
-        : {}),
-      ...(input.config !== undefined ? { config: input.config } : {}),
-      ...(input.secrets !== undefined ? { secrets: input.secrets } : {}),
-      ...(input.scope !== undefined ? { scope: input.scope } : {}),
-    };
-    await repoUpdate(update);
-    revalidatePath(ADMIN_PATH);
-    return { success: true };
-  } catch (err) {
-    return mapRepositoryError(err);
-  }
-}
+// Update is intentionally not exposed yet — v1 is delete-and-recreate.
+// When inline edit ships, restore an `adminUpdateToolConnection`
+// here using `updateToolConnection` from @/lib/tool-connections.
 
 export async function adminDeleteToolConnection(
   id: string,
