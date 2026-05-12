@@ -35,6 +35,11 @@ export {
   dispatchSpecialistTool,
 } from "./dispatch-specialist";
 export {
+  type McpCallCallback,
+  type McpCallInput,
+  mcpCallTool,
+} from "./mcp-call";
+export {
   type RedisCommandCallback,
   type RedisCommandInput,
   redisCommandTool,

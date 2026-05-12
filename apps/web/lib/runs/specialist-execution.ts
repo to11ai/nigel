@@ -2,6 +2,7 @@ import type {
   ClickhouseQueryCallback,
   DatabaseQueryCallback,
   DispatchSpecialistCallback,
+  McpCallCallback,
   RedisCommandCallback,
 } from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
@@ -13,6 +14,7 @@ import { checkRootBudget as defaultCheckRootBudget } from "./budget";
 import { createClickhouseQueryCallback } from "./clickhouse-query";
 import { computeCostMicros } from "./cost";
 import { createDatabaseQueryCallback } from "./database-query";
+import { createMcpCallCallback } from "./mcp-call";
 import { createRedisCommandCallback } from "./redis-command";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
@@ -64,6 +66,8 @@ export type ExecuteSpecialistInput = {
     clickhouseQuery?: ClickhouseQueryCallback;
     // And the Redis equivalent.
     redisCommand?: RedisCommandCallback;
+    // And the MCP equivalent.
+    mcpCall?: McpCallCallback;
   };
 };
 
@@ -139,6 +143,10 @@ export async function executeSpecialistViaLLM(
     deps?.redisCommand ??
     createRedisCommandCallback({ specialistName: specialist.name });
 
+  // mcp_call callback — talks JSON-RPC to a registered MCP server.
+  const mcpCallFn: McpCallCallback =
+    deps?.mcpCall ?? createMcpCallCallback({ specialistName: specialist.name });
+
   const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
   const callModel = gateway(specialist.model);
 
@@ -160,6 +168,7 @@ export async function executeSpecialistViaLLM(
       databaseQuery: databaseQueryFn,
       clickhouseQuery: clickhouseQueryFn,
       redisCommand: redisCommandFn,
+      mcpCall: mcpCallFn,
     },
     prepareStep: async () => {
       await checkRootBudget(run.rootRunId);

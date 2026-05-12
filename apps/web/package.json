@@ -17,6 +17,7 @@
   "dependencies": {
     "@ai-sdk/elevenlabs": "^2.0.29",
     "@ai-sdk/react": "catalog:",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@nigel/agent": "workspace:*",
     "@nigel/sandbox": "workspace:*",
     "@nigel/shared": "workspace:*",

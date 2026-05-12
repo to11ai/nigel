@@ -19,6 +19,7 @@ describe("filterAgentTools", () => {
     database_query: { _kind: "tool" },
     clickhouse_query: { _kind: "tool" },
     redis_command: { _kind: "tool" },
+    mcp_call: { _kind: "tool" },
   };
 
   test("file expands to read+write+edit", () => {
@@ -89,6 +90,11 @@ describe("filterAgentTools", () => {
       allTools as unknown as ToolSet,
     );
     expect(Object.keys(out).sort()).toEqual(["redis_command"]);
+  });
+
+  test("mcp_call expands to mcp_call tool", () => {
+    const out = filterAgentTools(["mcp_call"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual(["mcp_call"]);
   });
 
   test("data-analyst allowlist yields the multi-engine analyst tool surface", () => {

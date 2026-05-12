@@ -19,6 +19,7 @@ import {
   editFileTool,
   globTool,
   grepTool,
+  mcpCallTool,
   readFileTool,
   redisCommandTool,
   skillTool,
@@ -91,6 +92,7 @@ export const nigelTools = {
   database_query: databaseQueryTool,
   clickhouse_query: clickhouseQueryTool,
   redis_command: redisCommandTool,
+  mcp_call: mcpCallTool,
 } satisfies ToolSet;
 
 // Subset of `nigelTools` exposed to the chat agent. Excludes the
@@ -100,6 +102,7 @@ const {
   database_query: _unusedDatabaseQueryTool,
   clickhouse_query: _unusedClickhouseQueryTool,
   redis_command: _unusedRedisCommandTool,
+  mcp_call: _unusedMcpCallTool,
   ...chatTools
 } = nigelTools;
 
