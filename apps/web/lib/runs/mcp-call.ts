@@ -122,23 +122,29 @@ async function runOperation(input: {
     { capabilities: {} },
   );
   try {
-    // `client.connect()` performs the MCP `initialize` handshake
-    // internally and uses the SDK's built-in 60s default — it doesn't
-    // accept a per-call timeout option. Wrap with our own
-    // Promise.race so the user's `timeoutMs` bounds the entire
-    // operation (connect + list/call), not just the post-connect
-    // request. The finally below tears down the client either way
-    // so a connect that succeeds after the timeout still gets
-    // cleaned up.
+    // `timeoutMs` is the **total** budget for the whole operation
+    // (connect + list/call). The SDK's `connect()` runs the
+    // `initialize` handshake using its own 60s default and doesn't
+    // accept a per-call timeout, so we wrap it with our own race;
+    // then we subtract elapsed wall-clock from the budget before
+    // passing the remainder to `listTools` / `callTool`. Without
+    // this split, a slow connect at the cap (5 min) would let the
+    // request phase consume another full 5 min — 10 min total.
+    const deadline = Date.now() + input.timeoutMs;
     await withTimeout(
       client.connect(transport),
       input.timeoutMs,
       "mcp connect",
     );
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new McpCallError(
+        "execution_failed",
+        `mcp operation exhausted its ${input.timeoutMs}ms budget during connect`,
+      );
+    }
     if (input.operation.type === "list_tools") {
-      const res = await client.listTools(undefined, {
-        timeout: input.timeoutMs,
-      });
+      const res = await client.listTools(undefined, { timeout: remainingMs });
       return {
         operation: "list_tools",
         tools: res.tools.map((t) => ({
@@ -158,7 +164,7 @@ async function runOperation(input: {
           : {}),
       },
       undefined,
-      { timeout: input.timeoutMs },
+      { timeout: remainingMs },
     );
     // The SDK's `CallToolResult` shape carries `content` typed
     // loosely; widen to a plain array of records here since the LLM
