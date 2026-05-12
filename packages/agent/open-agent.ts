@@ -20,6 +20,7 @@ import {
   globTool,
   grepTool,
   readFileTool,
+  redisCommandTool,
   skillTool,
   taskTool,
   todoWriteTool,
@@ -89,6 +90,7 @@ export const nigelTools = {
   dispatch_specialist: dispatchSpecialistTool,
   database_query: databaseQueryTool,
   clickhouse_query: clickhouseQueryTool,
+  redis_command: redisCommandTool,
 } satisfies ToolSet;
 
 // Subset of `nigelTools` exposed to the chat agent. Excludes the
@@ -97,6 +99,7 @@ const {
   dispatch_specialist: _unusedDispatchTool,
   database_query: _unusedDatabaseQueryTool,
   clickhouse_query: _unusedClickhouseQueryTool,
+  redis_command: _unusedRedisCommandTool,
   ...chatTools
 } = nigelTools;
 

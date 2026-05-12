@@ -2,6 +2,7 @@ import type {
   ClickhouseQueryCallback,
   DatabaseQueryCallback,
   DispatchSpecialistCallback,
+  RedisCommandCallback,
 } from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
 import type { SandboxState } from "@nigel/sandbox";
@@ -12,6 +13,7 @@ import { checkRootBudget as defaultCheckRootBudget } from "./budget";
 import { createClickhouseQueryCallback } from "./clickhouse-query";
 import { computeCostMicros } from "./cost";
 import { createDatabaseQueryCallback } from "./database-query";
+import { createRedisCommandCallback } from "./redis-command";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
 import { filterAgentTools } from "./tool-allowlist";
@@ -60,6 +62,8 @@ export type ExecuteSpecialistInput = {
     databaseQuery?: DatabaseQueryCallback;
     // And the ClickHouse equivalent.
     clickhouseQuery?: ClickhouseQueryCallback;
+    // And the Redis equivalent.
+    redisCommand?: RedisCommandCallback;
   };
 };
 
@@ -130,6 +134,11 @@ export async function executeSpecialistViaLLM(
     deps?.clickhouseQuery ??
     createClickhouseQueryCallback({ specialistName: specialist.name });
 
+  // redis_command callback — command-shaped rather than query-shaped.
+  const redisCommandFn: RedisCommandCallback =
+    deps?.redisCommand ??
+    createRedisCommandCallback({ specialistName: specialist.name });
+
   const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
   const callModel = gateway(specialist.model);
 
@@ -150,6 +159,7 @@ export async function executeSpecialistViaLLM(
       dispatchSpecialist: dispatchSpecialistFn,
       databaseQuery: databaseQueryFn,
       clickhouseQuery: clickhouseQueryFn,
+      redisCommand: redisCommandFn,
     },
     prepareStep: async () => {
       await checkRootBudget(run.rootRunId);

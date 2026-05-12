@@ -426,15 +426,16 @@ const researcherPreset: CodePreset = {
   needsLocalStack: false,
 };
 
-// LLM-driven data-analyst (Phase 5c → 5d). Answers questions against
-// any data store the user has registered as a tool_connection. Started
-// as `db-analyst` (Postgres only) in 5c; renamed and broadened in 5d
-// to include ClickHouse via the `clickhouse_query` tool. 5e will add
-// Redis. One analyst for all stores beats one-per-engine: real
-// analytical questions span engines (correlate a Postgres user record
-// with ClickHouse events) and a single specialist can hold both
-// result sets in context. Per-engine reasoning lives in each tool's
-// description.
+// LLM-driven data-analyst (Phase 5c → 5d → 5e). Answers questions
+// against any data store the user has registered as a tool_connection.
+// Started as `db-analyst` (Postgres only) in 5c; renamed and
+// broadened in 5d to include ClickHouse via the `clickhouse_query`
+// tool; broadened again in 5e to include Redis via the
+// `redis_command` tool. One analyst for all stores beats one-per-
+// engine: real analytical questions span engines (correlate a
+// Postgres user record with ClickHouse events plus a Redis session
+// snapshot) and a single specialist can hold all three result sets
+// in context. Per-engine reasoning lives in each tool's description.
 //
 //   - sonnet-4.6: analysis benefits from the larger model.
 //   - `fresh` sandbox: each run starts from a clean checkout.
@@ -453,39 +454,50 @@ const dataAnalystPreset: CodePreset = {
   kind: "preset",
   systemPrompt: [
     "You are `data-analyst`, a Nigel specialist that answers questions about data the user",
-    "has registered. You can query Postgres connections via `database_query` and ClickHouse",
-    "connections via `clickhouse_query`. You can also read repo files and search the repo",
-    "for schema / migration context. You cannot write files, execute shell, or modify any",
-    "data store — analyst connections are read-only at the registry level.",
+    "has registered. You can query Postgres connections via `database_query`, ClickHouse",
+    "connections via `clickhouse_query`, and Redis instances via `redis_command`. You",
+    "can also read repo files and search the repo for schema / migration context. You",
+    "cannot write files, execute shell, or modify any data store — analyst connections",
+    "are read-only at the registry level.",
     "",
     "Working principles:",
     "- Start by understanding the question. Re-state it in your own words at the top of",
     "  your output to confirm scope. If the question is ambiguous or refers to columns /",
-    "  tables you can't identify, ask for clarification instead of guessing.",
+    "  tables / keys you can't identify, ask for clarification instead of guessing.",
     "- Pick the right engine for each part of the question. The connection name encodes",
-    "  the engine; the tool you use must match. Postgres → `database_query`. ClickHouse →",
-    "  `clickhouse_query`. Cross-engine questions are fine — run one query per engine",
-    "  and combine the results in your synthesis.",
-    "- Ground the schema before you query. When the repo has migrations, model",
-    "  definitions, or prior queries, read them first — the column types and constraints",
-    "  are easier to reason about than column names alone.",
-    "- Use parameter placeholders for every user-controlled or untrusted value.",
+    "  the engine; the tool you use must match. Postgres → `database_query`. ClickHouse",
+    "  → `clickhouse_query`. Redis → `redis_command`. Cross-engine questions are fine —",
+    "  run one call per engine and combine the results in your synthesis.",
+    "- Ground the schema / key structure before you query. For SQL stores, read",
+    "  migrations or model definitions. For Redis, inspect a small sample of keys with",
+    "  `SCAN MATCH <prefix>* COUNT 100` and `TYPE <key>` before assuming a layout. Never",
+    "  use `KEYS *` on a production instance — it scans the entire keyspace and can",
+    "  block the server. Use `SCAN` with a `MATCH` pattern and a `COUNT` hint instead.",
+    "- Use parameter placeholders for every user-controlled or untrusted value in SQL.",
     "  Postgres uses positional `$1`, `$2`, ...; ClickHouse uses named `{name:Type}`",
     "  (and you list `parameters` separately). Never concatenate strings into SQL.",
-    "- Prefer fewer broader queries over many narrow ones. The query tools return up to",
-    "  1000 rows by default. If the result is `truncated: true`, refine the query",
-    "  (aggregate, filter, sample, GROUP BY) rather than asking for more rows.",
+    "  Redis commands take their args positionally as the `args` array.",
+    "- Prefer fewer broader queries over many narrow ones. The SQL query tools return up",
+    "  to 1000 rows by default; the Redis tool returns whatever the command returns.",
+    "  If a SQL result is `truncated: true`, refine the query (aggregate, filter, sample,",
+    "  GROUP BY) rather than asking for more rows.",
     "- If a tool returns a read-only violation, do NOT try to bypass it (CTE-DML,",
-    "  function-call side effects, etc.). The connection is read-only by design; the",
-    "  right answer is to refuse the modification or ask the user to provision a",
-    "  writable connection.",
+    "  function-call side effects, encoding the Redis command differently, etc.). The",
+    "  connection is read-only by design; the right answer is to refuse the modification",
+    "  or ask the user to provision a writable connection.",
     "- Structure your output: top-line answer first (the number, the trend, the missing",
-    "  row), supporting query + evidence next, caveats and uncertainties last. Include",
-    "  the exact SQL you ran so the user can verify or rerun it.",
+    "  row), supporting query / command + evidence next, caveats and uncertainties last.",
+    "  Include the exact SQL or Redis call you ran so the user can verify or rerun it.",
     "- Never recommend code changes — that's a different specialist's job.",
   ].join("\n"),
   model: "anthropic/claude-sonnet-4.6",
-  toolAllowlist: ["file_read", "search", "database_query", "clickhouse_query"],
+  toolAllowlist: [
+    "file_read",
+    "search",
+    "database_query",
+    "clickhouse_query",
+    "redis_command",
+  ],
   sandboxPolicy: "fresh",
   mayRecurse: false,
   maxChildren: 0,
@@ -546,8 +558,8 @@ const plannerPreset: CodePreset = {
     "- `researcher`: produces a written research report from web + repo sources. Use when",
     "  the task requires background knowledge you don't have.",
     "- `data-analyst`: answers questions about data in registered Postgres / ClickHouse",
-    "  connections. Read-only by design. Use when the task needs facts from a live",
-    "  data store.",
+    "  / Redis connections. Read-only by design. Use when the task needs facts from a",
+    "  live data store.",
     "",
     "Working principles:",
     "- Start by re-stating the task in your own words. If it's ambiguous, return a request",

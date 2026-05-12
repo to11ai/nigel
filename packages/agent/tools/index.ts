@@ -34,3 +34,8 @@ export {
   type DispatchSpecialistInput,
   dispatchSpecialistTool,
 } from "./dispatch-specialist";
+export {
+  type RedisCommandCallback,
+  type RedisCommandInput,
+  redisCommandTool,
+} from "./redis-command";

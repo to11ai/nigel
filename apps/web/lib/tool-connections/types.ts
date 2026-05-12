@@ -58,6 +58,29 @@ const ClickhouseSecretsSchema = z.object({
   password: z.string().min(1),
 });
 
+const RedisConfigSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().positive().max(65535).default(6379),
+  // Redis logical database number (0–15 in the default config).
+  db: z.number().int().nonnegative().default(0),
+  // ACL username (Redis 6+). Older servers ignore the AUTH USERNAME
+  // form; ioredis falls back to legacy AUTH when no username is set.
+  username: z.string().min(1).optional(),
+  // TLS on by default — most managed Redis providers (Upstash,
+  // ElastiCache in-transit-encrypted, Redis Cloud) require it. Local
+  // dev can flip to false.
+  tls: z.boolean().default(true),
+  // Same read-only marker as Postgres/ClickHouse. The redis_command
+  // tool enforces this via a command allowlist (Redis doesn't have
+  // a server-side read-only mode per-connection).
+  readOnly: z.boolean().default(true),
+  defaultCommandTimeoutMs: z.number().int().positive().default(10_000),
+});
+
+const RedisSecretsSchema = z.object({
+  password: z.string().min(1),
+});
+
 // Two distinct transport shapes for MCP servers. Modeled as a
 // discriminated union so the schema rejects nonsense rows at insert
 // time — an `http` row without `url` or a `stdio` row without
@@ -117,6 +140,7 @@ const SlackSecretsSchema = z.object({
 export const TOOL_CONNECTION_KINDS = [
   "postgres",
   "clickhouse",
+  "redis",
   "mcp",
   "slack",
 ] as const;
@@ -125,6 +149,7 @@ export type ToolConnectionKind = (typeof TOOL_CONNECTION_KINDS)[number];
 const KIND_CONFIG_SCHEMAS = {
   postgres: PostgresConfigSchema,
   clickhouse: ClickhouseConfigSchema,
+  redis: RedisConfigSchema,
   mcp: McpConfigSchema,
   slack: SlackConfigSchema,
 } as const;
@@ -132,6 +157,7 @@ const KIND_CONFIG_SCHEMAS = {
 const KIND_SECRETS_SCHEMAS = {
   postgres: PostgresSecretsSchema,
   clickhouse: ClickhouseSecretsSchema,
+  redis: RedisSecretsSchema,
   mcp: McpSecretsSchema,
   slack: SlackSecretsSchema,
 } as const;
@@ -142,6 +168,8 @@ export type ClickhouseConnectionConfig = z.infer<typeof ClickhouseConfigSchema>;
 export type ClickhouseConnectionSecrets = z.infer<
   typeof ClickhouseSecretsSchema
 >;
+export type RedisConnectionConfig = z.infer<typeof RedisConfigSchema>;
+export type RedisConnectionSecrets = z.infer<typeof RedisSecretsSchema>;
 export type McpConnectionConfig = z.infer<typeof McpConfigSchema>;
 export type McpConnectionSecrets = z.infer<typeof McpSecretsSchema>;
 export type SlackConnectionConfig = z.infer<typeof SlackConfigSchema>;
@@ -167,6 +195,14 @@ export type ResolvedConnection =
       scope: ToolConnectionScope;
       config: ClickhouseConnectionConfig;
       secrets: ClickhouseConnectionSecrets;
+    }
+  | {
+      id: string;
+      name: string;
+      kind: "redis";
+      scope: ToolConnectionScope;
+      config: RedisConnectionConfig;
+      secrets: RedisConnectionSecrets;
     }
   | {
       id: string;

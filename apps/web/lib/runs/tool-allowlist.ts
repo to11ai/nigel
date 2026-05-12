@@ -29,6 +29,9 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // it's a separate tool, but same scope + read-only enforcement
   // pattern.
   clickhouse_query: ["clickhouse_query"],
+  // Redis is command-shaped rather than query-shaped, so it's a
+  // separate tool with a command-allowlist read-only model.
+  redis_command: ["redis_command"],
 };
 
 export function filterAgentTools<T extends ToolSet>(
