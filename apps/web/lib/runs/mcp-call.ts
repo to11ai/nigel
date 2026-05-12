@@ -234,12 +234,25 @@ async function openTransport(
     // mode and falls back to plain request/response when the server
     // doesn't advertise SSE. Headers / bearer go via the
     // `requestInit` option; the SDK applies them to every fetch.
+    //
+    // Apply the env bag first, then `bearerToken` last so the
+    // dedicated field always wins over an accidental
+    // `env.Authorization` entry. Without this ordering an admin
+    // who set both would silently lose their bearer token and see
+    // confusing auth failures from the server.
     const headers: Record<string, string> = {};
-    if (secrets.bearerToken) {
-      headers.Authorization = `Bearer ${secrets.bearerToken}`;
-    }
     for (const [k, v] of Object.entries(secrets.env ?? {})) {
       headers[k] = v;
+    }
+    if (secrets.bearerToken) {
+      if (
+        Object.keys(headers).some((k) => k.toLowerCase() === "authorization")
+      ) {
+        console.warn(
+          "[mcp-call] connection has both `bearerToken` and an `Authorization`-named entry in `env`; the dedicated `bearerToken` field wins",
+        );
+      }
+      headers.Authorization = `Bearer ${secrets.bearerToken}`;
     }
     return new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: { headers },
