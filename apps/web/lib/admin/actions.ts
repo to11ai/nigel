@@ -4,20 +4,7 @@ import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth/config";
 import { db } from "@/lib/db/client";
 import { accounts, authSessions, githubInstallations } from "@/lib/db/schema";
-import { isUserAdmin } from "@/lib/db/users";
-import { getServerSession } from "@/lib/session/get-server-session";
-
-async function requireAdmin(): Promise<string> {
-  const session = await getServerSession();
-  if (!session?.user?.id) {
-    throw new Error("Not authenticated");
-  }
-  const admin = await isUserAdmin(session.user.id);
-  if (!admin) {
-    throw new Error("Forbidden");
-  }
-  return session.user.id;
-}
+import { requireAdmin } from "./require-admin";
 
 // ---------------------------------------------------------------------------
 // GitHub revocation helpers
