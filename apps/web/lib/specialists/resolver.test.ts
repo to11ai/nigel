@@ -222,14 +222,19 @@ describe("getSpecialist", () => {
     expect(p?.needsLocalStack).toBe(false);
   });
 
-  test("db-analyst preset resolves with the expected shape", async () => {
-    const d = await getSpecialist("db-analyst");
+  test("data-analyst preset resolves with the expected shape", async () => {
+    const d = await getSpecialist("data-analyst");
     expect(d).not.toBeNull();
-    expect(d?.name).toBe("db-analyst");
+    expect(d?.name).toBe("data-analyst");
     expect(d?.kind).toBe("preset");
-    expect(d?.systemPrompt).toContain("db-analyst");
+    expect(d?.systemPrompt).toContain("data-analyst");
     expect(d?.model).toBe("anthropic/claude-sonnet-4.6");
-    expect(d?.toolAllowlist).toEqual(["file_read", "search", "database_query"]);
+    expect(d?.toolAllowlist).toEqual([
+      "file_read",
+      "search",
+      "database_query",
+      "clickhouse_query",
+    ]);
     expect(d?.sandboxPolicy).toBe("fresh");
     expect(d?.mayRecurse).toBe(false);
     expect(d?.maxChildren).toBe(0);

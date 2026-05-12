@@ -13,6 +13,7 @@ import { buildSystemPrompt } from "./system-prompt";
 import {
   askUserQuestionTool,
   bashTool,
+  clickhouseQueryTool,
   databaseQueryTool,
   dispatchSpecialistTool,
   editFileTool,
@@ -87,6 +88,7 @@ export const nigelTools = {
   web_fetch: webFetchTool,
   dispatch_specialist: dispatchSpecialistTool,
   database_query: databaseQueryTool,
+  clickhouse_query: clickhouseQueryTool,
 } satisfies ToolSet;
 
 // Subset of `nigelTools` exposed to the chat agent. Excludes the
@@ -94,6 +96,7 @@ export const nigelTools = {
 const {
   dispatch_specialist: _unusedDispatchTool,
   database_query: _unusedDatabaseQueryTool,
+  clickhouse_query: _unusedClickhouseQueryTool,
   ...chatTools
 } = nigelTools;
 

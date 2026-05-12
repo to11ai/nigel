@@ -1,4 +1,5 @@
 import type {
+  ClickhouseQueryCallback,
   DatabaseQueryCallback,
   DispatchSpecialistCallback,
 } from "@nigel/agent";
@@ -8,6 +9,7 @@ import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import { checkRootBudget as defaultCheckRootBudget } from "./budget";
+import { createClickhouseQueryCallback } from "./clickhouse-query";
 import { computeCostMicros } from "./cost";
 import { createDatabaseQueryCallback } from "./database-query";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
@@ -56,6 +58,8 @@ export type ExecuteSpecialistInput = {
     // bound to the current specialist's name (used by the scope
     // check inside the callback).
     databaseQuery?: DatabaseQueryCallback;
+    // And the ClickHouse equivalent.
+    clickhouseQuery?: ClickhouseQueryCallback;
   };
 };
 
@@ -121,6 +125,11 @@ export async function executeSpecialistViaLLM(
     deps?.databaseQuery ??
     createDatabaseQueryCallback({ specialistName: specialist.name });
 
+  // clickhouse_query callback — same shape, separate kind.
+  const clickhouseQueryFn: ClickhouseQueryCallback =
+    deps?.clickhouseQuery ??
+    createClickhouseQueryCallback({ specialistName: specialist.name });
+
   const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
   const callModel = gateway(specialist.model);
 
@@ -140,6 +149,7 @@ export async function executeSpecialistViaLLM(
       model: callModel,
       dispatchSpecialist: dispatchSpecialistFn,
       databaseQuery: databaseQueryFn,
+      clickhouseQuery: clickhouseQueryFn,
     },
     prepareStep: async () => {
       await checkRootBudget(run.rootRunId);

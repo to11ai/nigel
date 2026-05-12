@@ -8,8 +8,8 @@ import {
   type PostgresConnectionSecrets,
   type ResolvedConnection,
   resolveToolConnection,
-  type ToolConnectionScope,
 } from "@/lib/tool-connections";
+import { clampPositive, formatHostForUrl, scopeAllows } from "./query-shared";
 
 // Read-only enforcement is two-step:
 //
@@ -269,19 +269,6 @@ async function tryResolveConnection(name: string): Promise<ResolvedConnection> {
   }
 }
 
-function scopeAllows(
-  scope: ToolConnectionScope,
-  specialistName: string,
-): boolean {
-  if (scope.kind === "global") return true;
-  return scope.specialistName === specialistName;
-}
-
-function clampPositive(value: number, cap: number): number {
-  if (!Number.isFinite(value) || value <= 0) return cap;
-  return Math.min(value, cap);
-}
-
 // Opens a single-use postgres connection, runs the query, returns
 // rows truncated to the configured limit, and closes the connection.
 // We do not pool: each specialist run is short-lived, the registry
@@ -370,24 +357,4 @@ function buildConnectionUrl(
   // chain + hostname validation on top.
   url.searchParams.set("sslmode", config.sslMode);
   return url.toString();
-}
-
-// URL hosts can't be percent-encoded the way path/query components
-// can: `encodeURIComponent` mangles IPv6 (`::1` → `%3A%3A1`) and the
-// brackets that wrap it. Treat the host as opaque and only normalize
-// the IPv6 bracket convention. Named hosts and IPv4 addresses pass
-// through unchanged; bare IPv6 gets wrapped in `[...]` so the URL
-// parser splits host from port correctly.
-function formatHostForUrl(host: string): string {
-  if (host.startsWith("[") && host.endsWith("]")) {
-    return host;
-  }
-  // IPv6 addresses contain colons but no dots (an IPv4-mapped IPv6
-  // address like ::ffff:1.2.3.4 still contains colons, so the dot
-  // check would mis-classify it as v4 — fall back to "contains colon"
-  // as the signal).
-  if (host.includes(":")) {
-    return `[${host}]`;
-  }
-  return host;
 }

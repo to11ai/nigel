@@ -32,6 +32,32 @@ const PostgresSecretsSchema = z.object({
   password: z.string().min(1),
 });
 
+const ClickhouseConfigSchema = z.object({
+  host: z.string().min(1),
+  // ClickHouse's HTTP interface defaults to 8123 (cleartext) and 8443
+  // (TLS). The kind's transport is HTTP either way; `protocol` picks
+  // between them so operators don't have to remember the port.
+  protocol: z.enum(["http", "https"]).default("https"),
+  port: z.number().int().positive().max(65535).default(8443),
+  database: z.string().min(1),
+  user: z.string().min(1),
+  // Same intent as Postgres' read-only marker. ClickHouse enforces
+  // this server-side via the `readonly=2` setting (passed in the URL
+  // query string by `runs/clickhouse-query.ts`), so a misbehaving
+  // caller can't bypass it even if our prompt-side keyword scan
+  // misses something. `readonly=2` blocks DML / DDL / admin while
+  // still permitting per-request setting overrides like
+  // `max_result_rows` and `max_execution_time` — `readonly=1` would
+  // additionally block those overrides and break every query.
+  readOnly: z.boolean().default(true),
+  defaultStatementTimeoutMs: z.number().int().positive().default(60_000),
+  defaultRowLimit: z.number().int().positive().default(1000),
+});
+
+const ClickhouseSecretsSchema = z.object({
+  password: z.string().min(1),
+});
+
 // Two distinct transport shapes for MCP servers. Modeled as a
 // discriminated union so the schema rejects nonsense rows at insert
 // time — an `http` row without `url` or a `stdio` row without
@@ -88,23 +114,34 @@ const SlackSecretsSchema = z.object({
   webhookUrl: z.string().url(),
 });
 
-export const TOOL_CONNECTION_KINDS = ["postgres", "mcp", "slack"] as const;
+export const TOOL_CONNECTION_KINDS = [
+  "postgres",
+  "clickhouse",
+  "mcp",
+  "slack",
+] as const;
 export type ToolConnectionKind = (typeof TOOL_CONNECTION_KINDS)[number];
 
 const KIND_CONFIG_SCHEMAS = {
   postgres: PostgresConfigSchema,
+  clickhouse: ClickhouseConfigSchema,
   mcp: McpConfigSchema,
   slack: SlackConfigSchema,
 } as const;
 
 const KIND_SECRETS_SCHEMAS = {
   postgres: PostgresSecretsSchema,
+  clickhouse: ClickhouseSecretsSchema,
   mcp: McpSecretsSchema,
   slack: SlackSecretsSchema,
 } as const;
 
 export type PostgresConnectionConfig = z.infer<typeof PostgresConfigSchema>;
 export type PostgresConnectionSecrets = z.infer<typeof PostgresSecretsSchema>;
+export type ClickhouseConnectionConfig = z.infer<typeof ClickhouseConfigSchema>;
+export type ClickhouseConnectionSecrets = z.infer<
+  typeof ClickhouseSecretsSchema
+>;
 export type McpConnectionConfig = z.infer<typeof McpConfigSchema>;
 export type McpConnectionSecrets = z.infer<typeof McpSecretsSchema>;
 export type SlackConnectionConfig = z.infer<typeof SlackConfigSchema>;
@@ -122,6 +159,14 @@ export type ResolvedConnection =
       scope: ToolConnectionScope;
       config: PostgresConnectionConfig;
       secrets: PostgresConnectionSecrets;
+    }
+  | {
+      id: string;
+      name: string;
+      kind: "clickhouse";
+      scope: ToolConnectionScope;
+      config: ClickhouseConnectionConfig;
+      secrets: ClickhouseConnectionSecrets;
     }
   | {
       id: string;

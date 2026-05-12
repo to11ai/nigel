@@ -25,6 +25,10 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // tool callback enforces scope + read-only at runtime; the
   // allowlist is the first gate.
   database_query: ["database_query"],
+  // ClickHouse equivalent. Different SQL dialect + HTTP transport, so
+  // it's a separate tool, but same scope + read-only enforcement
+  // pattern.
+  clickhouse_query: ["clickhouse_query"],
 };
 
 export function filterAgentTools<T extends ToolSet>(

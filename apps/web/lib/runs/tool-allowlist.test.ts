@@ -17,6 +17,7 @@ describe("filterAgentTools", () => {
     ask_user_question: { _kind: "tool" },
     dispatch_specialist: { _kind: "tool" },
     database_query: { _kind: "tool" },
+    clickhouse_query: { _kind: "tool" },
   };
 
   test("file expands to read+write+edit", () => {
@@ -73,12 +74,21 @@ describe("filterAgentTools", () => {
     expect(Object.keys(out).sort()).toEqual(["database_query"]);
   });
 
-  test("db-analyst allowlist yields the analyst tool surface", () => {
+  test("clickhouse_query expands to clickhouse_query tool", () => {
     const out = filterAgentTools(
-      ["file_read", "search", "database_query"],
+      ["clickhouse_query"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["clickhouse_query"]);
+  });
+
+  test("data-analyst allowlist yields the multi-engine analyst tool surface", () => {
+    const out = filterAgentTools(
+      ["file_read", "search", "database_query", "clickhouse_query"],
       allTools as unknown as ToolSet,
     );
     expect(Object.keys(out).sort()).toEqual([
+      "clickhouse_query",
       "database_query",
       "glob",
       "grep",
