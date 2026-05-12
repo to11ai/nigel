@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
 import { onRunStatusChange } from "./lifecycle";
@@ -116,4 +116,60 @@ export async function addCostMicros(
   if (result.length === 0) {
     throw new Error(`run not found: ${id}`);
   }
+}
+
+export type ListRootRunsForUserInput = {
+  userId: string;
+  // Cursor-style pagination on createdAt: rows strictly older than the
+  // supplied timestamp. Combined with the implicit DESC order this gives
+  // stable paging that survives new inserts at the head.
+  before?: Date;
+  // Hard upper bound on rows returned per call. Defaults to 50 — large
+  // enough to fill a screen, small enough that an admin browsing months
+  // of runs doesn't accidentally pull thousands of rows.
+  limit?: number;
+};
+
+// Lists root runs (parentRunId IS NULL) owned by the given user, most
+// recent first. Root runs are the entry points of agent activity —
+// every dispatched child is reachable from one of these via the
+// rootRunId column.
+export async function listRootRunsForUser(
+  input: ListRootRunsForUserInput,
+): Promise<AgentRun[]> {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+  const conditions = [
+    isNull(agentRuns.parentRunId),
+    eq(agentRuns.humanOwnerId, input.userId),
+  ];
+  if (input.before) {
+    conditions.push(lt(agentRuns.createdAt, input.before));
+  }
+  return db
+    .select()
+    .from(agentRuns)
+    .where(and(...conditions))
+    .orderBy(desc(agentRuns.createdAt))
+    .limit(limit);
+}
+
+// Returns every run (root + descendants) sharing the given rootRunId,
+// scoped to the calling user. The caller assembles the tree from
+// parent_run_id links; we don't return a nested structure here because
+// the detail page renders a flat depth-indented list and benefits from
+// a single round-trip.
+export async function listRunTreeForUser(input: {
+  rootRunId: string;
+  userId: string;
+}): Promise<AgentRun[]> {
+  return db
+    .select()
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.rootRunId, input.rootRunId),
+        eq(agentRuns.humanOwnerId, input.userId),
+      ),
+    )
+    .orderBy(agentRuns.createdAt);
 }
