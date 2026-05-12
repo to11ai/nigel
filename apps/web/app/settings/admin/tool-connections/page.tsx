@@ -3,7 +3,10 @@
 import { Loader2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { TOOL_CONNECTION_KINDS } from "@/lib/tool-connections";
+// Import directly from `types.ts` rather than the `@/lib/tool-connections`
+// barrel: the barrel re-exports the repository, which transitively pulls
+// in `postgres` (node-only) and would fail the browser bundle.
+import { TOOL_CONNECTION_KINDS } from "@/lib/tool-connections/types";
 import { ToolConnectionForm } from "./_form";
 import {
   adminDeleteToolConnection,

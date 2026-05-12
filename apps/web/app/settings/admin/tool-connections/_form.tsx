@@ -16,7 +16,9 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { adminCreateToolConnection } from "@/lib/admin/tool-connections-actions";
-import type { ToolConnectionKind } from "@/lib/tool-connections";
+// Same reason as page.tsx: import the type directly from `types.ts`
+// rather than the barrel that drags in `postgres`.
+import type { ToolConnectionKind } from "@/lib/tool-connections/types";
 
 // The form keeps the per-kind field surface inline so the data flow
 // is one file deep — admins editing a single field shouldn't have to
