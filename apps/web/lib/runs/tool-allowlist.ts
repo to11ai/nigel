@@ -32,6 +32,11 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // Redis is command-shaped rather than query-shaped, so it's a
   // separate tool with a command-allowlist read-only model.
   redis_command: ["redis_command"],
+  // Generic MCP client. The connection registry decides which MCP
+  // servers a specialist can reach; the tool itself is just JSON-RPC.
+  // There is no read-only enforcement layer — MCP tools are arbitrary
+  // and the server defines their semantics.
+  mcp_call: ["mcp_call"],
 };
 
 export function filterAgentTools<T extends ToolSet>(

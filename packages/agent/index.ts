@@ -46,6 +46,7 @@ export type {
   DispatchSpecialistCallback,
   DispatchSpecialistInput,
 } from "./tools/dispatch-specialist";
+export type { McpCallCallback, McpCallInput } from "./tools/mcp-call";
 export type {
   RedisCommandCallback,
   RedisCommandInput,
