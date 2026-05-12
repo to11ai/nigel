@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, Loader2, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ArrowRight, Loader2, ShieldAlert } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,30 @@ function AdminPageContent() {
   return (
     <>
       <h1 className="text-2xl font-semibold">Admin</h1>
+
+      <div className="rounded-lg border">
+        <div className="border-b px-5 py-4">
+          <h2 className="text-base font-semibold">Registries</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Admin-managed resources the platform reads at runtime.
+          </p>
+        </div>
+        <div className="divide-y">
+          <Link
+            href="/settings/admin/tool-connections"
+            className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-muted/30"
+          >
+            <div>
+              <p className="text-sm font-medium">Tool connections</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Named credential bundles (Postgres / ClickHouse / Redis / MCP /
+                Slack) wired into specialist tool allowlists.
+              </p>
+            </div>
+            <ArrowRight className="size-4 text-muted-foreground" />
+          </Link>
+        </div>
+      </div>
 
       <div className="rounded-lg border border-red-500/30 bg-red-500/5">
         <div className="border-b border-red-500/20 px-5 py-4">
