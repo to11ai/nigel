@@ -248,7 +248,9 @@ async function executeCommand(input: {
     ...(input.config.username !== undefined
       ? { username: input.config.username }
       : {}),
-    password: input.secrets.password,
+    ...(input.secrets.password !== undefined
+      ? { password: input.secrets.password }
+      : {}),
     tls: input.config.tls ? {} : undefined,
     // Short-circuit reconnects so a single bad call fails fast rather
     // than churning. The specialist run is short-lived; reconnect
@@ -258,6 +260,16 @@ async function executeCommand(input: {
     connectTimeout: Math.min(input.timeoutMs, 5_000),
     commandTimeout: input.timeoutMs,
     lazyConnect: false,
+  });
+  // ioredis emits `error` events on the underlying EventEmitter
+  // (ECONNREFUSED, TLS mismatch, DNS failure, AUTH rejection, etc.).
+  // Without a listener Node treats it as an uncaught exception and
+  // crashes the process — the try/catch around `client.call()` does
+  // NOT catch EventEmitter errors. Attach a swallowing listener so
+  // the failure surfaces only via the call rejection.
+  client.on("error", () => {
+    // Intentional no-op. The connection-failure detail comes back
+    // through the rejected `client.call()` promise below.
   });
   try {
     // ioredis exposes generic command dispatch via `.call(command,
@@ -298,11 +310,7 @@ function classifyResult(value: unknown): {
   if (Array.isArray(value)) {
     return {
       resultType: "array",
-      result: value.map((v) =>
-        v === null || typeof v === "string" || typeof v === "number"
-          ? v
-          : String(v),
-      ),
+      result: value.map((v) => normalizeElement(v)),
     };
   }
   if (Buffer.isBuffer(value)) {
@@ -314,4 +322,24 @@ function classifyResult(value: unknown): {
   // Coerce anything else (BigInt, etc.) to a string so the discriminated
   // output union stays well-formed.
   return { resultType: "string", result: String(value) };
+}
+
+// Element-wise normalization for arbitrarily-nested ioredis replies.
+// SCAN/HSCAN/SSCAN/ZSCAN return `[cursor, [keys...]]` — flattening
+// the inner array with `String(v)` would turn the key list into a
+// comma-joined blob and silently corrupt every scanning result. Same
+// for any future command that returns nested arrays.
+function normalizeElement(value: unknown): unknown {
+  if (value === null) return null;
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  if (Array.isArray(value)) return value.map((v) => normalizeElement(v));
+  if (typeof value === "object") return value;
+  return String(value);
 }

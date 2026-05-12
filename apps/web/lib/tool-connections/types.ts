@@ -78,7 +78,12 @@ const RedisConfigSchema = z.object({
 });
 
 const RedisSecretsSchema = z.object({
-  password: z.string().min(1),
+  // Optional: unlike Postgres, Redis very commonly runs without
+  // authentication in local dev and self-hosted deployments. Sending
+  // AUTH to a no-auth Redis returns `ERR Client sent AUTH, but no
+  // password is set` and the connection fails, so a placeholder
+  // wouldn't help — the field has to be genuinely optional.
+  password: z.string().min(1).optional(),
 });
 
 // Two distinct transport shapes for MCP servers. Modeled as a
