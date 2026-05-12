@@ -122,7 +122,19 @@ async function runOperation(input: {
     { capabilities: {} },
   );
   try {
-    await client.connect(transport);
+    // `client.connect()` performs the MCP `initialize` handshake
+    // internally and uses the SDK's built-in 60s default — it doesn't
+    // accept a per-call timeout option. Wrap with our own
+    // Promise.race so the user's `timeoutMs` bounds the entire
+    // operation (connect + list/call), not just the post-connect
+    // request. The finally below tears down the client either way
+    // so a connect that succeeds after the timeout still gets
+    // cleaned up.
+    await withTimeout(
+      client.connect(transport),
+      input.timeoutMs,
+      "mcp connect",
+    );
     if (input.operation.type === "list_tools") {
       const res = await client.listTools(undefined, {
         timeout: input.timeoutMs,
@@ -173,6 +185,31 @@ async function runOperation(input: {
     // swallowed — the call already produced its result (or its
     // error) and the client is one-shot.
     await client.close().catch(() => undefined);
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new McpCallError(
+              "execution_failed",
+              `${label} timed out after ${ms}ms`,
+            ),
+          );
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
