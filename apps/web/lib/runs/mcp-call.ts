@@ -188,26 +188,32 @@ async function runOperation(input: {
   }
 }
 
+// Race the supplied promise against a timer. The timer resolves
+// (with a sentinel symbol) rather than rejecting, so we never
+// construct a "Promise that only rejects" — the throw on timeout
+// happens here at the await site instead, where it's easier to read
+// and reason about. `clearTimeout` in the finally avoids a leaked
+// handle when the inner promise wins the race.
+const TIMEOUT_SENTINEL = Symbol("mcp-call-timeout");
+
 async function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
   label: string,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+    timer = setTimeout(() => resolve(TIMEOUT_SENTINEL), ms);
+  });
   try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new McpCallError(
-              "execution_failed",
-              `${label} timed out after ${ms}ms`,
-            ),
-          );
-        }, ms);
-      }),
-    ]);
+    const winner = await Promise.race([promise, timeoutPromise]);
+    if (winner === TIMEOUT_SENTINEL) {
+      throw new McpCallError(
+        "execution_failed",
+        `${label} timed out after ${ms}ms`,
+      );
+    }
+    return winner;
   } finally {
     if (timer) clearTimeout(timer);
   }
