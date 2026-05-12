@@ -234,6 +234,7 @@ describe("getSpecialist", () => {
       "search",
       "database_query",
       "clickhouse_query",
+      "redis_command",
     ]);
     expect(d?.sandboxPolicy).toBe("fresh");
     expect(d?.mayRecurse).toBe(false);

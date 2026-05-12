@@ -18,6 +18,7 @@ describe("filterAgentTools", () => {
     dispatch_specialist: { _kind: "tool" },
     database_query: { _kind: "tool" },
     clickhouse_query: { _kind: "tool" },
+    redis_command: { _kind: "tool" },
   };
 
   test("file expands to read+write+edit", () => {
@@ -82,9 +83,23 @@ describe("filterAgentTools", () => {
     expect(Object.keys(out).sort()).toEqual(["clickhouse_query"]);
   });
 
+  test("redis_command expands to redis_command tool", () => {
+    const out = filterAgentTools(
+      ["redis_command"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["redis_command"]);
+  });
+
   test("data-analyst allowlist yields the multi-engine analyst tool surface", () => {
     const out = filterAgentTools(
-      ["file_read", "search", "database_query", "clickhouse_query"],
+      [
+        "file_read",
+        "search",
+        "database_query",
+        "clickhouse_query",
+        "redis_command",
+      ],
       allTools as unknown as ToolSet,
     );
     expect(Object.keys(out).sort()).toEqual([
@@ -93,6 +108,7 @@ describe("filterAgentTools", () => {
       "glob",
       "grep",
       "read",
+      "redis_command",
     ]);
   });
 

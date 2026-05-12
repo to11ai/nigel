@@ -28,6 +28,8 @@ export {
   parseScope,
   type PostgresConnectionConfig,
   type PostgresConnectionSecrets,
+  type RedisConnectionConfig,
+  type RedisConnectionSecrets,
   type ResolvedConnection,
   type SlackConnectionConfig,
   type SlackConnectionSecrets,

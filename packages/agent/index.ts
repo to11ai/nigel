@@ -46,6 +46,10 @@ export type {
   DispatchSpecialistCallback,
   DispatchSpecialistInput,
 } from "./tools/dispatch-specialist";
+export type {
+  RedisCommandCallback,
+  RedisCommandInput,
+} from "./tools/redis-command";
 export type { SkillToolInput } from "./tools/skill";
 // Tool exports
 export type {
