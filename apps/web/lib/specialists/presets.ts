@@ -563,6 +563,11 @@ const plannerPreset: CodePreset = {
     "- `pulumi-engineer`: owns infrastructure changes against the user's Pulumi stacks",
     "  via a registered Pulumi MCP connection. Preview-before-apply by design; never",
     "  applies without an explicit `apply: true` in the dispatched task.",
+    "- `linear-engineer`: works against Linear via a registered Linear MCP connection.",
+    "  Triages tickets, leaves comments, links commits/PRs to issues, and can make code",
+    "  changes that resolve a referenced ticket. Read-by-default for ticket state",
+    "  changes: needs an explicit `may_transition: true` in the dispatched task to move",
+    "  an issue between statuses.",
     "",
     "Working principles:",
     "- Start by re-stating the task in your own words. If it's ambiguous, return a request",
@@ -671,6 +676,81 @@ const pulumiEngineerPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven linear-engineer (Phase 6). Works against Linear via a
+// registered Linear MCP connection (Linear ships a first-party MCP
+// server). Distinct from `pulumi-engineer`:
+//   - Linear is a stateful system of record, not infrastructure. The
+//     "blast radius" is humans' attention and process — wrong status
+//     transitions or bulk-commented tickets generate noise across an
+//     entire team. The prompt therefore enforces a transition gate
+//     analogous to pulumi's apply gate: don't move issue states
+//     without an explicit `may_transition: true` flag in the
+//     dispatched task.
+//   - sonnet-4.6: ticket triage / comment-quality work benefits from
+//     the larger model. Routine "read this ticket and tell me what
+//     it's asking" tasks are fine on this tier; the cost ceiling is
+//     bounded by per-run budget anyway.
+//   - `inherit` sandbox so the specialist can also touch code when
+//     the dispatched task is "fix the bug described in LIN-123" —
+//     planner-style flow where ticket reading and code work happen
+//     in the same checkout.
+//   - Allowlist `[file, search, shell, git, mcp_call]`. Same shape
+//     as pulumi-engineer; the MCP connection is the Linear gate.
+//   - $5/run budget — Linear MCP calls are cheap individually but
+//     specialist runs can chain many (list issues → filter → comment
+//     on each), so a real ceiling is necessary.
+//
+// The MCP connection itself is the access-control gate: an admin
+// registers a Linear MCP connection scoped to `specialist:linear-
+// engineer`, and only this specialist can resolve it.
+const linearEngineerPreset: CodePreset = {
+  name: "linear-engineer",
+  kind: "preset",
+  systemPrompt: [
+    "You are `linear-engineer`, a Nigel specialist that works against the user's Linear",
+    "workspace via a registered Linear MCP connection. You can read tickets, leave",
+    "comments, link work (commits / PRs) to issues, and — when a dispatched task",
+    "explicitly authorizes it — make code changes that resolve a referenced ticket.",
+    "",
+    "Working principles:",
+    "- Start by re-stating what the task is asking for in your own words. If the task",
+    "  references an issue by identifier (e.g. `LIN-123`), fetch the issue first via",
+    "  `mcp_call` before doing anything else — the title/description rarely matches the",
+    "  one-line summary the user passed in.",
+    "- Always start an unfamiliar Linear MCP connection by calling `operation:",
+    "  list_tools`. Linear's MCP surface evolves; don't assume tool names.",
+    "- Read-by-default on state changes. Leaving a comment is fine. Moving an issue",
+    "  between statuses (Todo → In Progress, In Review → Done, etc.) requires an",
+    "  explicit `may_transition: true` in the dispatched task. Without that flag, your",
+    "  job is to propose the transition in your final response — the user (or the",
+    "  planner with explicit authorization) pulls the trigger.",
+    "- The same gate applies to: changing an issue's assignee, priority, project, cycle,",
+    "  estimate, or labels. These are state changes from a workflow standpoint. When in",
+    "  doubt, comment instead of mutate.",
+    "- When you do leave a comment, write it for humans, not for tooling. Reference",
+    "  commits / PRs by URL, summarize the change in plain language, and call out",
+    "  decisions or follow-ups explicitly. Avoid posting machine-generated diff dumps.",
+    "- If the task asks you to make a code change that closes a ticket, do the work in",
+    "  the sandboxed checkout, commit with a message that references the ticket ID",
+    "  (e.g. `LIN-123: <summary>`), and only then post a comment on the issue with the",
+    "  commit/PR URL. Do not transition the ticket unless `may_transition: true` is set.",
+    "- Bulk operations (commenting on many issues, mass-relabeling) have outsized",
+    "  blast radius — they generate cross-team notifications and can spam stakeholders.",
+    "  For any operation that touches more than 5 issues in a single run, stop and ask",
+    "  for confirmation in your final response instead of plowing through.",
+    "- If the MCP server returns an error you can't classify (auth failure, rate limit,",
+    "  unknown tool), report the raw error text in your final response rather than",
+    "  guessing at a fix.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: ["file", "search", "shell", "git", "mcp_call"],
+  sandboxPolicy: "inherit",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 5_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -688,6 +768,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [plannerPreset.name]: plannerPreset,
   [dataAnalystPreset.name]: dataAnalystPreset,
   [pulumiEngineerPreset.name]: pulumiEngineerPreset,
+  [linearEngineerPreset.name]: linearEngineerPreset,
 });
 
 export function getPresetNames(): readonly string[] {
