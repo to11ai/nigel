@@ -22,7 +22,12 @@ export type LinearTriggerWorkflowInput = {
   // webhook handler from the issue title + description (and
   // potentially other ticket context).
   taskText: string;
-  // Branch to clone. Defaults to "main" when omitted.
+  // Branch to clone. Omitted by the webhook handler today —
+  // `provisionFreshSandboxForRun` then resolves the repo's
+  // default_branch via `repos.get`, which correctly handles
+  // repos whose default is `master`, `develop`, etc. Future
+  // extensions (label-based branch hints, comment commands)
+  // would supply this directly.
   branch?: string;
 };
 
@@ -95,7 +100,7 @@ const markRunTerminal = async (
 const executePlannerStep = async (input: {
   agentRunId: string;
   taskText: string;
-  branch: string;
+  branch?: string;
 }): Promise<void> => {
   "use step";
   const { getRun } = await import("@/lib/runs/repository");
@@ -122,7 +127,10 @@ const executePlannerStep = async (input: {
 
   const sandbox = await provisionFreshSandboxForRun({
     repoRef: run.repoRef,
-    branch: input.branch,
+    // Omit branch → `provisionFreshSandboxForRun` resolves the
+    // repo's default_branch via `repos.get`. Only forward when
+    // the caller explicitly supplied one.
+    ...(input.branch !== undefined ? { branch: input.branch } : {}),
     humanOwnerId: run.humanOwnerId,
   });
   try {
@@ -162,7 +170,9 @@ export async function runLinearTriggeredWorkflow(
     await executePlannerStep({
       agentRunId: input.agentRunId,
       taskText: input.taskText,
-      branch: input.branch ?? "main",
+      // Only forward branch when supplied; otherwise let
+      // `provisionFreshSandboxForRun` resolve the repo's default.
+      ...(input.branch !== undefined ? { branch: input.branch } : {}),
     });
     await markRunTerminal(input.agentRunId, "completed");
   } catch (err) {

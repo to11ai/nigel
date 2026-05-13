@@ -38,7 +38,12 @@ export type ProvisionFreshInput = {
   // The sandbox's lifecycle is bound to the Run; `stop()` on the
   // returned handle tears it down.
   repoRef: string; // "owner/repo"
-  branch: string;
+  // Branch to clone. When omitted, the repo's default_branch is
+  // read from GitHub (`repos.get`) and used. This is the right
+  // default for Linear-triggered runs that don't carry branch
+  // info — hardcoding "main" was incorrect for any repo whose
+  // default is `master`, `develop`, or anything else.
+  branch?: string;
   // The Nigel user whose GitHub installation provides the clone token.
   // For Linear-triggered runs this is the `humanOwnerId` resolved by
   // the webhook handler.
@@ -125,24 +130,29 @@ export async function provisionFreshSandboxForRun(
     );
   }
 
-  // Resolve the repo's numeric id — installation-token minting is
-  // scoped per-repo by id, not name. The app-level Octokit (JWT-
-  // authed) can read any installation's accessible repos without
-  // needing a token mint first.
+  // Resolve the repo's numeric id + default branch in one call —
+  // installation-token minting is scoped per-repo by id, not name,
+  // and we need the default branch for the clone when the caller
+  // didn't supply one. The app-level Octokit (JWT-authed) can read
+  // any installation's accessible repos without needing a token
+  // mint first.
   const appOctokit = getAppOctokit();
   let repoId: number;
+  let defaultBranch: string;
   try {
     const res = await appOctokit.repos.get({
       owner: parsed.owner,
       repo: parsed.repo,
     });
     repoId = res.data.id;
+    defaultBranch = res.data.default_branch;
   } catch (err) {
     throw new SandboxCoordinatorError(
       "repo_not_accessible",
       `installation ${installation.installationId} cannot access ${input.repoRef}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  const branch = input.branch ?? defaultBranch;
 
   let token: string;
   try {
@@ -174,7 +184,7 @@ export async function provisionFreshSandboxForRun(
         type: "vercel",
         source: {
           repo: `https://github.com/${parsed.owner}/${parsed.repo}`,
-          branch: input.branch,
+          branch,
         },
       },
       options: {
