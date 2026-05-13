@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
 import { onRunStatusChange } from "./lifecycle";
@@ -128,6 +128,17 @@ export type ListRootRunsForUserInput = {
   // enough to fill a screen, small enough that an admin browsing months
   // of runs doesn't accidentally pull thousands of rows.
   limit?: number;
+  // Optional filters. All filters AND together. Each one is a row-
+  // exclusion predicate, not a fuzzy search — empty / undefined means
+  // "no constraint from this filter". The UI surfaces these via URL
+  // search params so a filtered view is shareable / bookmarkable.
+  specialistId?: string;
+  status?: RunStatus;
+  triggerSource?: TriggerSource;
+  // Lower bound on cost in micros (>=). The UI exposes a USD value
+  // and converts; the repository takes micros to match the column
+  // and avoid double-rounding.
+  minCostMicros?: number;
 };
 
 // Lists root runs (parentRunId IS NULL) owned by the given user, most
@@ -144,6 +155,22 @@ export async function listRootRunsForUser(
   ];
   if (input.before) {
     conditions.push(lt(agentRuns.createdAt, input.before));
+  }
+  if (input.specialistId) {
+    conditions.push(eq(agentRuns.specialistId, input.specialistId));
+  }
+  if (input.status) {
+    conditions.push(eq(agentRuns.status, input.status));
+  }
+  if (input.triggerSource) {
+    conditions.push(eq(agentRuns.triggerSource, input.triggerSource));
+  }
+  if (
+    input.minCostMicros !== undefined &&
+    Number.isFinite(input.minCostMicros) &&
+    input.minCostMicros > 0
+  ) {
+    conditions.push(gte(agentRuns.costUsdActualMicros, input.minCostMicros));
   }
   return db
     .select()
