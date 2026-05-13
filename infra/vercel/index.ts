@@ -123,9 +123,11 @@ if (allowedGithubOrg) {
 // OpenTelemetry export (Phase 7a). All three are optional per-stack —
 // when the endpoint is unset, `@vercel/otel` still installs the
 // auto-instrumentation but drops exports, so the app keeps working in
-// stacks that don't ship telemetry. The headers value typically
-// carries the Dash0 auth bearer; mark it sensitive so it doesn't
-// leak into Pulumi outputs.
+// stacks that don't ship telemetry. Project's backend is Datadog; the
+// typical wiring is to point the endpoint at the Datadog Agent's OTLP
+// receiver. The headers value is only needed when the receiver
+// requires auth; mark it sensitive regardless so secrets don't leak
+// into Pulumi outputs.
 const otelEndpoint = config.get("otelExporterOtlpEndpoint");
 if (otelEndpoint) {
   envVar("OTEL_EXPORTER_OTLP_ENDPOINT", otelEndpoint);
