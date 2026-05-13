@@ -1,0 +1,232 @@
+import { describe, expect, test } from "bun:test";
+import {
+  deriveExternalId,
+  extractAssignmentToBot,
+  linearWebhookEnvelopeSchema,
+} from "./event-schema";
+
+const BOT = "user-bot";
+
+function makeAssignmentEnvelope(input: {
+  newAssigneeId: string | null;
+  type?: string;
+  action?: string;
+  actorId?: string;
+  teamId?: string;
+}): unknown {
+  return {
+    id: "evt_123",
+    type: input.type ?? "Issue",
+    action: input.action ?? "assignee_changed",
+    actor: { id: input.actorId ?? "user-mattc" },
+    data: {
+      id: "iss_abc",
+      identifier: "PLAT-1",
+      title: "Fix the thing",
+      teamId: input.teamId ?? "team-platform",
+      assigneeId: input.newAssigneeId,
+      creator: { id: "user-creator" },
+    },
+  };
+}
+
+describe("linearWebhookEnvelopeSchema", () => {
+  test("parses a minimal envelope", () => {
+    const parsed = linearWebhookEnvelopeSchema.parse({
+      id: "evt_1",
+      type: "Issue",
+      action: "update",
+      data: {},
+    });
+    expect(parsed.type).toBe("Issue");
+    expect(parsed.id).toBe("evt_1");
+  });
+
+  test("strips unknown fields without complaining", () => {
+    const parsed = linearWebhookEnvelopeSchema.parse({
+      id: "evt_1",
+      type: "Issue",
+      data: {},
+      // future Linear field we don't model
+      newlyAddedField: { nested: true },
+    });
+    expect(parsed.type).toBe("Issue");
+  });
+
+  test("rejects payloads without a type", () => {
+    expect(() =>
+      linearWebhookEnvelopeSchema.parse({ id: "evt_1", data: {} }),
+    ).toThrow();
+  });
+});
+
+describe("deriveExternalId", () => {
+  test("prefers the Linear-Delivery header above body fields", () => {
+    expect(
+      deriveExternalId({
+        envelope: {
+          type: "Issue",
+          deliveryId: "body-d",
+          id: "body-i",
+          data: {},
+        },
+        deliveryHeader: "header-uuid-from-linear",
+      }),
+    ).toBe("header-uuid-from-linear");
+  });
+
+  test("falls back to body.deliveryId when header is missing", () => {
+    expect(
+      deriveExternalId({
+        envelope: {
+          type: "Issue",
+          deliveryId: "body-d",
+          id: "body-i",
+          data: {},
+        },
+        deliveryHeader: null,
+      }),
+    ).toBe("body-d");
+  });
+
+  test("falls back to body.id when neither header nor body.deliveryId set", () => {
+    expect(
+      deriveExternalId({
+        envelope: { type: "Issue", id: "body-i", data: {} },
+        deliveryHeader: null,
+      }),
+    ).toBe("body-i");
+  });
+
+  test("ignores body.webhookId entirely — it is the SUBSCRIPTION uuid not per-event", () => {
+    // Anti-regression: a previous version used webhookId as a
+    // dedup key, which is constant across all events from a given
+    // webhook. Every event after the first would silently be
+    // treated as a duplicate and dropped.
+    expect(
+      deriveExternalId({
+        envelope: { type: "Issue", webhookId: "subscription-uuid", data: {} },
+        deliveryHeader: null,
+      }),
+    ).toBeNull();
+  });
+
+  test("returns null when neither header nor any body id field is set", () => {
+    expect(
+      deriveExternalId({
+        envelope: { type: "Issue", data: {} },
+        deliveryHeader: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("extractAssignmentToBot", () => {
+  test("matches a `Issue.assignee_changed` with new assignee = bot", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeAssignmentEnvelope({ newAssigneeId: BOT }),
+    );
+    const out = extractAssignmentToBot({ envelope, botUserId: BOT });
+    expect(out).not.toBeNull();
+    expect(out?.issue.id).toBe("iss_abc");
+    expect(out?.actorId).toBe("user-mattc");
+  });
+
+  test("matches assignee_changed with assigneeId at top level (alt envelope shape)", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_1",
+      type: "Issue",
+      action: "assignee_changed",
+      actor: { id: "user-mattc" },
+      assigneeId: BOT,
+      data: {
+        id: "iss_xyz",
+        identifier: "PLAT-2",
+        title: "Alt shape",
+        teamId: "team-platform",
+      },
+    });
+    const out = extractAssignmentToBot({ envelope, botUserId: BOT });
+    expect(out).not.toBeNull();
+    expect(out?.issue.id).toBe("iss_xyz");
+  });
+
+  test("ignores generic Issue.update events even when data.assigneeId === bot", () => {
+    // Critical anti-regression: title/description edits on a
+    // bot-assigned issue must NOT trigger a fresh Run.
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_1",
+      type: "Issue",
+      action: "update",
+      actor: { id: "user-mattc" },
+      data: {
+        id: "iss_already_bot",
+        identifier: "PLAT-3",
+        title: "User edited the title; assignee unchanged",
+        teamId: "team-platform",
+        // Bot was already the assignee — this `data` shape persists
+        // across any field edit. Without filtering on action,
+        // we'd spawn a Run on every edit.
+        assigneeId: BOT,
+        creator: { id: "user-creator" },
+      },
+    });
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+
+  test("returns null when new assignee is someone else", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeAssignmentEnvelope({ newAssigneeId: "user-other" }),
+    );
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+
+  test("returns null when new assignee is null (un-assignment)", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeAssignmentEnvelope({ newAssigneeId: null }),
+    );
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+
+  test("explicit null at top level does NOT fall through to data.assigneeId", () => {
+    // Critical: when Linear sends `assigneeId: null` at the
+    // envelope level (un-assignment), we must NOT fall back to
+    // reading data.assigneeId — which could surface a stale bot ID
+    // and falsely match.
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_unassign",
+      type: "Issue",
+      action: "assignee_changed",
+      actor: { id: "user-mattc" },
+      assigneeId: null, // explicit un-assignment at envelope level
+      data: {
+        id: "iss_stale_bot",
+        identifier: "PLAT-4",
+        title: "Was bot-assigned, just un-assigned",
+        teamId: "team-platform",
+        assigneeId: BOT, // stale field in the embedded issue
+      },
+    });
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+
+  test("returns null for non-Issue event types", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_1",
+      type: "Comment",
+      action: "create",
+      data: {},
+    });
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+
+  test("returns null for Issue events with unrelated actions", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeAssignmentEnvelope({
+        newAssigneeId: BOT,
+        action: "remove",
+      }),
+    );
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+});

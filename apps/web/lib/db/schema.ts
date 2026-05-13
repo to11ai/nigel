@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { SandboxState } from "@nigel/sandbox";
 import type { ModelVariant } from "@/lib/model-variants";
 import type { RepoConfig } from "@/lib/repo-config/types";
@@ -16,18 +17,36 @@ import {
 } from "drizzle-orm/pg-core";
 
 // users
-export const users = pgTable("users", {
-  id: text("id").primaryKey(),
-  username: text("username").notNull(),
-  email: text("email"),
-  emailVerified: boolean("email_verified").notNull().default(false),
-  name: text("name"),
-  avatarUrl: text("avatar_url"),
-  isAdmin: boolean("is_admin").notNull().default(false),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  lastLoginAt: timestamp("last_login_at").defaultNow().notNull(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    email: text("email"),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    name: text("name"),
+    avatarUrl: text("avatar_url"),
+    isAdmin: boolean("is_admin").notNull().default(false),
+    // Linear user ID, set when the user authenticates via Linear OAuth
+    // (Phase 6 L5) or when an admin manually maps a user. Phase 6 L2
+    // looks this up during webhook handling to resolve `event.actor`
+    // → Nigel `humanOwnerId`. Nullable because most users never get a
+    // Linear identity associated with their Nigel account.
+    linearUserId: text("linear_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    lastLoginAt: timestamp("last_login_at").defaultNow().notNull(),
+  },
+  (table) => [
+    // Partial unique on Linear ID — multiple rows with NULL are
+    // allowed (most users don't have a Linear identity) but two
+    // users with the same non-null Linear ID would corrupt
+    // actor-resolution and is rejected at write time.
+    uniqueIndex("users_linear_user_id_idx")
+      .on(table.linearUserId)
+      .where(sql`${table.linearUserId} IS NOT NULL`),
+  ],
+);
 
 // oauth provider accounts
 export const accounts = pgTable("accounts", {
