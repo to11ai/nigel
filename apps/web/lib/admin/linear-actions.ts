@@ -130,7 +130,17 @@ export async function adminUpdateLinearWorkspace(
   try {
     await requireAdmin();
     const patch: UpdateLinearWorkspaceInput = { id: input.id };
-    if (input.botUserId !== undefined) patch.botUserId = input.botUserId.trim();
+    if (input.botUserId !== undefined) {
+      // botUserId is semantically required — it's the Linear user
+      // ID assignments are matched against. An empty string here
+      // would silently break webhook matching. Reject upfront
+      // rather than write a blank row.
+      const trimmed = input.botUserId.trim();
+      if (!trimmed) {
+        return { success: false, error: "bot_user_id cannot be empty" };
+      }
+      patch.botUserId = trimmed;
+    }
     if (input.teamRepoMap !== undefined) patch.teamRepoMap = input.teamRepoMap;
     // Build secrets only when the admin actually supplied
     // replacements. If only one of the two changed, we must read
