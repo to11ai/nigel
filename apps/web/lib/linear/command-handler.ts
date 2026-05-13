@@ -68,7 +68,8 @@ export type CommandHandlerOutcome =
         | "unresolved_repo"
         | "unresolved_owner"
         | "issue_fetch_failed"
-        | "issue_not_found";
+        | "issue_not_found"
+        | "workflow_start_failed";
     };
 
 export type CommandHandlerDeps = {
@@ -290,10 +291,42 @@ async function handleRunCommand(input: {
       taskText: buildTaskText(issue),
     });
   } catch (err) {
+    // Workflow scheduler failed AFTER the Run row was inserted. The
+    // row is now an orphaned `pending` — every subsequent `/run`
+    // would hit it via getLatestRunByLinearIssue and be refused
+    // with `wrong_state`, leaving the ticket stuck. Transition the
+    // run to `failed` so the state machine reflects reality; the
+    // lifecycle hook then reassigns the ticket to the human owner
+    // alongside our explanatory comment below. The unassignment-
+    // back-to-human is the recovery affordance — they can `/run`
+    // again, or an admin can investigate the scheduler failure.
     console.error("[linear-command] workflow start failed", {
       runId: run.id,
       err,
     });
+    await safeComment(
+      input.workspace,
+      input.issueId,
+      runStartFailedBody("workflow_start_failed"),
+    );
+    await updateRunStatus(run.id, "failed").catch((statusErr) => {
+      // Best-effort cleanup; if the status transition itself
+      // fails the row stays pending but the explanatory comment
+      // is already out so the user can still `/cancel` manually.
+      console.error(
+        "[linear-command] failed to mark run failed after workflow start error",
+        {
+          runId: run.id,
+          err: statusErr,
+        },
+      );
+    });
+    return {
+      kind: "run_start_failed",
+      command: "run",
+      issueId: input.issueId,
+      reason: "workflow_start_failed",
+    };
   }
   return {
     kind: "run_started",
@@ -427,7 +460,8 @@ function runStartFailedBody(
     | "unresolved_repo"
     | "unresolved_owner"
     | "issue_fetch_failed"
-    | "issue_not_found",
+    | "issue_not_found"
+    | "workflow_start_failed",
 ): string {
   if (reason === "unresolved_repo") {
     return [
@@ -441,6 +475,13 @@ function runStartFailedBody(
   }
   if (reason === "issue_fetch_failed") {
     return "Nigel couldn't start a run: the Linear API is unreachable. Try again in a moment.";
+  }
+  if (reason === "workflow_start_failed") {
+    return [
+      "Nigel created the run row but the workflow scheduler errored. Marking the run as failed.",
+      "",
+      "Post `/run` again to retry. If it keeps failing, check the Vercel Workflow logs and contact ops.",
+    ].join("\n");
   }
   return "Nigel couldn't start a run: this Linear issue is no longer accessible.";
 }

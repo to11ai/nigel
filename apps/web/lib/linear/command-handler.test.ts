@@ -399,6 +399,40 @@ describe("handleLinearWebhook — /run command (Phase 6 L4)", () => {
     expect(rows).toHaveLength(2);
   });
 
+  test("/run marks the orphan run as failed when startWorkflow throws", async () => {
+    // Regression guard for the orphaned-pending-run bug: if the
+    // workflow scheduler errors after Run.create persists the row,
+    // we must transition the run to `failed` so future /run
+    // commands aren't permanently blocked by the orphan.
+    const fakeIssue = {
+      id: TEST_ISSUE_ID,
+      identifier: "PLAT-9",
+      title: "Trigger scheduler bomb",
+      description: "wf will throw",
+      teamId: "team-platform",
+      url: "https://linear.app/issue/PLAT-9",
+      creator: { id: OWNER_LINEAR_ID },
+      labels: [],
+      attachments: [],
+    };
+    const body = commentBody({ body: "/run" });
+    const outcome = await call(body, fakeWorkspace(), {
+      fetchIssue: async () => fakeIssue,
+      startWorkflow: async () => {
+        throw new Error("scheduler is down");
+      },
+    });
+    assertCommand(outcome);
+    if (outcome.outcome.kind === "run_start_failed") {
+      expect(outcome.outcome.reason).toBe("workflow_start_failed");
+    } else {
+      throw new Error(`expected run_start_failed, got ${outcome.outcome.kind}`);
+    }
+    const rows = await db.select().from(agentRuns);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe("failed");
+  });
+
   test("/run with no resolvable repo surfaces run_start_failed", async () => {
     const fakeIssue = {
       id: TEST_ISSUE_ID,
