@@ -44,3 +44,8 @@ export {
   type RedisCommandInput,
   redisCommandTool,
 } from "./redis-command";
+export {
+  type SlackPostCallback,
+  type SlackPostInput,
+  slackPostTool,
+} from "./slack-post";

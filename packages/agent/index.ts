@@ -51,6 +51,7 @@ export type {
   RedisCommandCallback,
   RedisCommandInput,
 } from "./tools/redis-command";
+export type { SlackPostCallback, SlackPostInput } from "./tools/slack-post";
 export type { SkillToolInput } from "./tools/skill";
 // Tool exports
 export type {

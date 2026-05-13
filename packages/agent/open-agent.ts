@@ -23,6 +23,7 @@ import {
   readFileTool,
   redisCommandTool,
   skillTool,
+  slackPostTool,
   taskTool,
   todoWriteTool,
   webFetchTool,
@@ -93,6 +94,7 @@ export const nigelTools = {
   clickhouse_query: clickhouseQueryTool,
   redis_command: redisCommandTool,
   mcp_call: mcpCallTool,
+  slack_post: slackPostTool,
 } satisfies ToolSet;
 
 // Subset of `nigelTools` exposed to the chat agent. Excludes the
@@ -103,6 +105,7 @@ const {
   clickhouse_query: _unusedClickhouseQueryTool,
   redis_command: _unusedRedisCommandTool,
   mcp_call: _unusedMcpCallTool,
+  slack_post: _unusedSlackPostTool,
   ...chatTools
 } = nigelTools;
 
