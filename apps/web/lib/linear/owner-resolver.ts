@@ -36,7 +36,12 @@ export async function resolveHumanOwnerId(input: {
   return lookupNigelUserByLinearId(candidate);
 }
 
-async function lookupNigelUserByLinearId(
+// Exported so the L4 command-handler can run the same Linear actor →
+// Nigel user lookup for authority checks on comment commands. The
+// owner-resolution wrapper above retains the bot-fallback semantics
+// specific to the assignment path; comment commands don't have that
+// fallback — the comment author is authoritative.
+export async function lookupNigelUserByLinearId(
   linearUserId: string,
 ): Promise<string | null> {
   const rows = await db

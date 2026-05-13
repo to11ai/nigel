@@ -1,8 +1,14 @@
 import { Run } from "@/lib/runs/create";
 import { commentOnIssue, reassignIssue } from "./client";
 import {
+  type CommandHandlerDeps,
+  type CommandHandlerOutcome,
+  handleLinearCommandComment,
+} from "./command-handler";
+import {
   deriveExternalId,
   extractAssignmentToBot,
+  extractCommandComment,
   type LinearWebhookEnvelope,
   linearWebhookEnvelopeSchema,
 } from "./event-schema";
@@ -56,7 +62,11 @@ export type WebhookHandlerOutcome =
       issueId: string;
       repoRef: string;
       humanOwnerId: string;
-    };
+    }
+  // Phase 6 L4: command-comment outcomes. The wrapped
+  // `CommandHandlerOutcome` carries the detail; the webhook handler
+  // only knows that the comment flow ran (or didn't apply).
+  | { kind: "command"; outcome: CommandHandlerOutcome };
 
 export type WebhookHandlerInput = {
   rawBody: string;
@@ -79,7 +89,8 @@ export type WebhookHandlerInput = {
     // The webhook handler kicks off the planner workflow via this
     // callback. Production wires `start(runLinearTriggeredWorkflow,
     // ...)`; tests pass a spy so the assertion is "we tried to
-    // start it" without touching the Workflow SDK at all.
+    // start it" without touching the Workflow SDK at all. Shared by
+    // the assignment path and the L4 `/run` comment-command path.
     startWorkflow?: (input: {
       agentRunId: string;
       taskText: string;
@@ -133,6 +144,38 @@ export async function handleLinearWebhook(
   });
   if (!claim) {
     return { kind: "duplicate", externalId };
+  }
+
+  // L4: comment-command events branch here. Comment.create from a
+  // non-bot actor with a recognized slash-command body becomes a
+  // command intake. Anything else falls through to the assignment
+  // matcher.
+  const commentMatch = extractCommandComment({
+    envelope,
+    botUserId: workspace.botUserId,
+  });
+  if (commentMatch) {
+    const commandDeps: CommandHandlerDeps = {};
+    if (input.deps?.startWorkflow) {
+      commandDeps.startWorkflow = input.deps.startWorkflow;
+    }
+    const commandOutcome = await handleLinearCommandComment({
+      workspace,
+      commentBody: commentMatch.comment.body,
+      issueId: commentMatch.comment.issueId,
+      actorId: commentMatch.actorId,
+      defaultBudgetUsdMicros: input.defaultBudgetUsdMicros,
+      deps: commandDeps,
+    });
+    const runId =
+      commandOutcome.kind === "run_started" ||
+      commandOutcome.kind === "transitioned"
+        ? commandOutcome.runId
+        : undefined;
+    await markWebhookEventProcessed(
+      runId === undefined ? { id: claim.id } : { id: claim.id, runId },
+    );
+    return { kind: "command", outcome: commandOutcome };
   }
 
   const match = extractAssignmentToBot({

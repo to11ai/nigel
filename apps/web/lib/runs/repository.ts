@@ -54,6 +54,56 @@ export async function listChildren(parentId: string): Promise<AgentRun[]> {
   return db.select().from(agentRuns).where(eq(agentRuns.parentRunId, parentId));
 }
 
+// Phase 6 L4: find the run associated with a Linear issue.
+//
+// Both queries scope to `triggerSource = 'linear'` so chat/api runs
+// that coincidentally share a triggerRef value can't be picked up by
+// a Linear comment command.
+//
+// `getActiveRunByLinearIssue` returns the most-recent non-terminal
+// run — the one a `/approve`, `/reject`, `/resume`, or `/cancel`
+// command should act on. Returns null when every run on that issue
+// has reached a terminal state (completed | failed | cancelled).
+//
+// `getLatestRunByLinearIssue` returns the most recent run regardless
+// of status — the `/run` command consults this to decide whether to
+// permit starting a fresh run (only when no active run exists).
+export async function getActiveRunByLinearIssue(
+  issueId: string,
+): Promise<AgentRun | null> {
+  const rows = await db
+    .select()
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.triggerSource, "linear"),
+        eq(agentRuns.triggerRef, issueId),
+        // Postgres: equivalent of `status NOT IN ('completed','failed','cancelled')`.
+        sql`${agentRuns.status} NOT IN ('completed','failed','cancelled')`,
+      ),
+    )
+    .orderBy(desc(agentRuns.createdAt))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getLatestRunByLinearIssue(
+  issueId: string,
+): Promise<AgentRun | null> {
+  const rows = await db
+    .select()
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.triggerSource, "linear"),
+        eq(agentRuns.triggerRef, issueId),
+      ),
+    )
+    .orderBy(desc(agentRuns.createdAt))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function updateRunStatus(
   id: string,
   next: RunStatus,

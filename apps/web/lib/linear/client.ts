@@ -135,6 +135,88 @@ export async function commentOnIssue(input: {
   return { commentId: data.commentCreate.comment.id };
 }
 
+// Fetches the minimal issue fields the trigger pipeline needs.
+// Phase 6 L4 calls this from the `/run` comment-command path —
+// Linear's `Comment.create` webhook only carries the comment + its
+// issueId, so we round-trip to GraphQL to pull title / description /
+// labels / attachments needed for repo resolution and the planner
+// prompt.
+//
+// Returns the raw shape that `parseLinearIssue` in event-schema can
+// consume directly. The shape mirrors what Linear delivers on
+// `Issue.assignee_changed` so a single downstream code path handles
+// both intake routes.
+export async function fetchIssue(input: {
+  accessToken: string;
+  issueId: string;
+}): Promise<{
+  id: string;
+  identifier: string;
+  title: string;
+  description: string | null;
+  teamId: string;
+  url: string | null;
+  creator: { id: string } | null;
+  labels: Array<{ name: string }>;
+  attachments: Array<{ url: string | null; metadata: { url: string } | null }>;
+} | null> {
+  const data = await linearGraphql<{
+    issue: {
+      id: string;
+      identifier: string;
+      title: string;
+      description: string | null;
+      url: string | null;
+      team: { id: string };
+      creator: { id: string } | null;
+      labels: { nodes: Array<{ name: string }> };
+      attachments: {
+        nodes: Array<{ url: string | null; metadata: unknown }>;
+      };
+    } | null;
+  }>({
+    accessToken: input.accessToken,
+    query: `
+      query Issue($id: String!) {
+        issue(id: $id) {
+          id
+          identifier
+          title
+          description
+          url
+          team { id }
+          creator { id }
+          labels(first: 50) { nodes { name } }
+          attachments(first: 25) { nodes { url metadata } }
+        }
+      }
+    `,
+    variables: { id: input.issueId },
+  });
+  if (!data.issue) return null;
+  return {
+    id: data.issue.id,
+    identifier: data.issue.identifier,
+    title: data.issue.title,
+    description: data.issue.description,
+    teamId: data.issue.team.id,
+    url: data.issue.url,
+    creator: data.issue.creator,
+    labels: data.issue.labels.nodes,
+    attachments: data.issue.attachments.nodes.map((a) => ({
+      url: a.url,
+      metadata:
+        isObject(a.metadata) && typeof a.metadata.url === "string"
+          ? { url: a.metadata.url }
+          : null,
+    })),
+  };
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object";
+}
+
 // Reassigns a Linear issue to a different user. Pass `null` for
 // `assigneeId` to un-assign (Linear's API accepts that as a valid
 // transition).
