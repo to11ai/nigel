@@ -120,6 +120,25 @@ if (allowedGithubOrg) {
   envVar("NIGEL_ALLOWED_GITHUB_ORG", allowedGithubOrg);
 }
 
+// OpenTelemetry export (Phase 7a). All three are optional per-stack —
+// when the endpoint is unset, `@vercel/otel` still installs the
+// auto-instrumentation but drops exports, so the app keeps working in
+// stacks that don't ship telemetry. The headers value typically
+// carries the Dash0 auth bearer; mark it sensitive so it doesn't
+// leak into Pulumi outputs.
+const otelEndpoint = config.get("otelExporterOtlpEndpoint");
+if (otelEndpoint) {
+  envVar("OTEL_EXPORTER_OTLP_ENDPOINT", otelEndpoint);
+}
+const otelHeaders = config.getSecret("otelExporterOtlpHeaders");
+if (otelHeaders) {
+  envVar("OTEL_EXPORTER_OTLP_HEADERS", otelHeaders, { sensitive: true });
+}
+const otelServiceName = config.get("otelServiceName");
+if (otelServiceName) {
+  envVar("OTEL_SERVICE_NAME", otelServiceName);
+}
+
 export const projectId: pulumi.Output<string> = project.id;
 export const projectNameOutput: pulumi.Output<string> = pulumi.output(
   project.name,
