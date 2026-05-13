@@ -7,6 +7,7 @@ import type {
   SlackPostCallback,
 } from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
+import { type Attributes, SpanStatusCode, trace } from "@opentelemetry/api";
 import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
@@ -38,6 +39,39 @@ export function shouldForwardInheritedSandbox(
 }
 
 const MAX_STEPS = 50;
+
+// Phase 7b: one OTel tracer per concern. Tool-call spans (Phase 7c)
+// will use a separate tracer name so dashboards can filter by
+// instrumentation layer.
+const tracer = trace.getTracer("nigel.specialist");
+
+// Build the attribute bag for a specialist span. Split out so undefined
+// values are dropped (OTel rejects them) rather than coerced. Kept as a
+// plain function — the values are run/specialist immutables, so no
+// reason to thread the span through.
+function buildSpecialistSpanAttributes(input: {
+  run: AgentRun;
+  specialist: ResolvedSpecialist;
+}): Attributes {
+  const { run, specialist } = input;
+  const attrs: Attributes = {
+    "nigel.specialist.name": specialist.name,
+    "nigel.specialist.kind": specialist.kind,
+    "nigel.run.id": run.id,
+    "nigel.run.root_id": run.rootRunId,
+    "nigel.run.depth": run.depth,
+    "nigel.run.trigger_source": run.triggerSource,
+    "nigel.run.sandbox_policy": run.sandboxPolicy,
+    "nigel.run.budget_micros": run.budgetUsdCapMicros,
+  };
+  if (specialist.model) {
+    attrs["nigel.specialist.model"] = specialist.model;
+  }
+  if (run.parentRunId !== null) {
+    attrs["nigel.run.parent_id"] = run.parentRunId;
+  }
+  return attrs;
+}
 
 export type ExecuteSpecialistInput = {
   run: AgentRun;
@@ -86,6 +120,11 @@ export type ExecuteSpecialistResult = {
 //   - onStepFinish: post-call cost capture from providerMetadata.gateway.cost
 //     (preferred) or computed from token counts (fallback for direct-provider
 //     calls). Cost rolls up to root via the Phase 1 trigger.
+//
+// Phase 7b: the whole execution is wrapped in an OTel `specialist.execute`
+// span. `startActiveSpan` installs the span as the current context so
+// downstream tool spans (Phase 7c) attach as children automatically. The
+// span ends in `finally`; failures record an exception + ERROR status.
 export async function executeSpecialistViaLLM(
   input: ExecuteSpecialistInput,
 ): Promise<ExecuteSpecialistResult> {
@@ -95,119 +134,144 @@ export async function executeSpecialistViaLLM(
       `LLM specialist '${specialist.name}' is missing systemPrompt or model`,
     );
   }
+  const systemPrompt = specialist.systemPrompt;
+  const model = specialist.model;
   const checkRootBudget = deps?.checkRootBudget ?? defaultCheckRootBudget;
   const addCostMicros = deps?.addCostMicros ?? defaultAddCostMicros;
-  // The dispatch_specialist tool, exposed via experimental_context,
-  // calls this curried callback. The wrapper supplies a default that
-  // imports dispatchSpecialist lazily (inside the call) to avoid a
-  // module-load-time circular import between dispatch.ts and
-  // specialist-execution.ts.
-  const dispatchSpecialistFn: DispatchSpecialistCallback =
-    deps?.dispatchSpecialist ??
-    (async (callInput) => {
-      // Lazy import: dispatch.ts depends on specialist-execution.ts,
-      // and a top-level import here would create a cycle that breaks
-      // when tests mock either module.
-      const { dispatchSpecialist } = await import("./dispatch");
-      const result = await dispatchSpecialist({
-        parentRunId: run.id,
-        specialistName: callInput.specialistName,
-        task: callInput.task,
-        ...(callInput.budgetUsdMicros !== undefined
-          ? { budgetUsdMicros: callInput.budgetUsdMicros }
-          : {}),
-        ...(callInput.sandboxPolicyOverride !== undefined
-          ? { sandboxPolicyOverride: callInput.sandboxPolicyOverride }
-          : {}),
-        ...(shouldForwardInheritedSandbox(
-          sandbox.state,
-          callInput.sandboxPolicyOverride,
-        )
-          ? { inheritSandboxState: sandbox.state }
-          : {}),
-      });
-      return { output: result.output };
-    });
 
-  // database_query callback. Like the dispatchSpecialist callback,
-  // closures-in the things only this run knows — specifically the
-  // specialist's own name, which the scope check inside the callback
-  // uses to refuse connections scoped to a different specialist.
-  const databaseQueryFn: DatabaseQueryCallback =
-    deps?.databaseQuery ??
-    createDatabaseQueryCallback({ specialistName: specialist.name });
-
-  // clickhouse_query callback — same shape, separate kind.
-  const clickhouseQueryFn: ClickhouseQueryCallback =
-    deps?.clickhouseQuery ??
-    createClickhouseQueryCallback({ specialistName: specialist.name });
-
-  // redis_command callback — command-shaped rather than query-shaped.
-  const redisCommandFn: RedisCommandCallback =
-    deps?.redisCommand ??
-    createRedisCommandCallback({ specialistName: specialist.name });
-
-  // mcp_call callback — talks JSON-RPC to a registered MCP server.
-  const mcpCallFn: McpCallCallback =
-    deps?.mcpCall ?? createMcpCallCallback({ specialistName: specialist.name });
-
-  // slack_post callback — posts to a registered Slack incoming
-  // webhook. Write-only; no read-only enforcement layer.
-  const slackPostFn: SlackPostCallback =
-    deps?.slackPost ??
-    createSlackPostCallback({ specialistName: specialist.name });
-
-  const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
-  const callModel = gateway(specialist.model);
-
-  const agent = new ToolLoopAgent({
-    model: callModel,
-    instructions: specialist.systemPrompt,
-    // Cast: filterAgentTools returns Partial<ToolSet> but the ToolLoopAgent
-    // accepts any ToolSet at construction time. Both consumers see the same
-    // runtime shape; the type widening is safe.
-    tools: filteredTools as unknown as typeof nigelTools,
-    stopWhen: stepCountIs(MAX_STEPS),
-    // The agent's tools (read/write/edit/grep/glob/bash/etc.) read sandbox
-    // and model from experimental_context. isAgentContext requires both
-    // `sandbox` and `model` keys to be present.
-    experimental_context: {
-      sandbox,
-      model: callModel,
-      dispatchSpecialist: dispatchSpecialistFn,
-      databaseQuery: databaseQueryFn,
-      clickhouseQuery: clickhouseQueryFn,
-      redisCommand: redisCommandFn,
-      mcpCall: mcpCallFn,
-      slackPost: slackPostFn,
-    },
-    prepareStep: async () => {
-      await checkRootBudget(run.rootRunId);
-      return undefined;
-    },
-    onStepFinish: async (step) => {
-      // Cost reporting is best-effort. A transient DB error or an
-      // unknown-model lookup must NOT crash the agent loop or fail an
-      // otherwise-successful step. Both paths log on failure so leaks
-      // are observable.
-      const micros = resolveStepCostMicros(step, specialist.model as string);
-      if (micros === null) return;
+  return tracer.startActiveSpan(
+    "specialist.execute",
+    { attributes: buildSpecialistSpanAttributes({ run, specialist }) },
+    async (span) => {
       try {
-        await addCostMicros(run.id, micros);
-      } catch (err) {
-        console.error(
-          `[specialist-execution] addCostMicros failed for run ${run.id}; cost under-reported`,
-          err,
+        // dispatch_specialist callback — see comment near the
+        // experimental_context binding for the lazy-import rationale.
+        const dispatchSpecialistFn: DispatchSpecialistCallback =
+          deps?.dispatchSpecialist ??
+          (async (callInput) => {
+            const { dispatchSpecialist } = await import("./dispatch");
+            const result = await dispatchSpecialist({
+              parentRunId: run.id,
+              specialistName: callInput.specialistName,
+              task: callInput.task,
+              ...(callInput.budgetUsdMicros !== undefined
+                ? { budgetUsdMicros: callInput.budgetUsdMicros }
+                : {}),
+              ...(callInput.sandboxPolicyOverride !== undefined
+                ? { sandboxPolicyOverride: callInput.sandboxPolicyOverride }
+                : {}),
+              ...(shouldForwardInheritedSandbox(
+                sandbox.state,
+                callInput.sandboxPolicyOverride,
+              )
+                ? { inheritSandboxState: sandbox.state }
+                : {}),
+            });
+            return { output: result.output };
+          });
+
+        // Each tool callback closures-in the current specialist's
+        // name so the scope check inside the callback can refuse a
+        // connection scoped to a different specialist.
+        const databaseQueryFn: DatabaseQueryCallback =
+          deps?.databaseQuery ??
+          createDatabaseQueryCallback({ specialistName: specialist.name });
+        const clickhouseQueryFn: ClickhouseQueryCallback =
+          deps?.clickhouseQuery ??
+          createClickhouseQueryCallback({ specialistName: specialist.name });
+        const redisCommandFn: RedisCommandCallback =
+          deps?.redisCommand ??
+          createRedisCommandCallback({ specialistName: specialist.name });
+        const mcpCallFn: McpCallCallback =
+          deps?.mcpCall ??
+          createMcpCallCallback({ specialistName: specialist.name });
+        const slackPostFn: SlackPostCallback =
+          deps?.slackPost ??
+          createSlackPostCallback({ specialistName: specialist.name });
+
+        const filteredTools = filterAgentTools(
+          specialist.toolAllowlist,
+          nigelTools,
         );
+        const callModel = gateway(model);
+
+        // Sum of every step's resolved cost in micros. Accumulated
+        // in `onStepFinish` so the parent span can carry the total
+        // when it ends. Independent from the `addCostMicros` DB
+        // write: if the write fails we still record on the span.
+        let totalCostMicros = 0;
+
+        const agent = new ToolLoopAgent({
+          model: callModel,
+          instructions: systemPrompt,
+          // Cast: filterAgentTools returns Partial<ToolSet> but
+          // ToolLoopAgent accepts any ToolSet at construction time.
+          // Same runtime shape; type widening is safe.
+          tools: filteredTools as unknown as typeof nigelTools,
+          stopWhen: stepCountIs(MAX_STEPS),
+          // isAgentContext requires both `sandbox` and `model` keys.
+          experimental_context: {
+            sandbox,
+            model: callModel,
+            dispatchSpecialist: dispatchSpecialistFn,
+            databaseQuery: databaseQueryFn,
+            clickhouseQuery: clickhouseQueryFn,
+            redisCommand: redisCommandFn,
+            mcpCall: mcpCallFn,
+            slackPost: slackPostFn,
+          },
+          prepareStep: async () => {
+            await checkRootBudget(run.rootRunId);
+            return undefined;
+          },
+          onStepFinish: async (step) => {
+            // Cost reporting is best-effort. A transient DB error
+            // or unknown-model lookup must NOT crash the agent loop
+            // or fail an otherwise-successful step.
+            const micros = resolveStepCostMicros(step, model);
+            // Emit a span event for every finished step regardless
+            // of cost resolution — token counts are independent and
+            // useful on their own.
+            span.addEvent("specialist.step", {
+              "step.input_tokens": step.usage?.inputTokens ?? 0,
+              "step.output_tokens": step.usage?.outputTokens ?? 0,
+              "step.cache_read_tokens":
+                step.usage?.inputTokenDetails?.cacheReadTokens ?? 0,
+              ...(micros !== null ? { "step.cost_micros": micros } : {}),
+            });
+            if (micros === null) return;
+            totalCostMicros += micros;
+            try {
+              await addCostMicros(run.id, micros);
+            } catch (err) {
+              console.error(
+                `[specialist-execution] addCostMicros failed for run ${run.id}; cost under-reported`,
+                err,
+              );
+            }
+          },
+        });
+
+        const result = await agent.generate({
+          messages: [{ role: "user", content: task }],
+        });
+
+        // Aggregate cost lands on the parent span as an attribute
+        // (not an event) so Dash0 can sum it across spans directly.
+        span.setAttribute("nigel.run.cost_total_micros", totalCostMicros);
+        return { output: result.text };
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        span.end();
       }
     },
-  });
-
-  const result = await agent.generate({
-    messages: [{ role: "user", content: task }],
-  });
-
-  return { output: result.text };
+  );
 }
 
 // Resolves per-step cost in micros, preferring gateway-reported cost
