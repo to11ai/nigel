@@ -310,15 +310,29 @@ async function postRepoUnresolvedComment(input: {
     "",
     "Reassigning back so the bot doesn't stay on the ticket.",
   ].join("\n");
+  // Comment and reassign are independent best-effort calls. A failed
+  // comment must NOT skip the reassign — otherwise the bot stays
+  // assigned to a ticket Nigel just rejected. Same pattern as
+  // lib/runs/lifecycle.ts handleLinearLifecycle.
   await commentOnIssue({
     accessToken: input.workspace.secrets.accessToken,
     issueId: input.issueId,
     body,
+  }).catch((err) => {
+    console.error("[linear-webhook] commentOnIssue failed (unresolved_repo)", {
+      issueId: input.issueId,
+      err,
+    });
   });
   await reassignIssue({
     accessToken: input.workspace.secrets.accessToken,
     issueId: input.issueId,
     assigneeId: input.reassignTo,
+  }).catch((err) => {
+    console.error("[linear-webhook] reassignIssue failed (unresolved_repo)", {
+      issueId: input.issueId,
+      err,
+    });
   });
 }
 
@@ -335,14 +349,25 @@ async function postOwnerUnresolvedComment(input: {
     "",
     "Reassigning back so the bot doesn't stay on the ticket.",
   ].join("\n");
+  // Independent best-effort: see comment in postRepoUnresolvedComment.
   await commentOnIssue({
     accessToken: input.workspace.secrets.accessToken,
     issueId: input.issueId,
     body,
+  }).catch((err) => {
+    console.error("[linear-webhook] commentOnIssue failed (unresolved_owner)", {
+      issueId: input.issueId,
+      err,
+    });
   });
   await reassignIssue({
     accessToken: input.workspace.secrets.accessToken,
     issueId: input.issueId,
     assigneeId: input.reassignTo,
+  }).catch((err) => {
+    console.error("[linear-webhook] reassignIssue failed (unresolved_owner)", {
+      issueId: input.issueId,
+      err,
+    });
   });
 }
