@@ -4,12 +4,16 @@ import {
   getLatestRunByLinearIssue,
   updateRunStatus,
 } from "@/lib/runs/repository";
-import type { RunStatus } from "@/lib/runs/state-machine";
+import { type RunStatus, terminalStates } from "@/lib/runs/state-machine";
 import { commentOnIssue, fetchIssue } from "./client";
 import { type LinearCommand, parseLinearCommand } from "./command-parser";
 import { parseLinearIssue } from "./event-schema";
 import { lookupNigelUserByLinearId } from "./owner-resolver";
 import { resolveRepo } from "./repo-resolver";
+import {
+  buildTaskText,
+  defaultStartLinearTriggeredWorkflow,
+} from "./run-trigger";
 import type { ResolvedLinearWorkspace } from "./workspace-repository";
 
 // Phase 6 L4: comment-command intake.
@@ -360,38 +364,7 @@ function transitionForCommand(
 }
 
 function isTerminal(status: RunStatus): boolean {
-  return (
-    status === "completed" || status === "failed" || status === "cancelled"
-  );
-}
-
-function buildTaskText(issue: {
-  identifier: string;
-  title: string;
-  description?: string | null;
-  url?: string;
-}): string {
-  const body =
-    issue.description && issue.description.trim().length > 0
-      ? issue.description.trim()
-      : "(no description on the ticket)";
-  const lines: string[] = [
-    `Linear ticket: ${issue.identifier} — ${issue.title}`,
-    ...(issue.url ? [`Source: ${issue.url}`] : []),
-    "",
-    body,
-  ];
-  return lines.join("\n");
-}
-
-async function defaultStartLinearTriggeredWorkflow(input: {
-  agentRunId: string;
-  taskText: string;
-}): Promise<void> {
-  const { start } = await import("workflow/api");
-  const { runLinearTriggeredWorkflow } =
-    await import("@/app/workflows/linear-trigger");
-  await start(runLinearTriggeredWorkflow, [input]);
+  return terminalStates.has(status);
 }
 
 async function safeComment(

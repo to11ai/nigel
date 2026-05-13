@@ -1,8 +1,12 @@
-import { and, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
 import { onRunStatusChange } from "./lifecycle";
-import { assertValidTransition, type RunStatus } from "./state-machine";
+import {
+  assertValidTransition,
+  type RunStatus,
+  terminalStates,
+} from "./state-machine";
 import type { AgentRun, SandboxPolicy, TriggerSource } from "./types";
 
 export type InsertRunInput = {
@@ -78,8 +82,9 @@ export async function getActiveRunByLinearIssue(
       and(
         eq(agentRuns.triggerSource, "linear"),
         eq(agentRuns.triggerRef, issueId),
-        // Postgres: equivalent of `status NOT IN ('completed','failed','cancelled')`.
-        sql`${agentRuns.status} NOT IN ('completed','failed','cancelled')`,
+        // Use the canonical terminal set so a new terminal state
+        // added to state-machine.ts flows here automatically.
+        notInArray(agentRuns.status, [...terminalStates]),
       ),
     )
     .orderBy(desc(agentRuns.createdAt))

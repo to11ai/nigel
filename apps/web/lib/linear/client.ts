@@ -153,12 +153,23 @@ export async function fetchIssue(input: {
   id: string;
   identifier: string;
   title: string;
+  // Linear sometimes returns description as null; the schema accepts
+  // null OR undefined, so keep null fidelity here.
   description: string | null;
   teamId: string;
-  url: string | null;
+  // The remaining optional fields use `undefined` (not null) so the
+  // shape matches `linearIssueSchema`, which declares them via
+  // `.optional()` — that accepts `undefined`/missing only. Returning
+  // `null` would make `parseLinearIssue` reject the result and
+  // surface as a misleading "issue not found" for any issue with
+  // non-GitHub attachments.
+  url: string | undefined;
   creator: { id: string } | null;
   labels: Array<{ name: string }>;
-  attachments: Array<{ url: string | null; metadata: { url: string } | null }>;
+  attachments: Array<{
+    url: string | undefined;
+    metadata: { url: string } | undefined;
+  }>;
 } | null> {
   const data = await linearGraphql<{
     issue: {
@@ -200,15 +211,15 @@ export async function fetchIssue(input: {
     title: data.issue.title,
     description: data.issue.description,
     teamId: data.issue.team.id,
-    url: data.issue.url,
+    url: data.issue.url ?? undefined,
     creator: data.issue.creator,
     labels: data.issue.labels.nodes,
     attachments: data.issue.attachments.nodes.map((a) => ({
-      url: a.url,
+      url: a.url ?? undefined,
       metadata:
         isObject(a.metadata) && typeof a.metadata.url === "string"
           ? { url: a.metadata.url }
-          : null,
+          : undefined,
     })),
   };
 }

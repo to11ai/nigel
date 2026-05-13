@@ -14,6 +14,10 @@ import {
 } from "./event-schema";
 import { resolveHumanOwnerId } from "./owner-resolver";
 import { resolveRepo } from "./repo-resolver";
+import {
+  buildTaskText,
+  defaultStartLinearTriggeredWorkflow,
+} from "./run-trigger";
 import { verifyLinearSignature } from "./signature";
 import {
   claimWebhookEvent,
@@ -300,43 +304,6 @@ export async function handleLinearWebhook(
     repoRef,
     humanOwnerId,
   };
-}
-
-// Produce the prompt for the planner from the Linear issue. The
-// planner expects a self-contained task instruction; we include the
-// issue identifier (e.g. PLAT-123) for traceability and the issue
-// title + description verbatim. The planner's own prompt instructs
-// it to re-state the task in its own words before decomposing.
-function buildTaskText(issue: {
-  identifier: string;
-  title: string;
-  description?: string | null;
-  url?: string;
-}): string {
-  const body =
-    issue.description && issue.description.trim().length > 0
-      ? issue.description.trim()
-      : "(no description on the ticket)";
-  const lines: string[] = [
-    `Linear ticket: ${issue.identifier} — ${issue.title}`,
-    ...(issue.url ? [`Source: ${issue.url}`] : []),
-    "",
-    body,
-  ];
-  return lines.join("\n");
-}
-
-// Production starter — dynamic-import to avoid pulling the
-// Workflow SDK + the workflow module into the test path. The
-// `deps.startWorkflow` injection seam means tests never hit this.
-async function defaultStartLinearTriggeredWorkflow(input: {
-  agentRunId: string;
-  taskText: string;
-}): Promise<void> {
-  const { start } = await import("workflow/api");
-  const { runLinearTriggeredWorkflow } =
-    await import("@/app/workflows/linear-trigger");
-  await start(runLinearTriggeredWorkflow, [input]);
 }
 
 // Comment + reassign for the `unresolved_repo` failure path. The

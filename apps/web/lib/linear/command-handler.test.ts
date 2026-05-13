@@ -126,12 +126,12 @@ type CallDeps = {
     title: string;
     description: string | null;
     teamId: string;
-    url: string | null;
+    url: string | undefined;
     creator: { id: string } | null;
     labels: Array<{ name: string }>;
     attachments: Array<{
-      url: string | null;
-      metadata: { url: string } | null;
+      url: string | undefined;
+      metadata: { url: string } | undefined;
     }>;
   } | null>;
 };
