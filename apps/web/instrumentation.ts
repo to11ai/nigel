@@ -17,14 +17,17 @@ import { registerOTel } from "@vercel/otel";
 // context propagation) need to be present so child spans added in
 // Phase 7b/7c attach to the right parent regardless of environment.
 //
-// Dash0 setup:
-//   OTEL_EXPORTER_OTLP_ENDPOINT: https://ingress.<region>.aws.dash0.com
-//   OTEL_EXPORTER_OTLP_HEADERS:  Authorization=Bearer <token>
-//   OTEL_SERVICE_NAME (optional, overrides the default below)
+// Datadog setup (the project's observability backend): point
+// `OTEL_EXPORTER_OTLP_ENDPOINT` at the Datadog Agent's OTLP HTTP
+// receiver (default `http://<agent-host>:4318`) and the Agent forwards
+// to Datadog. Set `DD_SERVICE` / `DD_ENV` / `DD_VERSION` env vars
+// where the Agent runs so they tag forwarded spans. The Datadog
+// Vercel integration provisions the Agent for you.
 //
-// The endpoint expects to receive `/v1/traces`, `/v1/metrics`, and
-// `/v1/logs` automatically suffixed by the exporter; do not include
-// `/v1/traces` in the env var itself.
+// The OTLP HTTP exporter auto-suffixes `/v1/traces`, `/v1/metrics`,
+// and `/v1/logs`; do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`.
+// Auth headers (if any) go in `OTEL_EXPORTER_OTLP_HEADERS` as
+// comma-separated `key=value` pairs.
 export function register(): void {
   registerOTel({
     serviceName: process.env.OTEL_SERVICE_NAME ?? "nigel-web",
