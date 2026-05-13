@@ -102,7 +102,8 @@ function commentBody(
   } = {},
 ): string {
   return JSON.stringify({
-    id: overrides.externalId ?? `evt_cmd_${Math.random().toString(36).slice(2)}`,
+    id:
+      overrides.externalId ?? `evt_cmd_${Math.random().toString(36).slice(2)}`,
     type: "Comment",
     action: overrides.action ?? "create",
     actor: { id: overrides.actorId ?? OWNER_LINEAR_ID },

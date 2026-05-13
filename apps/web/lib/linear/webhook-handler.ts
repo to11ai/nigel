@@ -91,10 +91,12 @@ export type WebhookHandlerInput = {
     // ...)`; tests pass a spy so the assertion is "we tried to
     // start it" without touching the Workflow SDK at all. Shared by
     // the assignment path and the L4 `/run` comment-command path.
-    startWorkflow?: (input: {
-      agentRunId: string;
-      taskText: string;
-    }) => Promise<void>;
+    startWorkflow?: CommandHandlerDeps["startWorkflow"];
+    // L4 `/run` injection seam. The command handler round-trips to
+    // Linear's GraphQL API to pull the issue body; tests stub this
+    // so CI doesn't need network access. Forwarded into the
+    // command-handler's deps below.
+    fetchIssue?: CommandHandlerDeps["fetchIssue"];
   };
 };
 
@@ -158,6 +160,9 @@ export async function handleLinearWebhook(
     const commandDeps: CommandHandlerDeps = {};
     if (input.deps?.startWorkflow) {
       commandDeps.startWorkflow = input.deps.startWorkflow;
+    }
+    if (input.deps?.fetchIssue) {
+      commandDeps.fetchIssue = input.deps.fetchIssue;
     }
     const commandOutcome = await handleLinearCommandComment({
       workspace,
