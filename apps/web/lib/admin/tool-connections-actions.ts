@@ -5,10 +5,13 @@ import {
   type CreateToolConnectionInput,
   createToolConnection as repoCreate,
   deleteToolConnection as repoDelete,
+  getToolConnectionById as repoGetById,
   listToolConnections as repoList,
   TOOL_CONNECTION_KINDS,
   type ToolConnectionKind,
   ToolConnectionRepositoryError,
+  type UpdateToolConnectionInput,
+  updateToolConnection as repoUpdate,
   ToolConnectionValidationError,
 } from "@/lib/tool-connections";
 import { requireAdmin } from "./require-admin";
@@ -105,9 +108,90 @@ export async function adminCreateToolConnection(
   }
 }
 
-// Update is intentionally not exposed yet — v1 is delete-and-recreate.
-// When inline edit ships, restore an `adminUpdateToolConnection`
-// here using `updateToolConnection` from @/lib/tool-connections.
+// Returned to the edit page so the form can prefill from existing
+// row state. Mirrors `ToolConnectionListItem` and adds `configJson`
+// (read-only on the wire — the edit form prefills config fields
+// from it). `kind` is included but the UI treats it as immutable
+// — changing kind would invalidate the config + secrets shape, so
+// kind-change is delete-and-recreate.
+//
+// `secretsCiphertext` and friends are intentionally NOT returned.
+// Existing secrets are not retrievable; the edit form treats secret
+// fields as "leave blank to keep, fill to replace".
+export type ToolConnectionEditItem = {
+  id: string;
+  name: string;
+  kind: ToolConnectionKind;
+  description: string | null;
+  scope: string;
+  configJson: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export async function adminGetToolConnection(
+  id: string,
+): Promise<ActionResult<ToolConnectionEditItem>> {
+  try {
+    await requireAdmin();
+    const row = await repoGetById(id);
+    if (!row) {
+      return {
+        success: false,
+        error: `tool connection not found: ${id}`,
+        code: "not_found",
+      };
+    }
+    return {
+      success: true,
+      data: {
+        id: row.id,
+        name: row.name,
+        kind: row.kind as ToolConnectionKind,
+        description: row.description,
+        scope: row.scope,
+        configJson: row.configJson,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      },
+    };
+  } catch (err) {
+    return mapRepositoryError(err);
+  }
+}
+
+// Patch semantics: only fields present in the input are written.
+// Omit `config` to leave the config row untouched; omit `secrets`
+// to keep the existing encrypted payload. `kind` and `name` are
+// not editable here — kind-change requires delete-and-recreate
+// (shape mismatch), and name is the identity used by every
+// resolver call site.
+export type AdminUpdateInput = {
+  id: string;
+  description?: string | null;
+  config?: unknown;
+  secrets?: unknown;
+  scope?: { kind: "global" } | { kind: "specialist"; specialistName: string };
+};
+
+export async function adminUpdateToolConnection(
+  input: AdminUpdateInput,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    await requireAdmin();
+    const patch: UpdateToolConnectionInput = { id: input.id };
+    if (input.description !== undefined) patch.description = input.description;
+    if (input.config !== undefined) patch.config = input.config;
+    if (input.secrets !== undefined) patch.secrets = input.secrets;
+    if (input.scope !== undefined) patch.scope = input.scope;
+    const row = await repoUpdate(patch);
+    revalidatePath(ADMIN_PATH);
+    revalidatePath(`${ADMIN_PATH}/${input.id}`);
+    return { success: true, data: { id: row.id } };
+  } catch (err) {
+    return mapRepositoryError(err);
+  }
+}
 
 export async function adminDeleteToolConnection(
   id: string,

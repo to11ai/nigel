@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 // Import directly from `types.ts` rather than the `@/lib/tool-connections`
@@ -10,7 +10,9 @@ import { TOOL_CONNECTION_KINDS } from "@/lib/tool-connections/types";
 import { ToolConnectionForm } from "./_form";
 import {
   adminDeleteToolConnection,
+  adminGetToolConnection,
   adminListToolConnections,
+  type ToolConnectionEditItem,
   type ToolConnectionListItem,
 } from "@/lib/admin/tool-connections-actions";
 import { Button } from "@/components/ui/button";
@@ -40,6 +42,10 @@ function ToolConnectionsPageContent() {
   const [rows, setRows] = useState<ToolConnectionListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<ToolConnectionEditItem | null>(
+    null,
+  );
+  const [editLoadingId, setEditLoadingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] =
     useState<ToolConnectionListItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -57,6 +63,20 @@ function ToolConnectionsPageContent() {
   useEffect(() => {
     refresh();
   }, []);
+
+  async function handleEditClick(row: ToolConnectionListItem) {
+    setEditLoadingId(row.id);
+    try {
+      const res = await adminGetToolConnection(row.id);
+      if (res.success) {
+        setEditTarget(res.data);
+      } else {
+        toast.error(res.error);
+      }
+    } finally {
+      setEditLoadingId(null);
+    }
+  }
 
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -137,6 +157,26 @@ function ToolConnectionsPageContent() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      onClick={() => handleEditClick(row)}
+                      aria-label={`Edit ${row.name}`}
+                      // Disable EVERY edit button while any fetch is
+                      // in flight — not just this row's. Per-row
+                      // gating allowed click-A-then-click-B races
+                      // where A's late response would silently swap
+                      // the open dialog's `editing` prop while the
+                      // form kept B's field state, causing a save to
+                      // overwrite A with B's data.
+                      disabled={editLoadingId !== null}
+                    >
+                      {editLoadingId === row.id ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Pencil className="size-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => setDeleteTarget(row)}
                       aria-label={`Delete ${row.name}`}
                     >
@@ -170,11 +210,47 @@ function ToolConnectionsPageContent() {
           </DialogHeader>
           <ToolConnectionForm
             kinds={TOOL_CONNECTION_KINDS}
-            onCreated={async () => {
+            onSubmitted={async () => {
               setCreateOpen(false);
               await refresh();
             }}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              Edit connection &lsquo;{editTarget?.name}&rsquo;
+            </DialogTitle>
+            <DialogDescription>
+              Kind and name are immutable. Leave any secret field blank to keep
+              the existing encrypted value; fill it to rotate.
+            </DialogDescription>
+          </DialogHeader>
+          {editTarget ? (
+            <ToolConnectionForm
+              // Force a fresh mount when the targeted row changes.
+              // Defense-in-depth against the same race the
+              // edit-button disable above guards: even if a stale
+              // response somehow set `editTarget`, the `key` change
+              // remounts the form so its useState seeds re-derive
+              // from the new row's data.
+              key={editTarget.id}
+              kinds={TOOL_CONNECTION_KINDS}
+              editing={editTarget}
+              onSubmitted={async () => {
+                setEditTarget(null);
+                await refresh();
+              }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 
