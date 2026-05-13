@@ -213,15 +213,14 @@ export async function provisionFreshSandboxForRun(
       environmentDetails: sandbox.environmentDetails,
     }),
     stop: async () => {
-      // Owned by this Run — tear it down. The sandbox SDK's stop()
-      // is idempotent if the sandbox is already gone, so a double
-      // call from the workflow's finally + the caller's catch is
-      // safe.
-      const session = (sandbox as unknown as { stop?: () => Promise<unknown> })
-        .stop;
-      if (typeof session === "function") {
-        await session.call(sandbox);
-      }
+      // Owned by this Run — tear it down. `stop()` is part of the
+      // base Sandbox interface (non-optional) and idempotent if
+      // the sandbox is already gone, so a double call from the
+      // workflow's finally + the caller's catch is safe. No
+      // defensive `typeof` check: a missing method should fail
+      // loudly at build time via typecheck, not silently at
+      // runtime leaving sandboxes running.
+      await sandbox.stop();
     },
   };
 }
