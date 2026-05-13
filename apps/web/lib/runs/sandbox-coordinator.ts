@@ -194,12 +194,20 @@ export async function provisionFreshSandboxForRun(
     workingDirectory: sandbox.workingDirectory,
     ownedByThisRun: true,
     toAgentContext: () => ({
-      // The freshly-created sandbox's state lives on the sandbox
-      // instance via its connection metadata. We pass an empty
-      // `source`-less state because the agent context only needs
-      // the live sandbox handle's runtime values; it never
-      // re-uses `state` for reconnection.
-      state: { type: "vercel" } as SandboxState,
+      // Capture the sandbox's reconnection identity in the state so
+      // dispatched child specialists with sandboxPolicy: "inherit"
+      // can `connectSandbox` back to the SAME sandbox instead of
+      // spinning up an empty one. Without the `sandboxName` here,
+      // `connectVercel` falls through to creating a new empty
+      // sandbox (no source, no clone) and every child runs against
+      // a blank workspace — silently breaking every planner → coder
+      // dispatch chain. `getState()` is optional on the Sandbox
+      // interface but always present on the Vercel concrete class,
+      // which is what `connectVercel` returns for fresh sandboxes.
+      state:
+        typeof sandbox.getState === "function"
+          ? (sandbox.getState() as SandboxState)
+          : ({ type: "vercel" } as SandboxState),
       workingDirectory: sandbox.workingDirectory,
       currentBranch: sandbox.currentBranch,
       environmentDetails: sandbox.environmentDetails,
