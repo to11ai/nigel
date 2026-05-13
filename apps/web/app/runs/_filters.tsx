@@ -144,6 +144,14 @@ export function RunsFilters({
           Min cost (USD)
         </Label>
         <Input
+          // `defaultValue` only seeds the DOM at mount. Without the
+          // key, "Clear filters" or browser back/forward leaves the
+          // input visually showing the old number even though the
+          // URL has no `min_cost`, and a subsequent blur silently
+          // re-applies the cleared filter. Keying on the URL value
+          // forces React to remount the input whenever the param
+          // changes, syncing the DOM state with the source of truth.
+          key={minCost}
           id="f-min-cost"
           type="number"
           inputMode="decimal"
