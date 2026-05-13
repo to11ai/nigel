@@ -207,17 +207,19 @@ export async function provisionFreshSandboxForRun(
       // Capture the sandbox's reconnection identity in the state so
       // dispatched child specialists with sandboxPolicy: "inherit"
       // can `connectSandbox` back to the SAME sandbox instead of
-      // spinning up an empty one. Without the `sandboxName` here,
+      // spinning up an empty one. Without `sandboxName` here,
       // `connectVercel` falls through to creating a new empty
       // sandbox (no source, no clone) and every child runs against
       // a blank workspace — silently breaking every planner → coder
-      // dispatch chain. `getState()` is optional on the Sandbox
-      // interface but always present on the Vercel concrete class,
-      // which is what `connectVercel` returns for fresh sandboxes.
-      state:
-        typeof sandbox.getState === "function"
-          ? (sandbox.getState() as SandboxState)
-          : ({ type: "vercel" } as SandboxState),
+      // dispatch chain.
+      //
+      // `getState()` is optional on the base Sandbox interface but
+      // always present on the Vercel concrete class, which is what
+      // `connectVercel` returns for fresh sandboxes. If it's ever
+      // missing (SDK refactor, mock subclass), throw loud rather
+      // than fall back to an identity-less state — the fallback IS
+      // the catastrophic state we're trying to prevent.
+      state: readSandboxState(sandbox),
       workingDirectory: sandbox.workingDirectory,
       currentBranch: sandbox.currentBranch,
       environmentDetails: sandbox.environmentDetails,
@@ -241,6 +243,38 @@ export async function teardownSandboxForRun(
   if (handle.ownedByThisRun) {
     await handle.stop();
   }
+}
+
+// Pull the reconnection-capable state from a freshly-created
+// sandbox. `getState()` is declared optional on the base interface
+// but Vercel's concrete class always implements it. We refuse the
+// caller's request rather than return identity-less state — see
+// the comment on `toAgentContext` above.
+function readSandboxState(sandbox: Sandbox): SandboxState {
+  if (typeof sandbox.getState !== "function") {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox handle is missing `getState()` — cannot capture reconnection identity for child specialists",
+    );
+  }
+  const state = sandbox.getState() as SandboxState | null | undefined;
+  if (!state) {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox `getState()` returned no state",
+    );
+  }
+  // The Vercel implementation populates `sandboxName`; reject any
+  // shape that doesn't include it because a child specialist
+  // reconnecting via this state would land on an empty sandbox.
+  const sandboxName = (state as { sandboxName?: unknown }).sandboxName;
+  if (typeof sandboxName !== "string" || sandboxName.length === 0) {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox state has no `sandboxName` — children would reconnect to a fresh empty sandbox",
+    );
+  }
+  return state;
 }
 
 function parseRepoRef(ref: string): { owner: string; repo: string } | null {
