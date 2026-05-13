@@ -68,9 +68,12 @@ export type CommandHandlerOutcome =
       kind: "run_start_failed";
       command: "run";
       issueId: string;
+      // `unresolved_owner` isn't in the union here because the actor
+      // lookup happens in handleLinearCommandComment BEFORE
+      // handleRunCommand runs — an unmapped commenter returns as
+      // `unmapped_actor` and never reaches the /run path.
       reason:
         | "unresolved_repo"
-        | "unresolved_owner"
         | "issue_fetch_failed"
         | "issue_not_found"
         | "workflow_start_failed";
@@ -431,7 +434,6 @@ function runExistsBody(current: RunStatus): string {
 function runStartFailedBody(
   reason:
     | "unresolved_repo"
-    | "unresolved_owner"
     | "issue_fetch_failed"
     | "issue_not_found"
     | "workflow_start_failed",
@@ -442,9 +444,6 @@ function runStartFailedBody(
       "",
       "Add a `repo:owner/name` label or configure the team→repo map in /admin/linear.",
     ].join("\n");
-  }
-  if (reason === "unresolved_owner") {
-    return "Nigel couldn't start a run: the commenter isn't linked to a Nigel user.";
   }
   if (reason === "issue_fetch_failed") {
     return "Nigel couldn't start a run: the Linear API is unreachable. Try again in a moment.";
