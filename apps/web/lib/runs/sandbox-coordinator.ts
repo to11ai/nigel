@@ -4,7 +4,10 @@ import {
   type SandboxState,
 } from "@nigel/sandbox";
 import { getInstallationByAccountLogin } from "@/lib/db/installations";
-import { getAppOctokit, mintInstallationToken } from "@/lib/github/app";
+import {
+  getInstallationOctokit,
+  mintInstallationToken,
+} from "@/lib/github/app";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 
 // Subset of `AgentSandboxContext` from `@nigel/agent`'s open-agent module,
@@ -133,14 +136,19 @@ export async function provisionFreshSandboxForRun(
   // Resolve the repo's numeric id + default branch in one call —
   // installation-token minting is scoped per-repo by id, not name,
   // and we need the default branch for the clone when the caller
-  // didn't supply one. The app-level Octokit (JWT-authed) can read
-  // any installation's accessible repos without needing a token
-  // mint first.
-  const appOctokit = getAppOctokit();
+  // didn't supply one. Must use an INSTALLATION-scoped Octokit
+  // (not just the app JWT): GitHub treats `GET /repos/{owner}/{repo}`
+  // as installation-level for private repos and returns 404 for
+  // JWT-only callers. Private repos are the primary use case for
+  // a coding agent, so the JWT path would fail on nearly every
+  // run.
+  const installationOctokit = getInstallationOctokit(
+    installation.installationId,
+  );
   let repoId: number;
   let defaultBranch: string;
   try {
-    const res = await appOctokit.repos.get({
+    const res = await installationOctokit.repos.get({
       owner: parsed.owner,
       repo: parsed.repo,
     });
