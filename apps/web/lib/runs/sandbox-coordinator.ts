@@ -161,21 +161,27 @@ export async function provisionFreshSandboxForRun(
 
   let sandbox: Sandbox;
   try {
-    sandbox = await connectSandbox(
-      {
-        state: {
-          type: "vercel",
-          source: {
-            repo: `https://github.com/${parsed.owner}/${parsed.repo}`,
-            branch: input.branch,
-          },
+    // `connectSandbox` has an overloaded signature: when the first
+    // argument is a config object (detected by nested `state.type`),
+    // the factory calls `connectVercel(config.state, config.options)`
+    // and IGNORES the second `legacyOptions` argument entirely.
+    // Putting `githubToken` in the second position would silently
+    // drop the clone credential and fail private-repo bootstrap
+    // with a 403. The options have to live inside the config
+    // object as `options`.
+    sandbox = await connectSandbox({
+      state: {
+        type: "vercel",
+        source: {
+          repo: `https://github.com/${parsed.owner}/${parsed.repo}`,
+          branch: input.branch,
         },
       },
-      {
+      options: {
         githubToken: token,
         ports: DEFAULT_SANDBOX_PORTS,
       },
-    );
+    });
   } catch (err) {
     throw new SandboxCoordinatorError(
       "sandbox_create_failed",
