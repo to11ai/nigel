@@ -1,14 +1,33 @@
-export { commentOnIssue, LinearClientError, reassignIssue } from "./client";
+export {
+  commentOnIssue,
+  fetchIssue,
+  LinearClientError,
+  reassignIssue,
+} from "./client";
+export {
+  type CommandHandlerOutcome,
+  handleLinearCommandComment,
+} from "./command-handler";
+export {
+  type LinearCommand,
+  type ParsedCommand,
+  parseLinearCommand,
+} from "./command-parser";
 export {
   deriveExternalId,
   extractAssignmentToBot,
+  extractCommandComment,
   type LinearActor,
+  type LinearComment,
   type LinearIssue,
   type LinearWebhookEnvelope,
   linearWebhookEnvelopeSchema,
   parseLinearIssue,
 } from "./event-schema";
-export { resolveHumanOwnerId } from "./owner-resolver";
+export {
+  lookupNigelUserByLinearId,
+  resolveHumanOwnerId,
+} from "./owner-resolver";
 export { type ResolvedRepo, resolveRepo } from "./repo-resolver";
 export { verifyLinearSignature } from "./signature";
 export {

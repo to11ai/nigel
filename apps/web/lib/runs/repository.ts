@@ -1,8 +1,12 @@
-import { and, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
 import { onRunStatusChange } from "./lifecycle";
-import { assertValidTransition, type RunStatus } from "./state-machine";
+import {
+  assertValidTransition,
+  type RunStatus,
+  terminalStates,
+} from "./state-machine";
 import type { AgentRun, SandboxPolicy, TriggerSource } from "./types";
 
 export type InsertRunInput = {
@@ -52,6 +56,57 @@ export async function getRun(id: string): Promise<AgentRun | null> {
 
 export async function listChildren(parentId: string): Promise<AgentRun[]> {
   return db.select().from(agentRuns).where(eq(agentRuns.parentRunId, parentId));
+}
+
+// Phase 6 L4: find the run associated with a Linear issue.
+//
+// Both queries scope to `triggerSource = 'linear'` so chat/api runs
+// that coincidentally share a triggerRef value can't be picked up by
+// a Linear comment command.
+//
+// `getActiveRunByLinearIssue` returns the most-recent non-terminal
+// run — the one a `/approve`, `/reject`, `/resume`, or `/cancel`
+// command should act on. Returns null when every run on that issue
+// has reached a terminal state (completed | failed | cancelled).
+//
+// `getLatestRunByLinearIssue` returns the most recent run regardless
+// of status — the `/run` command consults this to decide whether to
+// permit starting a fresh run (only when no active run exists).
+export async function getActiveRunByLinearIssue(
+  issueId: string,
+): Promise<AgentRun | null> {
+  const rows = await db
+    .select()
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.triggerSource, "linear"),
+        eq(agentRuns.triggerRef, issueId),
+        // Use the canonical terminal set so a new terminal state
+        // added to state-machine.ts flows here automatically.
+        notInArray(agentRuns.status, [...terminalStates]),
+      ),
+    )
+    .orderBy(desc(agentRuns.createdAt))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getLatestRunByLinearIssue(
+  issueId: string,
+): Promise<AgentRun | null> {
+  const rows = await db
+    .select()
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.triggerSource, "linear"),
+        eq(agentRuns.triggerRef, issueId),
+      ),
+    )
+    .orderBy(desc(agentRuns.createdAt))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 export async function updateRunStatus(

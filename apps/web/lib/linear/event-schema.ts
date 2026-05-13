@@ -164,3 +164,42 @@ export function extractAssignmentToBot(input: {
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object";
 }
+
+// Phase 6 L4: command-comment intake.
+//
+// Linear delivers a `Comment.create` event when anyone comments on
+// an issue. We're interested in two conditions:
+//   1. The comment's actor is NOT the bot (bot's own status comments
+//      from the lifecycle path must not loop back as commands).
+//   2. The body begins with a Nigel slash-command (see
+//      `parseLinearCommand` for the syntax).
+//
+// `Comment.update` is intentionally NOT matched — editing a comment
+// to add a slash-command after the fact would be surprising and
+// allow re-triggering past commands by toggling an edit. Users have
+// to post a fresh comment.
+
+const linearCommentSchema = z
+  .object({
+    id: z.string().min(1),
+    body: z.string(),
+    issueId: z.string().min(1),
+  })
+  .passthrough();
+
+export type LinearComment = z.infer<typeof linearCommentSchema>;
+
+export function extractCommandComment(input: {
+  envelope: LinearWebhookEnvelope;
+  botUserId: string;
+}): { comment: LinearComment; actorId: string } | null {
+  const env = input.envelope;
+  if (env.type !== "Comment") return null;
+  if (env.action !== "create") return null;
+  const actorId = env.actor?.id ?? null;
+  if (!actorId) return null; // un-attributed comments can't pass authority check
+  if (actorId === input.botUserId) return null; // ignore the bot's own comments
+  const parsed = linearCommentSchema.safeParse(env.data);
+  if (!parsed.success) return null;
+  return { comment: parsed.data, actorId };
+}

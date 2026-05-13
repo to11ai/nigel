@@ -1,13 +1,23 @@
 import { Run } from "@/lib/runs/create";
 import { commentOnIssue, reassignIssue } from "./client";
 import {
+  type CommandHandlerDeps,
+  type CommandHandlerOutcome,
+  handleLinearCommandComment,
+} from "./command-handler";
+import {
   deriveExternalId,
   extractAssignmentToBot,
+  extractCommandComment,
   type LinearWebhookEnvelope,
   linearWebhookEnvelopeSchema,
 } from "./event-schema";
 import { resolveHumanOwnerId } from "./owner-resolver";
 import { resolveRepo } from "./repo-resolver";
+import {
+  buildTaskText,
+  defaultStartLinearTriggeredWorkflow,
+} from "./run-trigger";
 import { verifyLinearSignature } from "./signature";
 import {
   claimWebhookEvent,
@@ -56,7 +66,11 @@ export type WebhookHandlerOutcome =
       issueId: string;
       repoRef: string;
       humanOwnerId: string;
-    };
+    }
+  // Phase 6 L4: command-comment outcomes. The wrapped
+  // `CommandHandlerOutcome` carries the detail; the webhook handler
+  // only knows that the comment flow ran (or didn't apply).
+  | { kind: "command"; outcome: CommandHandlerOutcome };
 
 export type WebhookHandlerInput = {
   rawBody: string;
@@ -79,11 +93,14 @@ export type WebhookHandlerInput = {
     // The webhook handler kicks off the planner workflow via this
     // callback. Production wires `start(runLinearTriggeredWorkflow,
     // ...)`; tests pass a spy so the assertion is "we tried to
-    // start it" without touching the Workflow SDK at all.
-    startWorkflow?: (input: {
-      agentRunId: string;
-      taskText: string;
-    }) => Promise<void>;
+    // start it" without touching the Workflow SDK at all. Shared by
+    // the assignment path and the L4 `/run` comment-command path.
+    startWorkflow?: CommandHandlerDeps["startWorkflow"];
+    // L4 `/run` injection seam. The command handler round-trips to
+    // Linear's GraphQL API to pull the issue body; tests stub this
+    // so CI doesn't need network access. Forwarded into the
+    // command-handler's deps below.
+    fetchIssue?: CommandHandlerDeps["fetchIssue"];
   };
 };
 
@@ -133,6 +150,49 @@ export async function handleLinearWebhook(
   });
   if (!claim) {
     return { kind: "duplicate", externalId };
+  }
+
+  // L4: comment-command events branch here. Comment.create from a
+  // non-bot actor with a recognized slash-command body becomes a
+  // command intake. Anything else falls through to the assignment
+  // matcher.
+  const commentMatch = extractCommandComment({
+    envelope,
+    botUserId: workspace.botUserId,
+  });
+  if (commentMatch) {
+    const commandDeps: CommandHandlerDeps = {};
+    if (input.deps?.startWorkflow) {
+      commandDeps.startWorkflow = input.deps.startWorkflow;
+    }
+    if (input.deps?.fetchIssue) {
+      commandDeps.fetchIssue = input.deps.fetchIssue;
+    }
+    const commandOutcome = await handleLinearCommandComment({
+      workspace,
+      commentBody: commentMatch.comment.body,
+      issueId: commentMatch.comment.issueId,
+      actorId: commentMatch.actorId,
+      defaultBudgetUsdMicros: input.defaultBudgetUsdMicros,
+      deps: commandDeps,
+    });
+    // Pick the run id from whichever outcome carries one. The
+    // `run_start_failed.workflow_start_failed` branch has a runId
+    // because Run.create persisted before startWorkflow threw — link
+    // the event to it so the orphan is discoverable from the webhook
+    // events table even if the best-effort updateRunStatus(failed)
+    // also fails.
+    const runId =
+      commandOutcome.kind === "run_started" ||
+      commandOutcome.kind === "transitioned"
+        ? commandOutcome.runId
+        : commandOutcome.kind === "run_start_failed"
+          ? commandOutcome.runId
+          : undefined;
+    await markWebhookEventProcessed(
+      runId === undefined ? { id: claim.id } : { id: claim.id, runId },
+    );
+    return { kind: "command", outcome: commandOutcome };
   }
 
   const match = extractAssignmentToBot({
@@ -252,43 +312,6 @@ export async function handleLinearWebhook(
     repoRef,
     humanOwnerId,
   };
-}
-
-// Produce the prompt for the planner from the Linear issue. The
-// planner expects a self-contained task instruction; we include the
-// issue identifier (e.g. PLAT-123) for traceability and the issue
-// title + description verbatim. The planner's own prompt instructs
-// it to re-state the task in its own words before decomposing.
-function buildTaskText(issue: {
-  identifier: string;
-  title: string;
-  description?: string | null;
-  url?: string;
-}): string {
-  const body =
-    issue.description && issue.description.trim().length > 0
-      ? issue.description.trim()
-      : "(no description on the ticket)";
-  const lines: string[] = [
-    `Linear ticket: ${issue.identifier} — ${issue.title}`,
-    ...(issue.url ? [`Source: ${issue.url}`] : []),
-    "",
-    body,
-  ];
-  return lines.join("\n");
-}
-
-// Production starter — dynamic-import to avoid pulling the
-// Workflow SDK + the workflow module into the test path. The
-// `deps.startWorkflow` injection seam means tests never hit this.
-async function defaultStartLinearTriggeredWorkflow(input: {
-  agentRunId: string;
-  taskText: string;
-}): Promise<void> {
-  const { start } = await import("workflow/api");
-  const { runLinearTriggeredWorkflow } =
-    await import("@/app/workflows/linear-trigger");
-  await start(runLinearTriggeredWorkflow, [input]);
 }
 
 // Comment + reassign for the `unresolved_repo` failure path. The
