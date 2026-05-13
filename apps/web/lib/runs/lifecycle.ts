@@ -47,11 +47,20 @@ export async function onRunStatusChange(args: {
 }
 
 async function handleLinearLifecycle(input: {
-  run: { id: string; humanOwnerId: string | null; triggerRef: string | null };
+  run: {
+    id: string;
+    humanOwnerId: string | null;
+    triggerRef: string | null;
+    blockedReason: string | null;
+  };
   from: RunStatus;
   to: RunStatus;
 }): Promise<void> {
-  const action = describeLinearAction(input.from, input.to);
+  const action = describeLinearAction({
+    from: input.from,
+    to: input.to,
+    blockedReason: input.run.blockedReason,
+  });
   if (!action) return; // no Linear-side action for this transition
 
   const issueId = input.run.triggerRef;
@@ -92,32 +101,34 @@ async function handleLinearLifecycle(input: {
     linearAssigneeId = rows[0]?.linearUserId ?? null;
   }
 
-  try {
-    // Comment first, then reassign. The comment posts a stable
-    // record of what happened even if the reassign call fails
-    // (e.g. Linear API hiccup).
-    await commentOnIssue({
-      accessToken: workspace.secrets.accessToken,
-      issueId,
-      body: action.body,
-    });
-    if (action.reassign) {
-      await reassignIssue({
-        accessToken: workspace.secrets.accessToken,
-        issueId,
-        assigneeId: linearAssigneeId,
-      });
-    }
-  } catch (err) {
-    // Lifecycle errors are best-effort; surface but don't throw
-    // back up — the `repository.ts` dispatcher already swallows
-    // throws but logging here gives the run id + transition for
-    // ops triage.
-    console.error("[lifecycle] linear hook failed", {
+  // Comment and reassign are independent best-effort calls. A failed
+  // comment must NOT skip the reassign — for terminal transitions
+  // (completed/failed/cancelled) that would leave the bot
+  // permanently assigned to the ticket. Catch each separately.
+  await commentOnIssue({
+    accessToken: workspace.secrets.accessToken,
+    issueId,
+    body: action.body,
+  }).catch((err) => {
+    console.error("[lifecycle] linear comment failed", {
       runId: input.run.id,
       from: input.from,
       to: input.to,
       err,
+    });
+  });
+  if (action.reassign) {
+    await reassignIssue({
+      accessToken: workspace.secrets.accessToken,
+      issueId,
+      assigneeId: linearAssigneeId,
+    }).catch((err) => {
+      console.error("[lifecycle] linear reassign failed", {
+        runId: input.run.id,
+        from: input.from,
+        to: input.to,
+        err,
+      });
     });
   }
 }
@@ -126,10 +137,12 @@ async function handleLinearLifecycle(input: {
 // when no comment / reassignment applies (e.g. internal
 // running→running re-entries, transitions that don't have a
 // user-facing meaning on a Linear ticket).
-function describeLinearAction(
-  from: RunStatus,
-  to: RunStatus,
-): { body: string; reassign: boolean } | null {
+function describeLinearAction(input: {
+  from: RunStatus;
+  to: RunStatus;
+  blockedReason: string | null;
+}): { body: string; reassign: boolean } | null {
+  const { from, to } = input;
   if (from === "pending" && to === "running") {
     return {
       body: "Picked up by Nigel. Bot will stay assigned while work is in progress.",
@@ -137,10 +150,15 @@ function describeLinearAction(
     };
   }
   if (to === "blocked") {
-    return {
-      body: "Nigel is blocked. Reassigning to the human owner. Comment to resume once unblocked.",
-      reassign: true,
-    };
+    // Thread blockedReason into the comment so the human owner can
+    // act without bouncing to the Nigel UI. updateRunStatus persists
+    // the reason before this dispatcher fires, so the field on the
+    // refetched run is authoritative.
+    const reason = input.blockedReason?.trim();
+    const body = reason
+      ? `Nigel is blocked: ${reason}\n\nReassigning to the human owner. Comment to resume once unblocked.`
+      : "Nigel is blocked. Reassigning to the human owner. Comment to resume once unblocked.";
+    return { body, reassign: true };
   }
   if (to === "awaiting_approval") {
     return {
