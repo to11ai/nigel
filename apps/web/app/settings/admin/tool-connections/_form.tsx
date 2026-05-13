@@ -146,7 +146,13 @@ export function ToolConnectionForm({ kinds, onSubmitted, editing }: Props) {
   // page when a different row is targeted, so the snapshot stays
   // bound to its row. `buildPayload` is a hoisted function
   // declaration below, safe to reference here.
+  //
+  // Skip in create mode: there, `buildPayload()` hits the empty-name
+  // guard and fires a "Name is required" toast on every fresh open
+  // of the create dialog — visible to the user with no input.
+  // Create mode never reads the snapshot anyway.
   const [initialConfigSnapshot] = useState(() => {
+    if (!isEdit) return null;
     const built = buildPayload();
     return built ? JSON.stringify(built.config) : null;
   });
@@ -300,7 +306,11 @@ export function ToolConnectionForm({ kinds, onSubmitted, editing }: Props) {
             ...(sl.username.trim() ? { username: sl.username.trim() } : {}),
           },
           secrets: { webhookUrl: sl.webhookUrl.trim() },
-          secretsProvided: sl.webhookUrl.length > 0,
+          // Check the trimmed length to match what we send: a
+          // whitespace-only field would otherwise rotate the
+          // existing webhook to an empty string and silently break
+          // the connection at next post.
+          secretsProvided: sl.webhookUrl.trim().length > 0,
         };
       default:
         toast.error(`unknown kind '${kind}'`);
