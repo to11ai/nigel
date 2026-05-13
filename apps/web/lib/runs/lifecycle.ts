@@ -117,11 +117,17 @@ async function handleLinearLifecycle(input: {
       err,
     });
   });
-  if (action.reassign) {
+  if (action.reassignTo !== "none") {
+    // "bot" → the workspace's bot user id; "human" → resolved
+    // humanOwner.linearUserId (may be null = un-assign, same outcome
+    // as today). Resume transitions (blocked|awaiting_approval →
+    // running) target the bot so Linear reflects active work.
+    const assigneeId =
+      action.reassignTo === "bot" ? workspace.botUserId : linearAssigneeId;
     await reassignIssue({
       accessToken: workspace.secrets.accessToken,
       issueId,
-      assigneeId: linearAssigneeId,
+      assigneeId,
     }).catch((err) => {
       console.error("[lifecycle] linear reassign failed", {
         runId: input.run.id,
@@ -133,6 +139,11 @@ async function handleLinearLifecycle(input: {
   }
 }
 
+type LinearAction = {
+  body: string;
+  reassignTo: "human" | "bot" | "none";
+};
+
 // Map a status transition to the Linear-side action. Returns null
 // when no comment / reassignment applies (e.g. internal
 // running→running re-entries, transitions that don't have a
@@ -141,12 +152,27 @@ function describeLinearAction(input: {
   from: RunStatus;
   to: RunStatus;
   blockedReason: string | null;
-}): { body: string; reassign: boolean } | null {
+}): LinearAction | null {
   const { from, to } = input;
   if (from === "pending" && to === "running") {
     return {
       body: "Picked up by Nigel. Bot will stay assigned while work is in progress.",
-      reassign: false,
+      reassignTo: "none",
+    };
+  }
+  if (
+    to === "running" &&
+    (from === "blocked" || from === "awaiting_approval")
+  ) {
+    // Resume from pause. Reassign back to the bot so Linear reflects
+    // active work — without this, the ticket stays with the human
+    // owner while the bot is the one doing the work, contradicting
+    // the pending→running invariant ("bot stays assigned while work
+    // is in progress").
+    const fromLabel = from === "blocked" ? "blocked" : "awaiting approval";
+    return {
+      body: `Nigel resumed work from ${fromLabel}. Reassigning to the bot; ticket will return to you on the next status change.`,
+      reassignTo: "bot",
     };
   }
   if (to === "blocked") {
@@ -158,30 +184,30 @@ function describeLinearAction(input: {
     const body = reason
       ? `Nigel is blocked: ${reason}\n\nReassigning to the human owner. Comment to resume once unblocked.`
       : "Nigel is blocked. Reassigning to the human owner. Comment to resume once unblocked.";
-    return { body, reassign: true };
+    return { body, reassignTo: "human" };
   }
   if (to === "awaiting_approval") {
     return {
       body: "Nigel is awaiting approval. Reassigning to the human owner. Reply `/approve` or `/reject` once reviewed.",
-      reassign: true,
+      reassignTo: "human",
     };
   }
   if (to === "completed") {
     return {
       body: "Nigel finished the task. Reassigning to the human owner for review.",
-      reassign: true,
+      reassignTo: "human",
     };
   }
   if (to === "failed") {
     return {
       body: "Nigel failed the task. Reassigning to the human owner; see the Nigel run for details.",
-      reassign: true,
+      reassignTo: "human",
     };
   }
   if (to === "cancelled") {
     return {
       body: "Nigel run was cancelled. Reassigning to the human owner.",
-      reassign: true,
+      reassignTo: "human",
     };
   }
   return null;
