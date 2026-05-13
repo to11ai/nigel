@@ -1,5 +1,3 @@
-import type { LinearIssue } from "./event-schema";
-
 // Phase 6 L4: shared runtime helpers used by every Linear-triggered
 // run intake — both the assignment-driven webhook path and the
 // `/run` comment-command path.
@@ -32,13 +30,6 @@ export function buildTaskText(issue: {
   ];
   return lines.join("\n");
 }
-
-// Re-exported shape so importing call sites don't have to spell out
-// the LinearIssue subset they're passing into `buildTaskText`.
-export type BuildTaskTextInput = Pick<
-  LinearIssue,
-  "identifier" | "title" | "description" | "url"
->;
 
 // Production starter — dynamic-import to avoid pulling the Workflow
 // SDK + the workflow module into the test path. Both intake routes
