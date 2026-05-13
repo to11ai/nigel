@@ -1,4 +1,5 @@
 import { Run } from "@/lib/runs/create";
+import { commentOnIssue, reassignIssue } from "./client";
 import {
   deriveExternalId,
   extractAssignmentToBot,
@@ -152,6 +153,22 @@ export async function handleLinearWebhook(
   });
   if (!repoRef) {
     await markWebhookEventProcessed({ id: claim.id });
+    // Surface the rejection back to the Linear actor: comment +
+    // reassign so the issue isn't stuck assigned to the bot
+    // indefinitely. Failures here are best-effort — if the Linear
+    // API is unhealthy, the outcome is still logged and the run
+    // simply isn't created.
+    await postRepoUnresolvedComment({
+      workspace,
+      issueId: match.issue.id,
+      teamId: match.issue.teamId,
+      reassignTo: match.actorId,
+    }).catch((err) => {
+      console.error("[linear-webhook] failed to post unresolved_repo comment", {
+        issueId: match.issue.id,
+        err,
+      });
+    });
     return {
       kind: "unresolved_repo",
       issueId: match.issue.id,
@@ -167,6 +184,20 @@ export async function handleLinearWebhook(
   });
   if (!humanOwnerId) {
     await markWebhookEventProcessed({ id: claim.id });
+    await postOwnerUnresolvedComment({
+      workspace,
+      issueId: match.issue.id,
+      actorId: match.actorId,
+      reassignTo: match.actorId,
+    }).catch((err) => {
+      console.error(
+        "[linear-webhook] failed to post unresolved_owner comment",
+        {
+          issueId: match.issue.id,
+          err,
+        },
+      );
+    });
     return {
       kind: "unresolved_owner",
       issueId: match.issue.id,
@@ -258,4 +289,60 @@ async function defaultStartLinearTriggeredWorkflow(input: {
   const { runLinearTriggeredWorkflow } =
     await import("@/app/workflows/linear-trigger");
   await start(runLinearTriggeredWorkflow, [input]);
+}
+
+// Comment + reassign for the `unresolved_repo` failure path. The
+// reassignTo can be `null` (actor unknown) — Linear's API accepts
+// `null` as "un-assign", which is correct: leaving the bot
+// assigned would mean the issue's owner is a non-acting account.
+async function postRepoUnresolvedComment(input: {
+  workspace: ResolvedLinearWorkspace;
+  issueId: string;
+  teamId: string;
+  reassignTo: string | null;
+}): Promise<void> {
+  const body = [
+    "Nigel rejected this assignment: no repo is mapped for this team.",
+    "",
+    "To fix:",
+    `- Add team \`${input.teamId}\` to the team→repo map in /admin/linear, OR`,
+    "- Add a `repo:owner/name` label to this issue.",
+    "",
+    "Reassigning back so the bot doesn't stay on the ticket.",
+  ].join("\n");
+  await commentOnIssue({
+    accessToken: input.workspace.secrets.accessToken,
+    issueId: input.issueId,
+    body,
+  });
+  await reassignIssue({
+    accessToken: input.workspace.secrets.accessToken,
+    issueId: input.issueId,
+    assigneeId: input.reassignTo,
+  });
+}
+
+async function postOwnerUnresolvedComment(input: {
+  workspace: ResolvedLinearWorkspace;
+  issueId: string;
+  actorId: string | null;
+  reassignTo: string | null;
+}): Promise<void> {
+  const body = [
+    "Nigel rejected this assignment: the actor isn't linked to a Nigel user.",
+    "",
+    "To fix: sign in to Nigel and link your Linear account in /settings, then re-assign the issue to the bot.",
+    "",
+    "Reassigning back so the bot doesn't stay on the ticket.",
+  ].join("\n");
+  await commentOnIssue({
+    accessToken: input.workspace.secrets.accessToken,
+    issueId: input.issueId,
+    body,
+  });
+  await reassignIssue({
+    accessToken: input.workspace.secrets.accessToken,
+    issueId: input.issueId,
+    assigneeId: input.reassignTo,
+  });
 }

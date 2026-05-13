@@ -1,3 +1,4 @@
+export { commentOnIssue, LinearClientError, reassignIssue } from "./client";
 export {
   deriveExternalId,
   extractAssignmentToBot,
