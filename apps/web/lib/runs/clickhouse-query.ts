@@ -2,6 +2,7 @@ import type {
   ClickhouseQueryCallback,
   ClickhouseQueryResultRow,
 } from "@nigel/agent";
+import { withToolSpan } from "@/lib/observability/tool-span";
 import {
   type ClickhouseConnectionConfig,
   type ClickhouseConnectionSecrets,
@@ -201,42 +202,57 @@ export function createClickhouseQueryCallback(
   input: CreateClickhouseQueryCallbackInput,
 ): ClickhouseQueryCallback {
   return async (call) => {
-    const resolved = await tryResolveConnection(call.connectionName);
-    if (resolved.kind !== "clickhouse") {
-      throw new ClickhouseQueryError(
-        "wrong_kind",
-        `connection '${call.connectionName}' is kind '${resolved.kind}', not 'clickhouse'`,
-      );
-    }
-    if (!scopeAllows(resolved.scope, input.specialistName)) {
-      throw new ClickhouseQueryError(
-        "scope_denied",
-        `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
-      );
-    }
-    if (resolved.config.readOnly) {
-      const reason = classifyReadOnlyViolation(call.sql);
-      if (reason) {
-        throw new ClickhouseQueryError(
-          "read_only_violation",
-          `connection '${call.connectionName}' is read-only; ${reason}`,
-        );
-      }
-    }
-    return executeQuery({
-      config: resolved.config,
-      secrets: resolved.secrets,
-      sql: call.sql,
-      parameters: call.parameters,
-      rowLimit: clampPositive(
-        call.rowLimit ?? resolved.config.defaultRowLimit,
-        HARD_ROW_LIMIT_CAP,
-      ),
-      statementTimeoutMs: clampPositive(
-        call.statementTimeoutMs ?? resolved.config.defaultStatementTimeoutMs,
-        HARD_STATEMENT_TIMEOUT_MS_CAP,
-      ),
-    });
+    return withToolSpan(
+      "tool.clickhouse_query",
+      {
+        "nigel.tool.name": "clickhouse_query",
+        "nigel.tool.specialist": input.specialistName,
+        "nigel.tool.connection": call.connectionName,
+        "nigel.tool.sql_length": call.sql.length,
+        ...(call.rowLimit !== undefined
+          ? { "nigel.tool.row_limit": call.rowLimit }
+          : {}),
+      },
+      async () => {
+        const resolved = await tryResolveConnection(call.connectionName);
+        if (resolved.kind !== "clickhouse") {
+          throw new ClickhouseQueryError(
+            "wrong_kind",
+            `connection '${call.connectionName}' is kind '${resolved.kind}', not 'clickhouse'`,
+          );
+        }
+        if (!scopeAllows(resolved.scope, input.specialistName)) {
+          throw new ClickhouseQueryError(
+            "scope_denied",
+            `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
+          );
+        }
+        if (resolved.config.readOnly) {
+          const reason = classifyReadOnlyViolation(call.sql);
+          if (reason) {
+            throw new ClickhouseQueryError(
+              "read_only_violation",
+              `connection '${call.connectionName}' is read-only; ${reason}`,
+            );
+          }
+        }
+        return executeQuery({
+          config: resolved.config,
+          secrets: resolved.secrets,
+          sql: call.sql,
+          parameters: call.parameters,
+          rowLimit: clampPositive(
+            call.rowLimit ?? resolved.config.defaultRowLimit,
+            HARD_ROW_LIMIT_CAP,
+          ),
+          statementTimeoutMs: clampPositive(
+            call.statementTimeoutMs ??
+              resolved.config.defaultStatementTimeoutMs,
+            HARD_STATEMENT_TIMEOUT_MS_CAP,
+          ),
+        });
+      },
+    );
   };
 }
 

@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { withToolSpan } from "@/lib/observability/tool-span";
 import {
   type McpConnectionConfig,
   type McpConnectionSecrets,
@@ -52,29 +53,43 @@ export function createMcpCallCallback(
   input: CreateMcpCallCallbackInput,
 ): McpCallCallback {
   return async (call) => {
-    const resolved = await tryResolveConnection(call.connectionName);
-    if (resolved.kind !== "mcp") {
-      throw new McpCallError(
-        "wrong_kind",
-        `connection '${call.connectionName}' is kind '${resolved.kind}', not 'mcp'`,
-      );
-    }
-    if (!scopeAllows(resolved.scope, input.specialistName)) {
-      throw new McpCallError(
-        "scope_denied",
-        `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
-      );
-    }
-    const timeoutMs = clampPositive(
-      call.timeoutMs ?? resolved.config.defaultTimeoutMs,
-      HARD_TIMEOUT_MS_CAP,
+    return withToolSpan(
+      "tool.mcp_call",
+      {
+        "nigel.tool.name": "mcp_call",
+        "nigel.tool.specialist": input.specialistName,
+        "nigel.tool.connection": call.connectionName,
+        "nigel.tool.operation": call.operation.type,
+        ...(call.operation.type === "call_tool"
+          ? { "nigel.tool.mcp_tool_name": call.operation.toolName }
+          : {}),
+      },
+      async () => {
+        const resolved = await tryResolveConnection(call.connectionName);
+        if (resolved.kind !== "mcp") {
+          throw new McpCallError(
+            "wrong_kind",
+            `connection '${call.connectionName}' is kind '${resolved.kind}', not 'mcp'`,
+          );
+        }
+        if (!scopeAllows(resolved.scope, input.specialistName)) {
+          throw new McpCallError(
+            "scope_denied",
+            `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
+          );
+        }
+        const timeoutMs = clampPositive(
+          call.timeoutMs ?? resolved.config.defaultTimeoutMs,
+          HARD_TIMEOUT_MS_CAP,
+        );
+        return runOperation({
+          config: resolved.config,
+          secrets: resolved.secrets,
+          operation: call.operation,
+          timeoutMs,
+        });
+      },
     );
-    return runOperation({
-      config: resolved.config,
-      secrets: resolved.secrets,
-      operation: call.operation,
-      timeoutMs,
-    });
   };
 }
 

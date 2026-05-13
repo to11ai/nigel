@@ -1,4 +1,5 @@
 import type { SlackPostCallback } from "@nigel/agent";
+import { withToolSpan } from "@/lib/observability/tool-span";
 import {
   type ResolvedConnection,
   type SlackConnectionConfig,
@@ -51,28 +52,40 @@ export function createSlackPostCallback(
   input: CreateSlackPostCallbackInput,
 ): SlackPostCallback {
   return async (call) => {
-    const resolved = await tryResolveConnection(call.connectionName);
-    if (resolved.kind !== "slack") {
-      throw new SlackPostError(
-        "wrong_kind",
-        `connection '${call.connectionName}' is kind '${resolved.kind}', not 'slack'`,
-      );
-    }
-    if (!scopeAllows(resolved.scope, input.specialistName)) {
-      throw new SlackPostError(
-        "scope_denied",
-        `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
-      );
-    }
-    return postMessage({
-      config: resolved.config,
-      secrets: resolved.secrets,
-      text: call.text,
-      ...(call.blocks !== undefined ? { blocks: call.blocks } : {}),
-      ...(call.usernameOverride !== undefined
-        ? { usernameOverride: call.usernameOverride }
-        : {}),
-    });
+    return withToolSpan(
+      "tool.slack_post",
+      {
+        "nigel.tool.name": "slack_post",
+        "nigel.tool.specialist": input.specialistName,
+        "nigel.tool.connection": call.connectionName,
+        "nigel.tool.text_length": call.text.length,
+        "nigel.tool.has_blocks": call.blocks !== undefined,
+      },
+      async () => {
+        const resolved = await tryResolveConnection(call.connectionName);
+        if (resolved.kind !== "slack") {
+          throw new SlackPostError(
+            "wrong_kind",
+            `connection '${call.connectionName}' is kind '${resolved.kind}', not 'slack'`,
+          );
+        }
+        if (!scopeAllows(resolved.scope, input.specialistName)) {
+          throw new SlackPostError(
+            "scope_denied",
+            `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
+          );
+        }
+        return postMessage({
+          config: resolved.config,
+          secrets: resolved.secrets,
+          text: call.text,
+          ...(call.blocks !== undefined ? { blocks: call.blocks } : {}),
+          ...(call.usernameOverride !== undefined
+            ? { usernameOverride: call.usernameOverride }
+            : {}),
+        });
+      },
+    );
   };
 }
 

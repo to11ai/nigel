@@ -3,6 +3,7 @@ import type {
   DatabaseQueryResultRow,
 } from "@nigel/agent";
 import postgres from "postgres";
+import { withToolSpan } from "@/lib/observability/tool-span";
 import {
   type PostgresConnectionConfig,
   type PostgresConnectionSecrets,
@@ -219,42 +220,57 @@ export function createDatabaseQueryCallback(
   input: CreateDatabaseQueryCallbackInput,
 ): DatabaseQueryCallback {
   return async (call) => {
-    const resolved = await tryResolveConnection(call.connectionName);
-    if (resolved.kind !== "postgres") {
-      throw new DatabaseQueryError(
-        "wrong_kind",
-        `connection '${call.connectionName}' is kind '${resolved.kind}', not 'postgres'`,
-      );
-    }
-    if (!scopeAllows(resolved.scope, input.specialistName)) {
-      throw new DatabaseQueryError(
-        "scope_denied",
-        `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
-      );
-    }
-    if (resolved.config.readOnly) {
-      const reason = classifyReadOnlyViolation(call.sql);
-      if (reason) {
-        throw new DatabaseQueryError(
-          "read_only_violation",
-          `connection '${call.connectionName}' is read-only; ${reason}`,
-        );
-      }
-    }
-    return executeQuery({
-      config: resolved.config,
-      secrets: resolved.secrets,
-      sql: call.sql,
-      params: call.params,
-      rowLimit: clampPositive(
-        call.rowLimit ?? resolved.config.defaultRowLimit,
-        HARD_ROW_LIMIT_CAP,
-      ),
-      statementTimeoutMs: clampPositive(
-        call.statementTimeoutMs ?? resolved.config.defaultStatementTimeoutMs,
-        HARD_STATEMENT_TIMEOUT_MS_CAP,
-      ),
-    });
+    return withToolSpan(
+      "tool.database_query",
+      {
+        "nigel.tool.name": "database_query",
+        "nigel.tool.specialist": input.specialistName,
+        "nigel.tool.connection": call.connectionName,
+        "nigel.tool.sql_length": call.sql.length,
+        ...(call.rowLimit !== undefined
+          ? { "nigel.tool.row_limit": call.rowLimit }
+          : {}),
+      },
+      async () => {
+        const resolved = await tryResolveConnection(call.connectionName);
+        if (resolved.kind !== "postgres") {
+          throw new DatabaseQueryError(
+            "wrong_kind",
+            `connection '${call.connectionName}' is kind '${resolved.kind}', not 'postgres'`,
+          );
+        }
+        if (!scopeAllows(resolved.scope, input.specialistName)) {
+          throw new DatabaseQueryError(
+            "scope_denied",
+            `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
+          );
+        }
+        if (resolved.config.readOnly) {
+          const reason = classifyReadOnlyViolation(call.sql);
+          if (reason) {
+            throw new DatabaseQueryError(
+              "read_only_violation",
+              `connection '${call.connectionName}' is read-only; ${reason}`,
+            );
+          }
+        }
+        return executeQuery({
+          config: resolved.config,
+          secrets: resolved.secrets,
+          sql: call.sql,
+          params: call.params,
+          rowLimit: clampPositive(
+            call.rowLimit ?? resolved.config.defaultRowLimit,
+            HARD_ROW_LIMIT_CAP,
+          ),
+          statementTimeoutMs: clampPositive(
+            call.statementTimeoutMs ??
+              resolved.config.defaultStatementTimeoutMs,
+            HARD_STATEMENT_TIMEOUT_MS_CAP,
+          ),
+        });
+      },
+    );
   };
 }
 
