@@ -3,6 +3,11 @@ import {
   type Sandbox,
   type SandboxState,
 } from "@nigel/sandbox";
+import { getInstallationByAccountLogin } from "@/lib/db/installations";
+import {
+  getInstallationOctokit,
+  mintInstallationToken,
+} from "@/lib/github/app";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 
 // Subset of `AgentSandboxContext` from `@nigel/agent`'s open-agent module,
@@ -24,38 +29,71 @@ export type ProvisionedSandbox = {
 };
 
 export type ProvisionInput = {
-  // Phase 4 PR #1 only supports the "inherit" sandbox policy — child Runs
-  // attach to a sandbox an ancestor (typically the chat-driven top-level
-  // Run) already owns. Fresh-sandbox provisioning for top-level specialist
-  // Runs is deferred to a later PR. If `inheritFrom` is null, this throws.
+  // Inherit mode: child Runs attach to a sandbox an ancestor (typically
+  // the chat-driven top-level Run) already owns. Pass `inheritFrom`
+  // with a non-null SandboxState.
   inheritFrom: SandboxState | null;
 };
 
-export class SandboxNotProvisionedError extends Error {
-  constructor() {
-    super(
-      "Phase 4 only supports specialist execution under a Run whose ancestor already owns a sandbox; pass `inheritFrom` with a non-null SandboxState",
-    );
-    this.name = "SandboxNotProvisionedError";
+export type ProvisionFreshInput = {
+  // Fresh mode: clone the repo into a brand-new sandbox owned by this
+  // Run. Used by Linear-triggered top-level Runs that have no ancestor.
+  // The sandbox's lifecycle is bound to the Run; `stop()` on the
+  // returned handle tears it down.
+  repoRef: string; // "owner/repo"
+  // Branch to clone. When omitted, the repo's default_branch is
+  // read from GitHub (`repos.get`) and used. This is the right
+  // default for Linear-triggered runs that don't carry branch
+  // info — hardcoding "main" was incorrect for any repo whose
+  // default is `master`, `develop`, or anything else.
+  branch?: string;
+  // The Nigel user whose GitHub installation provides the clone token.
+  // For Linear-triggered runs this is the `humanOwnerId` resolved by
+  // the webhook handler.
+  humanOwnerId: string;
+};
+
+// Single error class for every sandbox-coordinator failure mode so
+// this file stays under the "one class per file" lint rule.
+// Discriminate via `code` when you need to react to a specific
+// cause. Matches the pattern in lib/tool-connections.
+export type SandboxCoordinatorErrorCode =
+  | "not_provisioned"
+  | "invalid_repo_ref"
+  | "no_installation"
+  | "repo_not_accessible"
+  | "token_mint_failed"
+  | "sandbox_create_failed";
+
+export class SandboxCoordinatorError extends Error {
+  readonly code: SandboxCoordinatorErrorCode;
+  constructor(code: SandboxCoordinatorErrorCode, message: string) {
+    super(message);
+    this.name = "SandboxCoordinatorError";
+    this.code = code;
   }
 }
 
+// Inherit-mode provisioning. Used by dispatched child Runs whose
+// parent already owns a sandbox. Throws if `inheritFrom` is null.
 export async function provisionSandboxForRun(
   input: ProvisionInput,
 ): Promise<ProvisionedSandbox> {
   if (!input.inheritFrom) {
-    throw new SandboxNotProvisionedError();
+    throw new SandboxCoordinatorError(
+      "not_provisioned",
+      "sandbox-coordinator: pass `inheritFrom` (inherit mode) or call provisionFreshSandboxForRun (fresh mode)",
+    );
   }
   const sandbox = await connectSandbox(input.inheritFrom, {
     ports: DEFAULT_SANDBOX_PORTS,
   });
-  const ownedByThisRun = false;
   return {
     sandbox,
     workingDirectory: sandbox.workingDirectory,
-    ownedByThisRun,
+    ownedByThisRun: false,
     toAgentContext: () => ({
-      state: input.inheritFrom!,
+      state: input.inheritFrom as SandboxState,
       workingDirectory: sandbox.workingDirectory,
       currentBranch: sandbox.currentBranch,
       environmentDetails: sandbox.environmentDetails,
@@ -66,12 +104,190 @@ export async function provisionSandboxForRun(
   };
 }
 
+// Fresh-mode provisioning. Resolves the GitHub installation, mints a
+// scoped clone token, and creates a new Vercel sandbox cloning the
+// requested repo + branch. The returned handle's `stop()` tears down
+// the sandbox — callers must invoke it (typically in a try/finally).
+//
+// Used by Phase 6 L2b: Linear-triggered runs are top-level (no
+// ancestor sandbox) and need to clone the target repo themselves
+// before the planner can read / edit it.
+export async function provisionFreshSandboxForRun(
+  input: ProvisionFreshInput,
+): Promise<ProvisionedSandbox> {
+  const parsed = parseRepoRef(input.repoRef);
+  if (!parsed) {
+    throw new SandboxCoordinatorError(
+      "invalid_repo_ref",
+      `repoRef '${input.repoRef}' is not in 'owner/repo' format`,
+    );
+  }
+  const installation = await getInstallationByAccountLogin(
+    input.humanOwnerId,
+    parsed.owner,
+  );
+  if (!installation) {
+    throw new SandboxCoordinatorError(
+      "no_installation",
+      `no GitHub App installation found for user '${input.humanOwnerId}' under owner '${parsed.owner}'`,
+    );
+  }
+
+  // Resolve the repo's numeric id + default branch in one call —
+  // installation-token minting is scoped per-repo by id, not name,
+  // and we need the default branch for the clone when the caller
+  // didn't supply one. Must use an INSTALLATION-scoped Octokit
+  // (not just the app JWT): GitHub treats `GET /repos/{owner}/{repo}`
+  // as installation-level for private repos and returns 404 for
+  // JWT-only callers. Private repos are the primary use case for
+  // a coding agent, so the JWT path would fail on nearly every
+  // run.
+  const installationOctokit = getInstallationOctokit(
+    installation.installationId,
+  );
+  let repoId: number;
+  let defaultBranch: string;
+  try {
+    const res = await installationOctokit.repos.get({
+      owner: parsed.owner,
+      repo: parsed.repo,
+    });
+    repoId = res.data.id;
+    defaultBranch = res.data.default_branch;
+  } catch (err) {
+    throw new SandboxCoordinatorError(
+      "repo_not_accessible",
+      `installation ${installation.installationId} cannot access ${input.repoRef}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const branch = input.branch ?? defaultBranch;
+
+  let token: string;
+  try {
+    const minted = await mintInstallationToken({
+      installationId: installation.installationId,
+      repositoryIds: [repoId],
+      permissions: { contents: "write" },
+    });
+    token = minted.token;
+  } catch (err) {
+    throw new SandboxCoordinatorError(
+      "token_mint_failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  let sandbox: Sandbox;
+  try {
+    // `connectSandbox` has an overloaded signature: when the first
+    // argument is a config object (detected by nested `state.type`),
+    // the factory calls `connectVercel(config.state, config.options)`
+    // and IGNORES the second `legacyOptions` argument entirely.
+    // Putting `githubToken` in the second position would silently
+    // drop the clone credential and fail private-repo bootstrap
+    // with a 403. The options have to live inside the config
+    // object as `options`.
+    sandbox = await connectSandbox({
+      state: {
+        type: "vercel",
+        source: {
+          repo: `https://github.com/${parsed.owner}/${parsed.repo}`,
+          branch,
+        },
+      },
+      options: {
+        githubToken: token,
+        ports: DEFAULT_SANDBOX_PORTS,
+      },
+    });
+  } catch (err) {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  return {
+    sandbox,
+    workingDirectory: sandbox.workingDirectory,
+    ownedByThisRun: true,
+    toAgentContext: () => ({
+      // Capture the sandbox's reconnection identity in the state so
+      // dispatched child specialists with sandboxPolicy: "inherit"
+      // can `connectSandbox` back to the SAME sandbox instead of
+      // spinning up an empty one. Without `sandboxName` here,
+      // `connectVercel` falls through to creating a new empty
+      // sandbox (no source, no clone) and every child runs against
+      // a blank workspace — silently breaking every planner → coder
+      // dispatch chain.
+      //
+      // `getState()` is optional on the base Sandbox interface but
+      // always present on the Vercel concrete class, which is what
+      // `connectVercel` returns for fresh sandboxes. If it's ever
+      // missing (SDK refactor, mock subclass), throw loud rather
+      // than fall back to an identity-less state — the fallback IS
+      // the catastrophic state we're trying to prevent.
+      state: readSandboxState(sandbox),
+      workingDirectory: sandbox.workingDirectory,
+      currentBranch: sandbox.currentBranch,
+      environmentDetails: sandbox.environmentDetails,
+    }),
+    stop: async () => {
+      // Owned by this Run — tear it down. `stop()` is part of the
+      // base Sandbox interface (non-optional) and idempotent if
+      // the sandbox is already gone, so a double call from the
+      // workflow's finally + the caller's catch is safe. No
+      // defensive `typeof` check: a missing method should fail
+      // loudly at build time via typecheck, not silently at
+      // runtime leaving sandboxes running.
+      await sandbox.stop();
+    },
+  };
+}
+
 export async function teardownSandboxForRun(
   handle: ProvisionedSandbox,
 ): Promise<void> {
   if (handle.ownedByThisRun) {
-    // Call through the handle so any per-instance cleanup added later
-    // (Phase 4b: cost-finalization, log flush, etc.) is honored.
     await handle.stop();
   }
+}
+
+// Pull the reconnection-capable state from a freshly-created
+// sandbox. `getState()` is declared optional on the base interface
+// but Vercel's concrete class always implements it. We refuse the
+// caller's request rather than return identity-less state — see
+// the comment on `toAgentContext` above.
+function readSandboxState(sandbox: Sandbox): SandboxState {
+  if (typeof sandbox.getState !== "function") {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox handle is missing `getState()` — cannot capture reconnection identity for child specialists",
+    );
+  }
+  const state = sandbox.getState() as SandboxState | null | undefined;
+  if (!state) {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox `getState()` returned no state",
+    );
+  }
+  // The Vercel implementation populates `sandboxName`; reject any
+  // shape that doesn't include it because a child specialist
+  // reconnecting via this state would land on an empty sandbox.
+  const sandboxName = (state as { sandboxName?: unknown }).sandboxName;
+  if (typeof sandboxName !== "string" || sandboxName.length === 0) {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox state has no `sandboxName` — children would reconnect to a fresh empty sandbox",
+    );
+  }
+  return state;
+}
+
+function parseRepoRef(ref: string): { owner: string; repo: string } | null {
+  const trimmed = ref.trim();
+  const match = /^([a-z0-9._-]+)\/([a-z0-9._-]+)$/i.exec(trimmed);
+  if (!match?.[1] || !match[2]) return null;
+  return { owner: match[1], repo: match[2] };
 }

@@ -75,6 +75,14 @@ export type WebhookHandlerInput = {
   // without touching the DB-encryption path.
   deps?: {
     resolveWorkspace?: () => Promise<ResolvedLinearWorkspace | null>;
+    // The webhook handler kicks off the planner workflow via this
+    // callback. Production wires `start(runLinearTriggeredWorkflow,
+    // ...)`; tests pass a spy so the assertion is "we tried to
+    // start it" without touching the Workflow SDK at all.
+    startWorkflow?: (input: {
+      agentRunId: string;
+      taskText: string;
+    }) => Promise<void>;
   };
 };
 
@@ -172,12 +180,39 @@ export async function handleLinearWebhook(
     triggerRef: match.issue.id,
     specialistId: "planner",
     humanOwnerId,
-    sandboxPolicy: "inherit",
+    // Top-level Linear runs need a fresh sandbox of their own —
+    // L2b's `provisionFreshSandboxForRun` does the actual clone.
+    // `inherit` was a placeholder before L2b shipped; now the
+    // workflow uses fresh.
+    sandboxPolicy: "fresh",
     repoRef,
     budgetUsdCapMicros: input.defaultBudgetUsdMicros,
   });
 
   await markWebhookEventProcessed({ id: claim.id, runId: run.id });
+
+  // Kick off the planner workflow asynchronously. The Workflow SDK's
+  // `start()` returns once the workflow is enqueued — it does NOT
+  // block on completion. The webhook response will land on Linear's
+  // doorstep within milliseconds; the actual planner run takes
+  // minutes and runs out-of-band.
+  const startWorkflow =
+    input.deps?.startWorkflow ?? defaultStartLinearTriggeredWorkflow;
+  try {
+    await startWorkflow({
+      agentRunId: run.id,
+      taskText: buildTaskText(match.issue),
+    });
+  } catch (err) {
+    // The Run row exists and is in `pending`. If workflow-start
+    // failed, log loudly so ops can manually retry from the admin
+    // UI later. We don't fail the outcome — the row is the audit
+    // record, the workflow can be retried.
+    console.error("[linear-webhook] workflow start failed", {
+      runId: run.id,
+      err,
+    });
+  }
 
   return {
     kind: "run_created",
@@ -186,4 +221,41 @@ export async function handleLinearWebhook(
     repoRef,
     humanOwnerId,
   };
+}
+
+// Produce the prompt for the planner from the Linear issue. The
+// planner expects a self-contained task instruction; we include the
+// issue identifier (e.g. PLAT-123) for traceability and the issue
+// title + description verbatim. The planner's own prompt instructs
+// it to re-state the task in its own words before decomposing.
+function buildTaskText(issue: {
+  identifier: string;
+  title: string;
+  description?: string | null;
+  url?: string;
+}): string {
+  const body =
+    issue.description && issue.description.trim().length > 0
+      ? issue.description.trim()
+      : "(no description on the ticket)";
+  const lines: string[] = [
+    `Linear ticket: ${issue.identifier} — ${issue.title}`,
+    ...(issue.url ? [`Source: ${issue.url}`] : []),
+    "",
+    body,
+  ];
+  return lines.join("\n");
+}
+
+// Production starter — dynamic-import to avoid pulling the
+// Workflow SDK + the workflow module into the test path. The
+// `deps.startWorkflow` injection seam means tests never hit this.
+async function defaultStartLinearTriggeredWorkflow(input: {
+  agentRunId: string;
+  taskText: string;
+}): Promise<void> {
+  const { start } = await import("workflow/api");
+  const { runLinearTriggeredWorkflow } =
+    await import("@/app/workflows/linear-trigger");
+  await start(runLinearTriggeredWorkflow, [input]);
 }

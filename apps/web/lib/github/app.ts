@@ -188,3 +188,22 @@ export function getAppOctokit(): Octokit {
     },
   });
 }
+
+// Installation-scoped Octokit. Unlike `getAppOctokit()` (which
+// authenticates as the app via JWT only and cannot read private
+// repos), this returns an Octokit whose auth strategy automatically
+// mints installation-level tokens scoped to the named installation.
+// Use it for read operations like `repos.get` that need to see
+// private repos but don't need a per-repo scoped token.
+export function getInstallationOctokit(installationId: number): Octokit {
+  const { appId, privateKey } = getGitHubAppConfig();
+
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId,
+      privateKey,
+      installationId,
+    },
+  });
+}

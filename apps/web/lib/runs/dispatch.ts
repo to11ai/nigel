@@ -39,7 +39,7 @@ export type DispatchSpecialistInput = {
   // needed to reconnect — so the dispatch caller (chat path / Linear
   // webhook / etc.) supplies the parent session's SandboxState. If
   // omitted for an LLM specialist, `provisionSandboxForRun` throws
-  // `SandboxNotProvisionedError`. Scripted specialists ignore this field.
+  // `SandboxCoordinatorError`. Scripted specialists ignore this field.
   inheritSandboxState?: SandboxState;
   // Test-only injection seam (same pattern as ExecuteSpecialistInput.deps).
   deps?: {

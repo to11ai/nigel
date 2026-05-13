@@ -47,7 +47,7 @@ export {
   type ProvisionedSandbox,
   type ProvisionInput,
   provisionSandboxForRun,
-  SandboxNotProvisionedError,
+  SandboxCoordinatorError,
   teardownSandboxForRun,
 } from "./sandbox-coordinator";
 
