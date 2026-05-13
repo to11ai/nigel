@@ -15,7 +15,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { adminCreateToolConnection } from "@/lib/admin/tool-connections-actions";
+import {
+  adminCreateToolConnection,
+  adminUpdateToolConnection,
+  type ToolConnectionEditItem,
+} from "@/lib/admin/tool-connections-actions";
 // Same reason as page.tsx: import the type directly from `types.ts`
 // rather than the barrel that drags in `postgres`.
 import type { ToolConnectionKind } from "@/lib/tool-connections/types";
@@ -25,65 +29,101 @@ import type { ToolConnectionKind } from "@/lib/tool-connections/types";
 // trace through three component layers. Each kind's section
 // reads/writes a small typed state slice that maps directly onto the
 // validated `config` and `secrets` payloads the server action wants.
+//
+// Edit mode (when `editing` is supplied): kind + name are locked
+// (changing kind would invalidate the config + secrets shape; name
+// is the identity used by every resolver call site). Secret fields
+// stay blank — existing ciphertext can't be decrypted client-side
+// to prefill, and the contract is "leave blank to keep, fill to
+// replace".
 
 type ScopeKind = "global" | "specialist";
 
 type Props = {
   kinds: readonly ToolConnectionKind[];
-  onCreated: () => void | Promise<void>;
+  onSubmitted: () => void | Promise<void>;
+  editing?: ToolConnectionEditItem | null;
 };
 
-export function ToolConnectionForm({ kinds, onCreated }: Props) {
-  const [kind, setKind] = useState<ToolConnectionKind>("postgres");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [scopeKind, setScopeKind] = useState<ScopeKind>("global");
-  const [specialistName, setSpecialistName] = useState("");
+export function ToolConnectionForm({ kinds, onSubmitted, editing }: Props) {
+  const isEdit = editing != null;
+  const initialScope = parseScopeString(editing?.scope ?? "global");
+  const [kind, setKind] = useState<ToolConnectionKind>(
+    editing?.kind ?? "postgres",
+  );
+  const [name, setName] = useState(editing?.name ?? "");
+  const [description, setDescription] = useState(editing?.description ?? "");
+  const [scopeKind, setScopeKind] = useState<ScopeKind>(initialScope.kind);
+  const [specialistName, setSpecialistName] = useState(
+    initialScope.kind === "specialist" ? initialScope.specialistName : "",
+  );
   const [submitting, setSubmitting] = useState(false);
 
   // Per-kind form state. Kept flat so the form re-renders cheaply
-  // and a kind switch doesn't blow away every typed field.
-  const [pg, setPg] = useState<PostgresFields>({
-    host: "",
-    port: "5432",
-    database: "",
-    user: "",
-    sslMode: "require",
-    readOnly: true,
-    password: "",
-  });
-  const [ch, setCh] = useState<ClickhouseFields>({
-    host: "",
-    protocol: "https",
-    port: "8443",
-    database: "",
-    user: "",
-    readOnly: true,
-    password: "",
-  });
-  const [rd, setRd] = useState<RedisFields>({
-    host: "",
-    port: "6379",
-    db: "0",
-    username: "",
-    tls: true,
-    readOnly: true,
-    password: "",
-  });
-  const [mcpHttp, setMcpHttp] = useState<McpHttpFields>({
-    url: "",
-    bearerToken: "",
-  });
-  const [mcpStdio, setMcpStdio] = useState<McpStdioFields>({
-    command: "",
-    args: "",
-  });
-  const [mcpTransport, setMcpTransport] = useState<"http" | "stdio">("http");
-  const [sl, setSl] = useState<SlackFields>({
-    channel: "",
-    username: "",
-    webhookUrl: "",
-  });
+  // and a kind switch doesn't blow away every typed field. In edit
+  // mode each kind initializes from the row's existing `configJson`
+  // (when it matches the row's kind) and leaves secret fields blank.
+  const initialConfig = isEdit ? editing.configJson : undefined;
+  const initialKind = editing?.kind;
+  const [pg, setPg] = useState<PostgresFields>(
+    initialKind === "postgres"
+      ? readPostgresConfig(initialConfig)
+      : {
+          host: "",
+          port: "5432",
+          database: "",
+          user: "",
+          sslMode: "require",
+          readOnly: true,
+          password: "",
+        },
+  );
+  const [ch, setCh] = useState<ClickhouseFields>(
+    initialKind === "clickhouse"
+      ? readClickhouseConfig(initialConfig)
+      : {
+          host: "",
+          protocol: "https",
+          port: "8443",
+          database: "",
+          user: "",
+          readOnly: true,
+          password: "",
+        },
+  );
+  const [rd, setRd] = useState<RedisFields>(
+    initialKind === "redis"
+      ? readRedisConfig(initialConfig)
+      : {
+          host: "",
+          port: "6379",
+          db: "0",
+          username: "",
+          tls: true,
+          readOnly: true,
+          password: "",
+        },
+  );
+  const initialMcp =
+    initialKind === "mcp" ? readMcpConfig(initialConfig) : null;
+  const [mcpHttp, setMcpHttp] = useState<McpHttpFields>(
+    initialMcp?.transport === "http"
+      ? { url: initialMcp.url, bearerToken: "" }
+      : { url: "", bearerToken: "" },
+  );
+  const [mcpStdio, setMcpStdio] = useState<McpStdioFields>(
+    initialMcp?.transport === "stdio"
+      ? { command: initialMcp.command, args: initialMcp.args.join("\n") }
+      : { command: "", args: "" },
+  );
+  const [mcpTransport, setMcpTransport] = useState<"http" | "stdio">(
+    initialMcp?.transport ?? "http",
+  );
+  const [sl, setSl] = useState<SlackFields>(
+    initialKind === "slack"
+      ? readSlackConfig(initialConfig)
+      : { channel: "", username: "", webhookUrl: "" },
+  );
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -94,23 +134,43 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
         // buildPayload toasted the validation issue itself.
         return;
       }
+      const scope =
+        scopeKind === "global"
+          ? ({ kind: "global" } as const)
+          : {
+              kind: "specialist" as const,
+              specialistName: specialistName.trim(),
+            };
+      if (isEdit && editing) {
+        // Edit semantics: send `secrets` only when the user filled
+        // any secret field. An empty secrets payload would otherwise
+        // re-encrypt-and-write an empty object and break resolution.
+        const res = await adminUpdateToolConnection({
+          id: editing.id,
+          description: description.trim() || null,
+          config: built.config,
+          ...(built.secretsProvided ? { secrets: built.secrets } : {}),
+          scope,
+        });
+        if (res.success) {
+          toast.success(`Updated connection '${editing.name}'`);
+          await onSubmitted();
+        } else {
+          toast.error(res.error);
+        }
+        return;
+      }
       const res = await adminCreateToolConnection({
         name: name.trim(),
         kind,
         description: description.trim() || null,
         config: built.config,
         secrets: built.secrets,
-        scope:
-          scopeKind === "global"
-            ? { kind: "global" }
-            : {
-                kind: "specialist",
-                specialistName: specialistName.trim(),
-              },
+        scope,
       });
       if (res.success) {
         toast.success(`Created connection '${name.trim()}'`);
-        await onCreated();
+        await onSubmitted();
       } else {
         toast.error(res.error);
       }
@@ -119,8 +179,17 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
     }
   }
 
-  function buildPayload(): { config: unknown; secrets: unknown } | null {
-    if (!name.trim()) {
+  // `secretsProvided` lets the edit path tell "user filled a secret"
+  // apart from "form has the same blank state as create on a kind
+  // with all-optional secrets" (mcp stdio, redis, slack-with-only-
+  // url-blank). In edit mode the empty-secret-payload should NOT
+  // overwrite the existing ciphertext.
+  function buildPayload(): {
+    config: unknown;
+    secrets: unknown;
+    secretsProvided: boolean;
+  } | null {
+    if (!isEdit && !name.trim()) {
       toast.error("Name is required");
       return null;
     }
@@ -140,6 +209,7 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
             readOnly: pg.readOnly,
           },
           secrets: { password: pg.password },
+          secretsProvided: pg.password.length > 0,
         };
       case "clickhouse":
         return {
@@ -152,6 +222,7 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
             readOnly: ch.readOnly,
           },
           secrets: { password: ch.password },
+          secretsProvided: ch.password.length > 0,
         };
       case "redis":
         return {
@@ -164,6 +235,7 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
             readOnly: rd.readOnly,
           },
           secrets: rd.password ? { password: rd.password } : {},
+          secretsProvided: rd.password.length > 0,
         };
       case "mcp":
         if (mcpTransport === "http") {
@@ -172,6 +244,7 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
             secrets: mcpHttp.bearerToken
               ? { bearerToken: mcpHttp.bearerToken }
               : {},
+            secretsProvided: mcpHttp.bearerToken.length > 0,
           };
         }
         return {
@@ -184,6 +257,8 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
               .filter(Boolean),
           },
           secrets: {},
+          // mcp stdio carries no secrets by default.
+          secretsProvided: false,
         };
       case "slack":
         return {
@@ -192,6 +267,7 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
             ...(sl.username.trim() ? { username: sl.username.trim() } : {}),
           },
           secrets: { webhookUrl: sl.webhookUrl.trim() },
+          secretsProvided: sl.webhookUrl.length > 0,
         };
       default:
         toast.error(`unknown kind '${kind}'`);
@@ -207,6 +283,7 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
           <Select
             value={kind}
             onValueChange={(v) => setKind(v as ToolConnectionKind)}
+            disabled={isEdit}
           >
             <SelectTrigger id="kind">
               <SelectValue />
@@ -219,6 +296,11 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
               ))}
             </SelectContent>
           </Select>
+          {isEdit ? (
+            <p className="text-xs text-muted-foreground">
+              Kind is immutable; to change it, delete and recreate.
+            </p>
+          ) : null}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="name">Name</Label>
@@ -227,8 +309,15 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="prod-pg-readonly"
-            autoFocus
+            autoFocus={!isEdit}
+            disabled={isEdit}
           />
+          {isEdit ? (
+            <p className="text-xs text-muted-foreground">
+              Name is the identity referenced by every resolver call; not
+              editable.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -294,10 +383,23 @@ export function ToolConnectionForm({ kinds, onCreated }: Props) {
         {kind === "slack" ? <SlackSection state={sl} setState={setSl} /> : null}
       </div>
 
+      {isEdit ? (
+        <p className="text-xs text-muted-foreground">
+          Leave any secret field blank to keep the existing encrypted value.
+          Filling a secret field rotates that secret to the new value.
+        </p>
+      ) : null}
+
       <div className="flex justify-end gap-2">
         <Button type="submit" disabled={submitting}>
           {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
-          {submitting ? "Creating…" : "Create"}
+          {submitting
+            ? isEdit
+              ? "Saving…"
+              : "Creating…"
+            : isEdit
+              ? "Save changes"
+              : "Create"}
         </Button>
       </div>
     </form>
@@ -308,6 +410,121 @@ function numberOrUndefined(v: string): number | undefined {
   if (!v.trim()) return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
+}
+
+// Scope round-trip. Server format is `global` or `specialist:<name>`;
+// the form keeps the two halves split for UX.
+function parseScopeString(
+  raw: string,
+): { kind: "global" } | { kind: "specialist"; specialistName: string } {
+  if (raw === "global") return { kind: "global" };
+  if (raw.startsWith("specialist:")) {
+    return {
+      kind: "specialist",
+      specialistName: raw.slice("specialist:".length),
+    };
+  }
+  return { kind: "global" };
+}
+
+// Per-kind config readers. Each one defensively coerces an
+// unknown-typed `configJson` from the server into the form's field
+// shape. Missing fields fall back to sensible defaults; an entirely
+// wrong-shape payload still produces a working (empty) form so the
+// admin can fix the row.
+function asObject(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+function asString(v: unknown, fallback = ""): string {
+  return typeof v === "string" ? v : fallback;
+}
+function asNumString(v: unknown, fallback: string): string {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "string" && v.trim()) return v;
+  return fallback;
+}
+function asBool(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
+}
+
+function readPostgresConfig(raw: unknown): PostgresFields {
+  const o = asObject(raw);
+  const sslRaw = asString(o.sslMode, "require");
+  const sslMode: PostgresFields["sslMode"] =
+    sslRaw === "disable" ||
+    sslRaw === "require" ||
+    sslRaw === "verify-ca" ||
+    sslRaw === "verify-full"
+      ? sslRaw
+      : "require";
+  return {
+    host: asString(o.host),
+    port: asNumString(o.port, "5432"),
+    database: asString(o.database),
+    user: asString(o.user),
+    sslMode,
+    readOnly: asBool(o.readOnly, true),
+    password: "",
+  };
+}
+
+function readClickhouseConfig(raw: unknown): ClickhouseFields {
+  const o = asObject(raw);
+  const protoRaw = asString(o.protocol, "https");
+  const protocol: ClickhouseFields["protocol"] =
+    protoRaw === "http" || protoRaw === "https" ? protoRaw : "https";
+  return {
+    host: asString(o.host),
+    protocol,
+    port: asNumString(o.port, protocol === "https" ? "8443" : "8123"),
+    database: asString(o.database),
+    user: asString(o.user),
+    readOnly: asBool(o.readOnly, true),
+    password: "",
+  };
+}
+
+function readRedisConfig(raw: unknown): RedisFields {
+  const o = asObject(raw);
+  return {
+    host: asString(o.host),
+    port: asNumString(o.port, "6379"),
+    db: asNumString(o.db, "0"),
+    username: asString(o.username),
+    tls: asBool(o.tls, true),
+    readOnly: asBool(o.readOnly, true),
+    password: "",
+  };
+}
+
+function readMcpConfig(
+  raw: unknown,
+):
+  | { transport: "http"; url: string }
+  | { transport: "stdio"; command: string; args: string[] }
+  | null {
+  const o = asObject(raw);
+  if (o.transport === "http") {
+    return { transport: "http", url: asString(o.url) };
+  }
+  if (o.transport === "stdio") {
+    const argsRaw = Array.isArray(o.args) ? o.args : [];
+    return {
+      transport: "stdio",
+      command: asString(o.command),
+      args: argsRaw.filter((x): x is string => typeof x === "string"),
+    };
+  }
+  return null;
+}
+
+function readSlackConfig(raw: unknown): SlackFields {
+  const o = asObject(raw);
+  return {
+    channel: asString(o.channel),
+    username: asString(o.username),
+    webhookUrl: "",
+  };
 }
 
 type PostgresFields = {
