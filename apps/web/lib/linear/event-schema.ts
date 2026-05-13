@@ -132,11 +132,17 @@ export function extractAssignmentToBot(input: {
   const env = input.envelope;
   if (env.type !== "Issue") return null;
   if (env.action !== "assignee_changed") return null;
+  // Use an explicit-`undefined` check rather than `??`: when the
+  // envelope's top-level `assigneeId` is explicitly `null`, that
+  // means "the new assignee is nobody (un-assignment)" and we must
+  // NOT fall through to `data.assigneeId` — which could otherwise
+  // surface a stale value and produce a false match.
   const newAssigneeId =
-    env.assigneeId ??
-    (isObject(env.data)
-      ? (env.data.assigneeId as string | null | undefined)
-      : undefined);
+    env.assigneeId !== undefined
+      ? env.assigneeId
+      : isObject(env.data)
+        ? (env.data.assigneeId as string | null | undefined)
+        : undefined;
   if (newAssigneeId !== input.botUserId) return null;
   const issue = parseLinearIssue(env.data);
   if (!issue) return null;

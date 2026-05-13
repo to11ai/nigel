@@ -4,14 +4,13 @@ import { handleLinearWebhook } from "@/lib/linear/webhook-handler";
 // Phase 6 L2: inbound Linear webhook receiver.
 //
 // Always returns 200 — even on signature failure, invalid payload,
-// or unresolved repo/owner. Linear retries failed deliveries; we
-// don't want it pounding the endpoint on our config bugs. The
-// handler's `outcome` discriminant is what surfaces the reason
-// (logged here, eventually surfaced to admins via /admin/linear in
-// L5).
-//
-// Status 200 + outcome envelope is the contract we test against;
-// the body shape is informational for ops, not consumed by Linear.
+// unresolved repo/owner, OR unhandled internal exception. Linear
+// retries non-2xx deliveries; a retry against a partially-completed
+// state (claim row inserted, Run.create threw) would hit the
+// idempotency `duplicate` path and permanently lose the event.
+// Returning 200 unconditionally + logging the failure + surfacing
+// the unprocessed claim row in the operator UI (L5) is the right
+// trade-off.
 //
 // Force Node runtime: the handler reaches into the encryption
 // module which relies on `node:crypto`. Edge runtime would also
@@ -36,16 +35,33 @@ export async function POST(req: NextRequest): Promise<Response> {
       ? parsedBudget
       : DEFAULT_BUDGET_MICROS;
 
-  const outcome = await handleLinearWebhook({
-    rawBody,
-    signatureHeader: signature,
-    defaultBudgetUsdMicros,
-  });
-
-  // Log every outcome at INFO so ops can grep. Sensitive content
-  // (raw body, signature) is intentionally NOT logged — the outcome
-  // discriminant is enough to triage.
-  console.log("[linear-webhook]", outcome);
-
-  return Response.json({ ok: true, outcome }, { status: 200 });
+  try {
+    const outcome = await handleLinearWebhook({
+      rawBody,
+      signatureHeader: signature,
+      defaultBudgetUsdMicros,
+    });
+    // Log every outcome at INFO so ops can grep. Sensitive content
+    // (raw body, signature) is intentionally NOT logged — the
+    // outcome discriminant is enough to triage.
+    console.log("[linear-webhook]", outcome);
+    return Response.json({ ok: true, outcome }, { status: 200 });
+  } catch (err) {
+    // The handler's typed outcomes cover every expected branch.
+    // This catch is for genuinely unexpected exceptions: DB
+    // connection drop, encryption-module bug, etc. Log loudly so
+    // ops sees it; return 200 so Linear doesn't retry into a
+    // potentially-half-committed state.
+    console.error("[linear-webhook] unhandled exception:", err);
+    return Response.json(
+      {
+        ok: true,
+        outcome: {
+          kind: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      },
+      { status: 200 },
+    );
+  }
 }

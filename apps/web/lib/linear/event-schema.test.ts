@@ -149,6 +149,28 @@ describe("extractAssignmentToBot", () => {
     expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
   });
 
+  test("explicit null at top level does NOT fall through to data.assigneeId", () => {
+    // Critical: when Linear sends `assigneeId: null` at the
+    // envelope level (un-assignment), we must NOT fall back to
+    // reading data.assigneeId — which could surface a stale bot ID
+    // and falsely match.
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_unassign",
+      type: "Issue",
+      action: "assignee_changed",
+      actor: { id: "user-mattc" },
+      assigneeId: null, // explicit un-assignment at envelope level
+      data: {
+        id: "iss_stale_bot",
+        identifier: "PLAT-4",
+        title: "Was bot-assigned, just un-assigned",
+        teamId: "team-platform",
+        assigneeId: BOT, // stale field in the embedded issue
+      },
+    });
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+
   test("returns null for non-Issue event types", () => {
     const envelope = linearWebhookEnvelopeSchema.parse({
       id: "evt_1",
