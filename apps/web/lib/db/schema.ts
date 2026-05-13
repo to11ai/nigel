@@ -504,6 +504,9 @@ export const webhookEvents = pgTable(
   ],
 );
 
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type NewWebhookEvent = typeof webhookEvents.$inferInsert;
+
 // specialists — admin-managed registry. Two kinds:
 //   - "custom": admin-created role with no code counterpart. All fields
 //     populated.
@@ -707,3 +710,52 @@ export const toolConnections = pgTable(
 
 export type ToolConnection = typeof toolConnections.$inferSelect;
 export type NewToolConnection = typeof toolConnections.$inferInsert;
+
+// linear_workspace — the Nigel deployment's Linear integration row.
+// Phase 6 spec: "Linear integration is org-level; one Linear workspace
+// per Nigel deployment." There is at most one row here; enforced via a
+// unique constraint on `workspace_id` plus the convention that admin
+// UI updates the existing row rather than inserting new ones.
+//
+// Encryption: secrets (OAuth access token, webhook signing secret) are
+// AES-256-GCM encrypted at rest using the same `TOOL_CONNECTIONS_ENC_KEY`
+// the tool_connections rows use. Reusing the key keeps the operator
+// surface flat — one key to rotate, one Pulumi secret to provision.
+// `secrets_ciphertext` holds the JSON payload `{ webhookSecret,
+// accessToken, ...rotation_metadata }` rather than separate columns
+// per field, mirroring the tool_connections shape so the
+// encryption/decryption code path is shared.
+//
+// `team_repo_map` is the Linear team → GitHub repo binding used during
+// webhook handling (see spec section 3, repo-resolution chain). Plain
+// JSONB because it's not sensitive — anyone with DB access can already
+// read which repos this deployment talks to.
+export const linearWorkspace = pgTable(
+  "linear_workspace",
+  {
+    id: text("id").primaryKey(),
+    // Linear's own opaque workspace ID. Unique because we only support
+    // one workspace per deployment; a second row with the same
+    // workspace_id is a config bug, not a use case.
+    workspaceId: text("workspace_id").notNull(),
+    // The Linear user ID whose assignment triggers a Nigel Run. Set
+    // once during OAuth + bot-user pairing in /admin/linear.
+    botUserId: text("bot_user_id").notNull(),
+    secretsCiphertext: text("secrets_ciphertext").notNull(),
+    secretsNonce: text("secrets_nonce").notNull(),
+    secretsAuthTag: text("secrets_auth_tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    // {linear_team_id: "owner/repo"}. Empty {} is valid — repo
+    // resolution falls back to the issue's native GitHub link or a
+    // `repo:owner/name` label when the team isn't mapped.
+    teamRepoMap: jsonb("team_repo_map").notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("linear_workspace_workspace_id_idx").on(table.workspaceId),
+  ],
+);
+
+export type LinearWorkspace = typeof linearWorkspace.$inferSelect;
+export type NewLinearWorkspace = typeof linearWorkspace.$inferInsert;
