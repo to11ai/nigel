@@ -370,8 +370,8 @@ const adversarialReviewerPreset: CodePreset = {
   needsLocalStack: false,
 };
 
-// LLM-driven researcher (Phase 4h). Web-research specialist. Distinct
-// from the code-touching specialists:
+// LLM-driven researcher (Phase 4h, extended in Phase G). Web-research
+// specialist. Distinct from the code-touching specialists:
 //   - sonnet-4.6 — synthesizing research benefits from the larger model
 //     but rarely needs opus.
 //   - `inherit` sandbox so the researcher can read repo files for
@@ -381,23 +381,25 @@ const adversarialReviewerPreset: CodePreset = {
 //     IPv4/IPv6 ranges (see isPrivateHost there). A prompt-injection
 //     vector in fetched content can't pivot to internal services.
 //   - $4/run budget — web research drives many small model calls
-//     summarizing fetched pages.
+//     summarizing fetched pages. Sub-research dispatches consume from
+//     the root budget too, so this cap still bounds the whole tree.
 //
-// The spec lists this with may_recurse=true and a `dispatch_specialist`
-// tool that lets a researcher fan out sub-research. That tool isn't
-// wired yet — the open-agent's `task` tool is a different mechanism
-// and there's no Nigel-aware dispatch_specialist tool exposed to the
-// agent. Until that's built (planner needs it too), researcher ships
-// non-recursive. The web + file_read + search surface still produces
-// a useful research-report specialist; recursive multi-thread research
-// can come back later.
+// Phase G: now that `dispatch_specialist` ships, researcher gets the
+// recursive fan-out the spec originally called for. The system prompt
+// makes a clear separation — researcher dispatches *other researchers*
+// for sub-questions, not code specialists. Wide breadth is what
+// recursion buys; depth-first investigation by a single agent already
+// works fine. `maxChildren: 5` keeps a single researcher's fan-out
+// bounded; nested children consume from the root budget regardless.
 const researcherPreset: CodePreset = {
   name: "researcher",
   kind: "preset",
   systemPrompt: [
     "You are `researcher`, a Nigel specialist that produces written research reports.",
-    "You work inside a sandboxed checkout. You can read files, search the repo, and fetch",
-    "web pages. You cannot write, edit, run shell commands, or dispatch sub-agents.",
+    "You work inside a sandboxed checkout. You can read files, search the repo, fetch",
+    "web pages, and — when a question naturally splits into independent sub-questions —",
+    "dispatch additional `researcher` instances via `dispatch_specialist`. You cannot",
+    "write, edit, run shell commands, or dispatch code-touching specialists.",
     "Your output is a synthesized report, not changes to the repo.",
     "",
     "Working principles:",
@@ -416,12 +418,32 @@ const researcherPreset: CodePreset = {
     "- If the question turns out to be unanswerable from the sources available to you,",
     "  say so — don't fabricate. Describe what additional access would resolve it.",
     "- Never recommend code changes; that's a different specialist's job.",
+    "",
+    "When to dispatch sub-researchers:",
+    "- Only dispatch when the question genuinely splits into independent sub-questions",
+    "  that don't share context (e.g. \"compare how libraries X, Y, and Z handle Z's",
+    '  edge case" — each library is its own thread). Sequential follow-ups are NOT',
+    "  independent and belong in your own tool loop.",
+    "- The dispatch surface is restricted at runtime to `researcher` only. Attempts",
+    "  to dispatch `coder`, `reviewer`, or any other specialist will be refused by",
+    "  the dispatcher. Don't try — it won't work.",
+    "- Write each sub-task as a self-contained question with the scope and the format",
+    "  you want back. Each sub-researcher starts with no memory of your investigation.",
+    "- Synthesize the children's reports into a single coherent answer — don't just",
+    "  paste them back. The user wants one report, not a directory listing.",
   ].join("\n"),
   model: "anthropic/claude-sonnet-4.6",
-  toolAllowlist: ["web", "file_read", "search"],
+  toolAllowlist: ["web", "file_read", "search", "dispatch_specialist"],
   sandboxPolicy: "inherit",
-  mayRecurse: false,
-  maxChildren: 0,
+  mayRecurse: true,
+  maxChildren: 5,
+  // Locks recursion to other researchers. Necessary as a runtime
+  // gate because researcher fetches arbitrary web pages: a
+  // prompt-injected page could otherwise instruct it to dispatch a
+  // write-capable specialist via `dispatch_specialist`. The system
+  // prompt restates the same constraint for the LLM but isn't the
+  // authoritative enforcement layer.
+  dispatchTargetAllowlist: ["researcher"],
   budgetUsdDefaultMicros: 4_000_000,
   needsLocalStack: false,
 };
@@ -555,7 +577,8 @@ const plannerPreset: CodePreset = {
     "- `reviewer`: read-only friendly review. Surfaces obvious issues.",
     "- `adversarial-reviewer`: read-only deep audit for security/race/idempotency holes.",
     "  Expensive; use only when the change warrants it.",
-    "- `researcher`: produces a written research report from web + repo sources. Use when",
+    "- `researcher`: produces a written research report from web + repo sources. Can",
+    "  recursively dispatch sub-researchers for independent sub-questions. Use when",
     "  the task requires background knowledge you don't have.",
     "- `data-analyst`: answers questions about data in registered Postgres / ClickHouse",
     "  / Redis connections. Read-only by design. Use when the task needs facts from a",

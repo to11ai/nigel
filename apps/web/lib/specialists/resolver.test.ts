@@ -189,13 +189,21 @@ describe("getSpecialist", () => {
     expect(r?.kind).toBe("preset");
     expect(r?.systemPrompt).toContain("researcher");
     expect(r?.model).toBe("anthropic/claude-sonnet-4.6");
-    // Spec lists may_recurse=true + dispatch_specialist tool, both
-    // deferred until the dispatch_specialist tool ships. Until then
-    // researcher is non-recursive: web + file_read + search only.
-    expect(r?.toolAllowlist).toEqual(["web", "file_read", "search"]);
+    // Phase G unblocked the recursive fan-out the spec originally
+    // called for. Researcher now dispatches sub-researchers via
+    // `dispatch_specialist` for independent sub-questions, with
+    // runtime enforcement that only researchers can be dispatched
+    // (prevents prompt-injected web content from escalating).
+    expect(r?.toolAllowlist).toEqual([
+      "web",
+      "file_read",
+      "search",
+      "dispatch_specialist",
+    ]);
     expect(r?.sandboxPolicy).toBe("inherit");
-    expect(r?.mayRecurse).toBe(false);
-    expect(r?.maxChildren).toBe(0);
+    expect(r?.mayRecurse).toBe(true);
+    expect(r?.maxChildren).toBe(5);
+    expect(r?.dispatchTargetAllowlist).toEqual(["researcher"]);
     expect(r?.budgetUsdDefaultMicros).toBe(4_000_000);
     expect(r?.needsLocalStack).toBe(false);
   });

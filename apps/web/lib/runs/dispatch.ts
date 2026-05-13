@@ -93,6 +93,20 @@ export async function dispatchSpecialist(
         `parent specialist '${parent.specialistId}' does not allow recursion`,
       );
     }
+    // Target-specialist allowlist. When set, the parent can only
+    // dispatch specialists named in the list. Necessary as a runtime
+    // gate independent of the system prompt because the parent may
+    // run with prompt-injected input (e.g. researcher's web_fetch
+    // results); without this check, an injected prompt could
+    // instruct the parent to dispatch a write-capable specialist.
+    if (
+      parentSpecialist.dispatchTargetAllowlist !== undefined &&
+      !parentSpecialist.dispatchTargetAllowlist.includes(input.specialistName)
+    ) {
+      throw new SpecialistDispatchError(
+        `parent specialist '${parent.specialistId}' cannot dispatch '${input.specialistName}' — only the following targets are permitted: ${parentSpecialist.dispatchTargetAllowlist.join(", ")}`,
+      );
+    }
     // Per-specialist max-children cap.
     const siblings = await listChildren(parent.id);
     if (
