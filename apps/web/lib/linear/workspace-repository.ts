@@ -15,10 +15,12 @@ import {
 //
 // One row per Nigel deployment, by design (spec section: "Linear
 // integration is org-level; one Linear workspace per Nigel deployment").
-// We don't enforce singleton via a CHECK constraint — the admin UI is
-// the authoritative gate. The repository's `upsert` is the only
-// supported create/update path so racing admin saves resolve to a
-// single row keyed on `workspace_id`.
+// Singleton is enforced at the database via the unique index on
+// `workspace_id`: `createLinearWorkspace` rethrows a 23505 violation
+// as a typed `already_exists` error so concurrent admin saves don't
+// produce a raw stack trace. Subsequent edits go through
+// `updateLinearWorkspace`, which patches by id — no read-then-write
+// race window.
 //
 // Secrets (webhook signing secret + Linear OAuth access token) are
 // AES-256-GCM encrypted at rest using the existing
