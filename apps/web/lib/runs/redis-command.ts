@@ -1,5 +1,6 @@
 import type { RedisCommandCallback } from "@nigel/agent";
 import Redis from "ioredis";
+import { withToolSpan } from "@/lib/observability/tool-span";
 import {
   type RedisConnectionConfig,
   type RedisConnectionSecrets,
@@ -181,42 +182,55 @@ export function createRedisCommandCallback(
   input: CreateRedisCommandCallbackInput,
 ): RedisCommandCallback {
   return async (call) => {
-    const resolved = await tryResolveConnection(call.connectionName);
-    if (resolved.kind !== "redis") {
-      throw new RedisCommandError(
-        "wrong_kind",
-        `connection '${call.connectionName}' is kind '${resolved.kind}', not 'redis'`,
-      );
-    }
-    if (!scopeAllows(resolved.scope, input.specialistName)) {
-      throw new RedisCommandError(
-        "scope_denied",
-        `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
-      );
-    }
-    const { canonical, trailingArgs } = normalizeCommandSpec(
-      call.command,
-      call.args ?? [],
+    return withToolSpan(
+      "tool.redis_command",
+      {
+        "nigel.tool.name": "redis_command",
+        "nigel.tool.specialist": input.specialistName,
+        "nigel.tool.connection": call.connectionName,
+        // Verb only — args may contain user data; we don't want
+        // payloads sprayed across span attributes.
+        "nigel.tool.command": call.command,
+      },
+      async () => {
+        const resolved = await tryResolveConnection(call.connectionName);
+        if (resolved.kind !== "redis") {
+          throw new RedisCommandError(
+            "wrong_kind",
+            `connection '${call.connectionName}' is kind '${resolved.kind}', not 'redis'`,
+          );
+        }
+        if (!scopeAllows(resolved.scope, input.specialistName)) {
+          throw new RedisCommandError(
+            "scope_denied",
+            `connection '${call.connectionName}' is not in scope for specialist '${input.specialistName}'`,
+          );
+        }
+        const { canonical, trailingArgs } = normalizeCommandSpec(
+          call.command,
+          call.args ?? [],
+        );
+        if (
+          resolved.config.readOnly &&
+          !READ_ONLY_COMMAND_ALLOWLIST.has(canonical)
+        ) {
+          throw new RedisCommandError(
+            "read_only_violation",
+            `connection '${call.connectionName}' is read-only; command '${canonical}' is not on the read-only allowlist`,
+          );
+        }
+        return executeCommand({
+          config: resolved.config,
+          secrets: resolved.secrets,
+          command: canonical,
+          args: trailingArgs,
+          timeoutMs: clampPositive(
+            call.timeoutMs ?? resolved.config.defaultCommandTimeoutMs,
+            HARD_TIMEOUT_MS_CAP,
+          ),
+        });
+      },
     );
-    if (
-      resolved.config.readOnly &&
-      !READ_ONLY_COMMAND_ALLOWLIST.has(canonical)
-    ) {
-      throw new RedisCommandError(
-        "read_only_violation",
-        `connection '${call.connectionName}' is read-only; command '${canonical}' is not on the read-only allowlist`,
-      );
-    }
-    return executeCommand({
-      config: resolved.config,
-      secrets: resolved.secrets,
-      command: canonical,
-      args: trailingArgs,
-      timeoutMs: clampPositive(
-        call.timeoutMs ?? resolved.config.defaultCommandTimeoutMs,
-        HARD_TIMEOUT_MS_CAP,
-      ),
-    });
   };
 }
 
