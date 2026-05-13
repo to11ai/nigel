@@ -111,10 +111,14 @@ async function call(
   body: string,
   signature: string | null,
   workspace: ResolvedLinearWorkspace | null = fakeWorkspace(),
+  deliveryHeader:
+    | string
+    | null = `delivery-${Math.random().toString(36).slice(2)}`,
 ): Promise<WebhookHandlerOutcome> {
   return handleLinearWebhook({
     rawBody: body,
     signatureHeader: signature,
+    deliveryHeader,
     defaultBudgetUsdMicros: 5_000_000,
     deps: { resolveWorkspace: async () => workspace },
   });
@@ -215,16 +219,31 @@ describe("handleLinearWebhook — failure paths", () => {
 });
 
 describe("handleLinearWebhook — idempotency", () => {
-  test("duplicate delivery of the same event creates only one Run", async () => {
-    const body = assignmentBody({ externalId: "dup-evt-1" });
+  test("duplicate delivery of the same event (same Linear-Delivery header) creates only one Run", async () => {
+    const body = assignmentBody();
     const sig = sign(body);
-    const first = await call(body, sig);
+    const first = await call(body, sig, fakeWorkspace(), "delivery-uuid-1");
     expect(first.kind).toBe("run_created");
 
-    const second = await call(body, sig);
+    const second = await call(body, sig, fakeWorkspace(), "delivery-uuid-1");
     expect(second.kind).toBe("duplicate");
 
     const rows = await db.select().from(agentRuns);
     expect(rows).toHaveLength(1);
+  });
+
+  test("two separate events from the same webhook (distinct Linear-Delivery headers) both create Runs", async () => {
+    // Anti-regression for the `webhookId`-as-dedup bug: the body
+    // field `webhookId` is the same across all deliveries from a
+    // given webhook subscription. Using IT as the dedup key would
+    // make this test fail with "only 1 Run".
+    const body = assignmentBody({ externalId: "shared-webhookId" });
+    const sig = sign(body);
+    const a = await call(body, sig, fakeWorkspace(), "delivery-A");
+    const b = await call(body, sig, fakeWorkspace(), "delivery-B");
+    expect(a.kind).toBe("run_created");
+    expect(b.kind).toBe("run_created");
+    const rows = await db.select().from(agentRuns);
+    expect(rows).toHaveLength(2);
   });
 });

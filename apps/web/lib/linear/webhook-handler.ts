@@ -60,6 +60,11 @@ export type WebhookHandlerOutcome =
 export type WebhookHandlerInput = {
   rawBody: string;
   signatureHeader: string | null;
+  // Linear's per-delivery UUID, sent in the `Linear-Delivery`
+  // header. This is the authoritative idempotency key — body
+  // fields are fallbacks for older payload shapes. The route
+  // reads the header and passes it through; tests inject directly.
+  deliveryHeader: string | null;
   // Per-Run default budget. The spec calls this
   // `org.default_budget_usd`; until the budget admin UI ships we
   // accept it as a parameter so tests can pin a value and the route
@@ -102,9 +107,15 @@ export async function handleLinearWebhook(
     };
   }
 
-  const externalId = deriveExternalId(envelope);
+  const externalId = deriveExternalId({
+    envelope,
+    deliveryHeader: input.deliveryHeader,
+  });
   if (!externalId) {
-    return { kind: "invalid_payload", reason: "no event id in envelope" };
+    return {
+      kind: "invalid_payload",
+      reason: "no Linear-Delivery header and no event id in envelope",
+    };
   }
 
   const claim = await claimWebhookEvent({

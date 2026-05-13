@@ -99,13 +99,25 @@ export function parseLinearIssue(raw: unknown): LinearIssue | null {
   return result.success ? result.data : null;
 }
 
-// Pull the canonical external event ID for idempotency. Falls back
-// across the three field names Linear has used in their docs and
-// current deliveries.
-export function deriveExternalId(env: LinearWebhookEnvelope): string | null {
-  if (env.deliveryId) return env.deliveryId;
-  if (env.webhookId) return env.webhookId;
-  if (env.id) return env.id;
+// Pull the canonical external event ID for idempotency. Linear's
+// authoritative per-delivery UUID is in the `Linear-Delivery` HTTP
+// header — pass that in as `deliveryHeader` and it wins. The body
+// fields are last-resort fallbacks for unusual Linear versions
+// that omit the header.
+//
+// We do NOT fall back to `webhookId`: in current Linear payloads
+// that field is the webhook SUBSCRIPTION UUID, constant across
+// every event delivered to a given endpoint. Using it as the dedup
+// key would treat the second event as a duplicate forever.
+export function deriveExternalId(input: {
+  envelope: LinearWebhookEnvelope;
+  deliveryHeader: string | null;
+}): string | null {
+  if (input.deliveryHeader && input.deliveryHeader.length > 0) {
+    return input.deliveryHeader;
+  }
+  if (input.envelope.deliveryId) return input.envelope.deliveryId;
+  if (input.envelope.id) return input.envelope.id;
   return null;
 }
 

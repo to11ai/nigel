@@ -61,24 +61,63 @@ describe("linearWebhookEnvelopeSchema", () => {
 });
 
 describe("deriveExternalId", () => {
-  test("prefers deliveryId, then webhookId, then id", () => {
+  test("prefers the Linear-Delivery header above body fields", () => {
     expect(
       deriveExternalId({
-        type: "Issue",
-        deliveryId: "d1",
-        webhookId: "w1",
-        id: "i1",
-        data: {},
+        envelope: {
+          type: "Issue",
+          deliveryId: "body-d",
+          id: "body-i",
+          data: {},
+        },
+        deliveryHeader: "header-uuid-from-linear",
       }),
-    ).toBe("d1");
-    expect(
-      deriveExternalId({ type: "Issue", webhookId: "w1", id: "i1", data: {} }),
-    ).toBe("w1");
-    expect(deriveExternalId({ type: "Issue", id: "i1", data: {} })).toBe("i1");
+    ).toBe("header-uuid-from-linear");
   });
 
-  test("returns null when no id field is set", () => {
-    expect(deriveExternalId({ type: "Issue", data: {} })).toBeNull();
+  test("falls back to body.deliveryId when header is missing", () => {
+    expect(
+      deriveExternalId({
+        envelope: {
+          type: "Issue",
+          deliveryId: "body-d",
+          id: "body-i",
+          data: {},
+        },
+        deliveryHeader: null,
+      }),
+    ).toBe("body-d");
+  });
+
+  test("falls back to body.id when neither header nor body.deliveryId set", () => {
+    expect(
+      deriveExternalId({
+        envelope: { type: "Issue", id: "body-i", data: {} },
+        deliveryHeader: null,
+      }),
+    ).toBe("body-i");
+  });
+
+  test("ignores body.webhookId entirely — it is the SUBSCRIPTION uuid not per-event", () => {
+    // Anti-regression: a previous version used webhookId as a
+    // dedup key, which is constant across all events from a given
+    // webhook. Every event after the first would silently be
+    // treated as a duplicate and dropped.
+    expect(
+      deriveExternalId({
+        envelope: { type: "Issue", webhookId: "subscription-uuid", data: {} },
+        deliveryHeader: null,
+      }),
+    ).toBeNull();
+  });
+
+  test("returns null when neither header nor any body id field is set", () => {
+    expect(
+      deriveExternalId({
+        envelope: { type: "Issue", data: {} },
+        deliveryHeader: null,
+      }),
+    ).toBeNull();
   });
 });
 
