@@ -67,6 +67,21 @@ const markRunTerminal = async (
   }
 };
 
+// KNOWN LIMITATION (Phase 9 hardening): this step bundles provision +
+// execute + teardown. If the worker process dies mid-execute, the
+// `finally` doesn't fire and the sandbox leaks. On Workflow SDK
+// resume, the step replays from the start and provisions a fresh
+// sandbox while the previous one stays alive.
+//
+// Mitigation: the Vercel sandbox SDK has a 5-minute default
+// activity timeout, so an orphaned sandbox auto-stops within ~5
+// minutes — bounded blast radius, not a permanent leak. The
+// proper fix is to split into separate `"use step"` functions
+// (provision returns a serializable sandbox name → execute
+// reconnects by name → teardown) so a resumed workflow can pick
+// up the existing sandbox. That refactor requires `ProvisionedSandbox`
+// to return a serializable handle shape and is deferred to the
+// Phase 9 failure-mode drills.
 const executePlannerStep = async (input: {
   agentRunId: string;
   taskText: string;
