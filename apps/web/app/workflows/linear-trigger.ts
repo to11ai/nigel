@@ -26,25 +26,35 @@ export type LinearTriggerWorkflowInput = {
   branch?: string;
 };
 
-const markRunRunning = async (agentRunId: string): Promise<void> => {
+// Outcome discriminator for `markRunRunning`. The workflow has to
+// tell two cases apart that both result in "don't transition again":
+//   - `already_running`: re-entry from a Workflow SDK step replay
+//     after a kill -9. Proceed; the planner work needs to run.
+//   - `already_terminal`: the run was externally cancelled /
+//     completed / failed (e.g. via /cancel comment in L4, or a
+//     manual admin action). Abort immediately; provisioning a
+//     sandbox and running the planner here would waste cloud
+//     resources and produce confusing output against a run that's
+//     already been closed out.
+type MarkRunOutcome = "transitioned" | "already_running" | "already_terminal";
+
+const markRunRunning = async (agentRunId: string): Promise<MarkRunOutcome> => {
   "use step";
   const { getRun, updateRunStatus } = await import("@/lib/runs/repository");
-  // Re-entry safety: a workflow resume after a kill -9 may re-fire
-  // this step with the run already at `running`. The state machine
-  // would reject the no-op transition, so check first.
   const current = await getRun(agentRunId);
   if (!current) {
     throw new Error(`agent_run not found: ${agentRunId}`);
   }
+  if (current.status === "running") return "already_running";
   if (
-    current.status === "running" ||
     current.status === "completed" ||
     current.status === "failed" ||
     current.status === "cancelled"
   ) {
-    return;
+    return "already_terminal";
   }
   await updateRunStatus(agentRunId, "running");
+  return "transitioned";
 };
 
 const markRunTerminal = async (
@@ -137,7 +147,16 @@ export async function runLinearTriggeredWorkflow(
 ): Promise<void> {
   "use workflow";
 
-  await markRunRunning(input.agentRunId);
+  const outcome = await markRunRunning(input.agentRunId);
+  if (outcome === "already_terminal") {
+    // Run was externally cancelled or completed before the
+    // workflow picked it up. Exit without provisioning a sandbox
+    // or running the planner; the audit trail is already final.
+    console.log("[linear-trigger] run is already terminal; skipping", {
+      agentRunId: input.agentRunId,
+    });
+    return;
+  }
 
   try {
     await executePlannerStep({
