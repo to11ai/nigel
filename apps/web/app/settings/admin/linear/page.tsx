@@ -114,6 +114,13 @@ function LinearAdminPageContent() {
 
       {workspace !== undefined ? (
         <LinearWorkspaceForm
+          // Force a fresh mount when the row transitions between
+          // existing and absent. Without this, useState hooks in
+          // the form retain stale values from the deleted row and
+          // the create-mode form appears pre-filled with whatever
+          // the admin just deleted. Same pattern the tool-
+          // connections admin uses.
+          key={workspace?.id ?? "new"}
           existing={workspace}
           onSubmitted={async () => {
             await refresh();

@@ -51,22 +51,6 @@ export async function adminGetLinearWorkspace(): Promise<
   }
 }
 
-// Server-only helper for the route handler if it ever needs a
-// "is configured?" health check. The full secrets path goes through
-// `resolveLinearWorkspace` directly in the webhook handler; this
-// just confirms presence without touching plaintext.
-export async function adminLinearIsConfigured(): Promise<
-  ActionResult<{ configured: boolean }>
-> {
-  try {
-    await requireAdmin();
-    const row = await repoGet();
-    return { success: true, data: { configured: row !== null } };
-  } catch (err) {
-    return mapRepositoryError(err);
-  }
-}
-
 export type AdminCreateLinearInput = {
   workspaceId: string;
   botUserId: string;
