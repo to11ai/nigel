@@ -424,8 +424,9 @@ const researcherPreset: CodePreset = {
     "  that don't share context (e.g. \"compare how libraries X, Y, and Z handle Z's",
     '  edge case" — each library is its own thread). Sequential follow-ups are NOT',
     "  independent and belong in your own tool loop.",
-    "- Dispatch the `researcher` specialist for sub-research, not code specialists.",
-    "  You don't have the allowlist to dispatch coders, reviewers, etc.",
+    "- The dispatch surface is restricted at runtime to `researcher` only. Attempts",
+    "  to dispatch `coder`, `reviewer`, or any other specialist will be refused by",
+    "  the dispatcher. Don't try — it won't work.",
     "- Write each sub-task as a self-contained question with the scope and the format",
     "  you want back. Each sub-researcher starts with no memory of your investigation.",
     "- Synthesize the children's reports into a single coherent answer — don't just",
@@ -436,6 +437,13 @@ const researcherPreset: CodePreset = {
   sandboxPolicy: "inherit",
   mayRecurse: true,
   maxChildren: 5,
+  // Locks recursion to other researchers. Necessary as a runtime
+  // gate because researcher fetches arbitrary web pages: a
+  // prompt-injected page could otherwise instruct it to dispatch a
+  // write-capable specialist via `dispatch_specialist`. The system
+  // prompt restates the same constraint for the LLM but isn't the
+  // authoritative enforcement layer.
+  dispatchTargetAllowlist: ["researcher"],
   budgetUsdDefaultMicros: 4_000_000,
   needsLocalStack: false,
 };

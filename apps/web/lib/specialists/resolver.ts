@@ -60,6 +60,12 @@ function mergePreset(
     budgetUsdDefaultMicros:
       row.budgetUsdDefaultMicros ?? preset.budgetUsdDefaultMicros,
     needsLocalStack: row.needsLocalStack ?? preset.needsLocalStack,
+    // Inherited from the preset only — the specialists table has no
+    // column for this yet, and a DB override of a preset cannot
+    // loosen the dispatch gate.
+    ...(preset.dispatchTargetAllowlist !== undefined
+      ? { dispatchTargetAllowlist: preset.dispatchTargetAllowlist }
+      : {}),
     script: preset.script,
   };
 }

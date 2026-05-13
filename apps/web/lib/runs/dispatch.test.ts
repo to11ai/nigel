@@ -109,6 +109,27 @@ describe("dispatchSpecialist", () => {
     ).rejects.toThrow(/depth/i);
   });
 
+  test("rejects dispatch outside the parent's dispatchTargetAllowlist", async () => {
+    // Parent is `researcher`, which restricts dispatch to other
+    // researchers. Attempting to dispatch a non-allowlisted target
+    // (`coder`) must throw before any LLM execution starts.
+    const parent = await Run.create({
+      triggerSource: "chat",
+      humanOwnerId: TEST_USER_ID,
+      budgetUsdCapMicros: 10_000_000,
+      specialistId: "researcher",
+    });
+    await updateRunStatus(parent.id, "running");
+
+    await expect(
+      dispatchSpecialist({
+        parentRunId: parent.id,
+        specialistName: "coder",
+        task: "do something",
+      }),
+    ).rejects.toThrow(/cannot dispatch 'coder'/);
+  });
+
   test("returns a string-typed output", async () => {
     const parent = await Run.create({
       triggerSource: "chat",

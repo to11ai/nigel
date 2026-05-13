@@ -191,7 +191,9 @@ describe("getSpecialist", () => {
     expect(r?.model).toBe("anthropic/claude-sonnet-4.6");
     // Phase G unblocked the recursive fan-out the spec originally
     // called for. Researcher now dispatches sub-researchers via
-    // `dispatch_specialist` for independent sub-questions.
+    // `dispatch_specialist` for independent sub-questions, with
+    // runtime enforcement that only researchers can be dispatched
+    // (prevents prompt-injected web content from escalating).
     expect(r?.toolAllowlist).toEqual([
       "web",
       "file_read",
@@ -201,6 +203,7 @@ describe("getSpecialist", () => {
     expect(r?.sandboxPolicy).toBe("inherit");
     expect(r?.mayRecurse).toBe(true);
     expect(r?.maxChildren).toBe(5);
+    expect(r?.dispatchTargetAllowlist).toEqual(["researcher"]);
     expect(r?.budgetUsdDefaultMicros).toBe(4_000_000);
     expect(r?.needsLocalStack).toBe(false);
   });
