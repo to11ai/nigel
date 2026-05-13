@@ -37,6 +37,27 @@ describe("resolveRepo — native GitHub attachment", () => {
     expect(resolveRepo({ issue, teamRepoMap: {} })).toBe("to11ai/nigel");
   });
 
+  test("preserves dots in repo names (vercel/next.js)", () => {
+    const issue = makeIssue({
+      attachments: [{ url: "https://github.com/vercel/next.js" }],
+    });
+    expect(resolveRepo({ issue, teamRepoMap: {} })).toBe("vercel/next.js");
+  });
+
+  test("dotted repo name + .git suffix peels suffix correctly", () => {
+    const issue = makeIssue({
+      attachments: [{ url: "https://github.com/socketio/socket.io.git" }],
+    });
+    expect(resolveRepo({ issue, teamRepoMap: {} })).toBe("socketio/socket.io");
+  });
+
+  test("dotted repo name + deep path", () => {
+    const issue = makeIssue({
+      attachments: [{ url: "https://github.com/vercel/next.js/pull/12345" }],
+    });
+    expect(resolveRepo({ issue, teamRepoMap: {} })).toBe("vercel/next.js");
+  });
+
   test("reads attachment.metadata.url when top-level url is missing", () => {
     const issue = makeIssue({
       attachments: [

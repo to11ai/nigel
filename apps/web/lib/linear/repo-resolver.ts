@@ -21,12 +21,19 @@ import type { LinearTeamRepoMap } from "./workspace-repository";
 // uses this string as the `repoRef` column verbatim.
 export type ResolvedRepo = string;
 
-// Looks like `https://github.com/<owner>/<repo>` optionally followed by
-// `/...`. Captures owner + repo. Tolerates `.git` suffix and case
-// variations. Anchored to start to avoid matching URLs embedded
-// inside markdown links.
+// Looks like `https://github.com/<owner>/<repo>` optionally followed
+// by `/...`. Captures owner + repo. Tolerates `.git` suffix and
+// case variations. Anchored to start to avoid matching URLs
+// embedded inside markdown links.
+//
+// The repo group `([^/\s]+?)` is non-greedy so dotted repo names
+// (e.g. `vercel/next.js`, `socketio/socket.io`) match correctly
+// while a trailing `.git` or `/path` segment still peels off into
+// its own optional group. Without `?` after `+`, the greedy match
+// would consume `.git` as part of the name and fail to recognise
+// it as a suffix.
 const GITHUB_URL_REGEX =
-  /^https:\/\/github\.com\/([^/\s]+)\/([^/\s.]+)(?:\.git)?(?:\/.*)?$/i;
+  /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/.*)?$/i;
 // `repo:owner/name` label format. Owner / name use the same charset
 // GitHub allows (alphanumerics, dashes, underscores, dots). Anchored.
 const REPO_LABEL_REGEX = /^repo:([a-z0-9._-]+)\/([a-z0-9._-]+)$/i;
