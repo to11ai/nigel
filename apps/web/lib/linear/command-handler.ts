@@ -68,6 +68,12 @@ export type CommandHandlerOutcome =
       kind: "run_start_failed";
       command: "run";
       issueId: string;
+      // Populated only on `workflow_start_failed`: by then `Run.create`
+      // has persisted a row, and downstream callers (the webhook
+      // handler's `markWebhookEventProcessed`) link the webhook event
+      // to that row so the orphan is discoverable in the admin UI.
+      // The pre-creation branches leave it undefined.
+      runId?: string;
       // `unresolved_owner` isn't in the union here because the actor
       // lookup happens in handleLinearCommandComment BEFORE
       // handleRunCommand runs — an unmapped commenter returns as
@@ -332,6 +338,7 @@ async function handleRunCommand(input: {
       kind: "run_start_failed",
       command: "run",
       issueId: input.issueId,
+      runId: run.id,
       reason: "workflow_start_failed",
     };
   }

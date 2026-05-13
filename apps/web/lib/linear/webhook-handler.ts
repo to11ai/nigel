@@ -176,11 +176,19 @@ export async function handleLinearWebhook(
       defaultBudgetUsdMicros: input.defaultBudgetUsdMicros,
       deps: commandDeps,
     });
+    // Pick the run id from whichever outcome carries one. The
+    // `run_start_failed.workflow_start_failed` branch has a runId
+    // because Run.create persisted before startWorkflow threw — link
+    // the event to it so the orphan is discoverable from the webhook
+    // events table even if the best-effort updateRunStatus(failed)
+    // also fails.
     const runId =
       commandOutcome.kind === "run_started" ||
       commandOutcome.kind === "transitioned"
         ? commandOutcome.runId
-        : undefined;
+        : commandOutcome.kind === "run_start_failed"
+          ? commandOutcome.runId
+          : undefined;
     await markWebhookEventProcessed(
       runId === undefined ? { id: claim.id } : { id: claim.id, runId },
     );
