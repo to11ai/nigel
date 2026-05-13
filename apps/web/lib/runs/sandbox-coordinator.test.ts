@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   provisionSandboxForRun,
-  SandboxNotProvisionedError,
+  SandboxCoordinatorError,
 } from "./sandbox-coordinator";
 
 describe("provisionSandboxForRun", () => {
-  test("throws SandboxNotProvisionedError when inheritFrom is null", async () => {
+  test("throws SandboxCoordinatorError when inheritFrom is null", async () => {
     await expect(provisionSandboxForRun({ inheritFrom: null })).rejects.toThrow(
-      SandboxNotProvisionedError,
+      SandboxCoordinatorError,
     );
   });
 
