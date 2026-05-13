@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "linear_user_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "users_linear_user_id_idx" ON "users" USING btree ("linear_user_id") WHERE "users"."linear_user_id" IS NOT NULL;

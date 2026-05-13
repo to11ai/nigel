@@ -323,6 +323,13 @@
       "when": 1778693261414,
       "tag": "0045_square_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1778695562497,
+      "tag": "0046_same_gambit",
+      "breakpoints": true
     }
   ]
 }
