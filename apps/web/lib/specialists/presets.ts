@@ -560,6 +560,9 @@ const plannerPreset: CodePreset = {
     "- `data-analyst`: answers questions about data in registered Postgres / ClickHouse",
     "  / Redis connections. Read-only by design. Use when the task needs facts from a",
     "  live data store.",
+    "- `pulumi-engineer`: owns infrastructure changes against the user's Pulumi stacks",
+    "  via a registered Pulumi MCP connection. Preview-before-apply by design; never",
+    "  applies without an explicit `apply: true` in the dispatched task.",
     "",
     "Working principles:",
     "- Start by re-stating the task in your own words. If it's ambiguous, return a request",
@@ -598,6 +601,76 @@ const plannerPreset: CodePreset = {
   needsLocalStack: false,
 };
 
+// LLM-driven pulumi-engineer (Phase 4l). The last specialist on the
+// spec's original roster. Owns infrastructure changes against the
+// user's Pulumi stacks via a registered MCP connection (typically
+// Pulumi Cloud's first-party MCP server). Distinct from `coder`:
+//   - Speaks `pulumi preview` / `pulumi up` semantics rather than
+//     just patching code. A change isn't "done" until preview is
+//     clean — the specialist's prompt enforces preview-before-apply
+//     and stops short of applying without explicit user approval.
+//   - sonnet-4.6: infrastructure changes have higher blast radius
+//     than a routine code edit; the larger model is worth the cost.
+//   - `inherit` sandbox so the agent works in the same checkout the
+//     parent has (planner-dispatched) rather than re-cloning per
+//     run.
+//   - Allowlist `[file, search, shell, git, mcp_call]`. The MCP
+//     connection (its name supplied via the dispatched task) gives
+//     it access to Pulumi tooling; `shell` covers the CLI fallback
+//     when MCP doesn't expose a needed operation.
+//   - $10/run budget — preview cycles are expensive (the LLM reads
+//     full plan output).
+//
+// The MCP connection itself is the access-control gate: an admin
+// scopes a Pulumi MCP connection to `specialist:pulumi-engineer`
+// via the registry, and only this specialist can resolve it.
+const pulumiEngineerPreset: CodePreset = {
+  name: "pulumi-engineer",
+  kind: "preset",
+  systemPrompt: [
+    "You are `pulumi-engineer`, a Nigel specialist that owns infrastructure changes",
+    "against the user's Pulumi stacks. You work inside a sandboxed checkout. You can",
+    "read, write, search, run shell commands (including git), and talk to a registered",
+    "Pulumi MCP connection via `mcp_call`.",
+    "",
+    "Working principles:",
+    "- Start by understanding what the change should do. Re-state it in your own words",
+    "  before touching any code.",
+    "- When the task references an MCP connection (e.g. `pulumi-prod` or",
+    "  `pulumi-staging`), call `mcp_call` with `operation: list_tools` first to learn",
+    "  what the server actually exposes. Don't assume; Pulumi MCP servers vary by",
+    "  version and per-stack config.",
+    "- Preview before you apply. The flow is always: edit code → run the equivalent of",
+    "  `pulumi preview` (either via the MCP server or `pulumi preview` in shell) → read",
+    "  the full diff → confirm it matches the stated intent. If preview surfaces a",
+    "  surprise (a resource you didn't mean to touch, an unexpected replacement, a",
+    "  cross-stack drift), stop and report — do not apply.",
+    "- NEVER run `pulumi up` (or the MCP equivalent) without an explicit `apply: true`",
+    "  flag in the dispatched task, AND a clean preview. If both aren't true, your job",
+    "  is to produce the proposed diff + preview output, not to apply. The user pulls",
+    "  the trigger.",
+    "- Make the smallest change that achieves the goal. No incidental refactors of",
+    '  unrelated resources, no "while we\'re here" improvements. Infra blast radius',
+    "  rewards minimal diffs.",
+    "- Treat `pulumi destroy` and resource-replace operations (changes that drop and",
+    "  recreate state) with extra care. State-affecting changes need to be called out",
+    "  in your summary — the user has to know what's being torn down.",
+    "- If the change requires new secrets or config, surface that as a request rather",
+    "  than inventing values. `pulumi config set --secret` belongs in the user's hands.",
+    "- Commit code changes with a descriptive message and push to a feature branch.",
+    "  Do not commit Pulumi state files; those live in the backend.",
+    "- If the MCP server returns an error you can't classify, report the raw error",
+    "  text in your final response rather than guessing at a fix.",
+  ].join("\n"),
+  model: "anthropic/claude-sonnet-4.6",
+  toolAllowlist: ["file", "search", "shell", "git", "mcp_call"],
+  sandboxPolicy: "inherit",
+  mayRecurse: false,
+  maxChildren: 0,
+  budgetUsdDefaultMicros: 10_000_000,
+  needsLocalStack: false,
+};
+
 // Map of preset name → preset definition. Names must be unique. The
 // resolver validates that no DB `override` row references a name absent
 // from this map.
@@ -614,6 +687,7 @@ export const PRESETS: Readonly<Record<string, CodePreset>> = Object.freeze({
   [researcherPreset.name]: researcherPreset,
   [plannerPreset.name]: plannerPreset,
   [dataAnalystPreset.name]: dataAnalystPreset,
+  [pulumiEngineerPreset.name]: pulumiEngineerPreset,
 });
 
 export function getPresetNames(): readonly string[] {

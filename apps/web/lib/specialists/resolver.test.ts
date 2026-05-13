@@ -243,6 +243,27 @@ describe("getSpecialist", () => {
     expect(d?.needsLocalStack).toBe(false);
   });
 
+  test("pulumi-engineer preset resolves with the expected shape", async () => {
+    const p = await getSpecialist("pulumi-engineer");
+    expect(p).not.toBeNull();
+    expect(p?.name).toBe("pulumi-engineer");
+    expect(p?.kind).toBe("preset");
+    expect(p?.systemPrompt).toContain("pulumi-engineer");
+    expect(p?.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(p?.toolAllowlist).toEqual([
+      "file",
+      "search",
+      "shell",
+      "git",
+      "mcp_call",
+    ]);
+    expect(p?.sandboxPolicy).toBe("inherit");
+    expect(p?.mayRecurse).toBe(false);
+    expect(p?.maxChildren).toBe(0);
+    expect(p?.budgetUsdDefaultMicros).toBe(10_000_000);
+    expect(p?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),
