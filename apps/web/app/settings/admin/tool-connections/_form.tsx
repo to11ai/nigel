@@ -125,6 +125,32 @@ export function ToolConnectionForm({ kinds, onSubmitted, editing }: Props) {
       : { channel: "", username: "", webhookUrl: "" },
   );
 
+  // Snapshot the config payload that `buildPayload` would emit at
+  // mount time. On submit, compare the freshly built config to this
+  // snapshot — if they're byte-identical, skip `config` in the
+  // patch. Two motivations:
+  //
+  // 1. Honor the patch contract advertised by `adminUpdateToolConnection`
+  //    ("omit `config` to leave the configJson untouched"). Sending
+  //    `config` unconditionally would invoke server-side validation
+  //    + an extra DB write on every save.
+  // 2. Future-proof: if a new optional `configJson` field ships on
+  //    the server schema without a corresponding form reader, the
+  //    form's rebuilt config would drop that field and silently
+  //    overwrite it on every edit. Comparing to the mount-time
+  //    snapshot guarantees we only mutate `configJson` when the
+  //    admin actually changed something on the form.
+  //
+  // The snapshot is computed once via useState's lazy initializer
+  // and never re-derived — the form is remounted via `key` from the
+  // page when a different row is targeted, so the snapshot stays
+  // bound to its row. `buildPayload` is a hoisted function
+  // declaration below, safe to reference here.
+  const [initialConfigSnapshot] = useState(() => {
+    const built = buildPayload();
+    return built ? JSON.stringify(built.config) : null;
+  });
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
@@ -142,13 +168,20 @@ export function ToolConnectionForm({ kinds, onSubmitted, editing }: Props) {
               specialistName: specialistName.trim(),
             };
       if (isEdit && editing) {
-        // Edit semantics: send `secrets` only when the user filled
-        // any secret field. An empty secrets payload would otherwise
-        // re-encrypt-and-write an empty object and break resolution.
+        // Edit semantics:
+        //   - `secrets`: send only when the user filled a secret
+        //     field. An empty payload would otherwise re-encrypt-
+        //     and-write an empty object and break resolution.
+        //   - `config`: send only when the built config differs
+        //     from the mount-time snapshot. Honors the patch
+        //     contract and avoids dropping any server-schema field
+        //     the form's readers don't know about.
+        const configChanged =
+          JSON.stringify(built.config) !== initialConfigSnapshot;
         const res = await adminUpdateToolConnection({
           id: editing.id,
           description: description.trim() || null,
-          config: built.config,
+          ...(configChanged ? { config: built.config } : {}),
           ...(built.secretsProvided ? { secrets: built.secrets } : {}),
           scope,
         });

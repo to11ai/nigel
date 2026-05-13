@@ -159,7 +159,14 @@ function ToolConnectionsPageContent() {
                       size="sm"
                       onClick={() => handleEditClick(row)}
                       aria-label={`Edit ${row.name}`}
-                      disabled={editLoadingId === row.id}
+                      // Disable EVERY edit button while any fetch is
+                      // in flight — not just this row's. Per-row
+                      // gating allowed click-A-then-click-B races
+                      // where A's late response would silently swap
+                      // the open dialog's `editing` prop while the
+                      // form kept B's field state, causing a save to
+                      // overwrite A with B's data.
+                      disabled={editLoadingId !== null}
                     >
                       {editLoadingId === row.id ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -229,6 +236,13 @@ function ToolConnectionsPageContent() {
           </DialogHeader>
           {editTarget ? (
             <ToolConnectionForm
+              // Force a fresh mount when the targeted row changes.
+              // Defense-in-depth against the same race the
+              // edit-button disable above guards: even if a stale
+              // response somehow set `editTarget`, the `key` change
+              // remounts the form so its useState seeds re-derive
+              // from the new row's data.
+              key={editTarget.id}
               kinds={TOOL_CONNECTION_KINDS}
               editing={editTarget}
               onSubmitted={async () => {
