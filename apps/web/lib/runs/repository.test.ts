@@ -2,7 +2,14 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { db } from "@/lib/db/client";
 import { agentRuns, users } from "@/lib/db/schema";
 import { nanoid } from "nanoid";
-import { getRun, insertRun, listChildren, updateRunStatus } from "./repository";
+import {
+  addCostMicros,
+  getRun,
+  insertRun,
+  listChildren,
+  listRootRunsForUser,
+  updateRunStatus,
+} from "./repository";
 
 const TEST_USER_ID = "test-user-runs-repo";
 
@@ -117,5 +124,111 @@ describe("runs repository", () => {
     await expect(updateRunStatus(id, "running")).rejects.toThrow(
       /invalid.*transition/,
     );
+  });
+
+  // Filter coverage for the /runs index. Each test seeds a small
+  // root-run set and asserts the filter narrows correctly.
+  describe("listRootRunsForUser filters", () => {
+    async function seedRoot(input: {
+      specialistId?: string;
+      triggerSource?: "chat" | "linear" | "chained" | "cron";
+      status?: "pending" | "running" | "completed" | "failed";
+      costMicros?: number;
+    }): Promise<string> {
+      const id = nanoid();
+      await insertRun({
+        id,
+        parentRunId: null,
+        rootRunId: id,
+        depth: 0,
+        triggerSource: input.triggerSource ?? "chat",
+        humanOwnerId: TEST_USER_ID,
+        sandboxPolicy: "inherit",
+        budgetUsdCapMicros: 10_000_000,
+        ...(input.specialistId !== undefined
+          ? { specialistId: input.specialistId }
+          : {}),
+      });
+      if (input.status && input.status !== "pending") {
+        // The default insert leaves status='pending'. Walk forward
+        // through valid transitions to reach the requested terminal.
+        await updateRunStatus(id, "running");
+        if (input.status !== "running") {
+          await updateRunStatus(id, input.status);
+        }
+      }
+      if (input.costMicros && input.costMicros > 0) {
+        await addCostMicros(id, input.costMicros);
+      }
+      return id;
+    }
+
+    test("filters by specialistId", async () => {
+      const a = await seedRoot({ specialistId: "planner" });
+      await seedRoot({ specialistId: "coder" });
+      const out = await listRootRunsForUser({
+        userId: TEST_USER_ID,
+        specialistId: "planner",
+      });
+      expect(out.map((r) => r.id)).toEqual([a]);
+    });
+
+    test("filters by status", async () => {
+      const a = await seedRoot({ status: "running" });
+      await seedRoot({ status: "pending" });
+      const out = await listRootRunsForUser({
+        userId: TEST_USER_ID,
+        status: "running",
+      });
+      expect(out.map((r) => r.id)).toEqual([a]);
+    });
+
+    test("filters by triggerSource", async () => {
+      const a = await seedRoot({ triggerSource: "linear" });
+      await seedRoot({ triggerSource: "chat" });
+      const out = await listRootRunsForUser({
+        userId: TEST_USER_ID,
+        triggerSource: "linear",
+      });
+      expect(out.map((r) => r.id)).toEqual([a]);
+    });
+
+    test("filters by minCostMicros (inclusive)", async () => {
+      const cheap = await seedRoot({ costMicros: 100 });
+      const expensive = await seedRoot({ costMicros: 5_000_000 });
+      const out = await listRootRunsForUser({
+        userId: TEST_USER_ID,
+        minCostMicros: 1_000_000,
+      });
+      expect(out.map((r) => r.id)).toContain(expensive);
+      expect(out.map((r) => r.id)).not.toContain(cheap);
+    });
+
+    test("minCostMicros<=0 is a no-op (matches all)", async () => {
+      const a = await seedRoot({ costMicros: 0 });
+      const b = await seedRoot({ costMicros: 100 });
+      const out = await listRootRunsForUser({
+        userId: TEST_USER_ID,
+        minCostMicros: 0,
+      });
+      const ids = out.map((r) => r.id);
+      expect(ids).toContain(a);
+      expect(ids).toContain(b);
+    });
+
+    test("combines filters with AND", async () => {
+      const match = await seedRoot({
+        specialistId: "planner",
+        status: "running",
+      });
+      await seedRoot({ specialistId: "planner", status: "pending" });
+      await seedRoot({ specialistId: "coder", status: "running" });
+      const out = await listRootRunsForUser({
+        userId: TEST_USER_ID,
+        specialistId: "planner",
+        status: "running",
+      });
+      expect(out.map((r) => r.id)).toEqual([match]);
+    });
   });
 });
