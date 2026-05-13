@@ -37,6 +37,10 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // There is no read-only enforcement layer — MCP tools are arbitrary
   // and the server defines their semantics.
   mcp_call: ["mcp_call"],
+  // Outbound message poster against a registered Slack incoming
+  // webhook. Write-only by nature (webhooks don't expose any read
+  // surface), so no read-only enforcement layer.
+  slack_post: ["slack_post"],
 };
 
 export function filterAgentTools<T extends ToolSet>(

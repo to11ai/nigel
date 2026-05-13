@@ -4,6 +4,7 @@ import type {
   DispatchSpecialistCallback,
   McpCallCallback,
   RedisCommandCallback,
+  SlackPostCallback,
 } from "@nigel/agent";
 import { gateway, nigelTools } from "@nigel/agent";
 import type { SandboxState } from "@nigel/sandbox";
@@ -16,6 +17,7 @@ import { computeCostMicros } from "./cost";
 import { createDatabaseQueryCallback } from "./database-query";
 import { createMcpCallCallback } from "./mcp-call";
 import { createRedisCommandCallback } from "./redis-command";
+import { createSlackPostCallback } from "./slack-post";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
 import { filterAgentTools } from "./tool-allowlist";
@@ -68,6 +70,8 @@ export type ExecuteSpecialistInput = {
     redisCommand?: RedisCommandCallback;
     // And the MCP equivalent.
     mcpCall?: McpCallCallback;
+    // And the Slack equivalent.
+    slackPost?: SlackPostCallback;
   };
 };
 
@@ -147,6 +151,12 @@ export async function executeSpecialistViaLLM(
   const mcpCallFn: McpCallCallback =
     deps?.mcpCall ?? createMcpCallCallback({ specialistName: specialist.name });
 
+  // slack_post callback — posts to a registered Slack incoming
+  // webhook. Write-only; no read-only enforcement layer.
+  const slackPostFn: SlackPostCallback =
+    deps?.slackPost ??
+    createSlackPostCallback({ specialistName: specialist.name });
+
   const filteredTools = filterAgentTools(specialist.toolAllowlist, nigelTools);
   const callModel = gateway(specialist.model);
 
@@ -169,6 +179,7 @@ export async function executeSpecialistViaLLM(
       clickhouseQuery: clickhouseQueryFn,
       redisCommand: redisCommandFn,
       mcpCall: mcpCallFn,
+      slackPost: slackPostFn,
     },
     prepareStep: async () => {
       await checkRootBudget(run.rootRunId);
