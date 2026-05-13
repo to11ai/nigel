@@ -264,6 +264,30 @@ describe("getSpecialist", () => {
     expect(p?.needsLocalStack).toBe(false);
   });
 
+  test("linear-engineer preset resolves with the expected shape", async () => {
+    const l = await getSpecialist("linear-engineer");
+    expect(l).not.toBeNull();
+    expect(l?.name).toBe("linear-engineer");
+    expect(l?.kind).toBe("preset");
+    expect(l?.systemPrompt).toContain("linear-engineer");
+    // Verify the transition gate language is present so a future
+    // edit can't accidentally remove the prompt-side safeguard.
+    expect(l?.systemPrompt).toContain("may_transition: true");
+    expect(l?.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(l?.toolAllowlist).toEqual([
+      "file",
+      "search",
+      "shell",
+      "git",
+      "mcp_call",
+    ]);
+    expect(l?.sandboxPolicy).toBe("inherit");
+    expect(l?.mayRecurse).toBe(false);
+    expect(l?.maxChildren).toBe(0);
+    expect(l?.budgetUsdDefaultMicros).toBe(5_000_000);
+    expect(l?.needsLocalStack).toBe(false);
+  });
+
   test("rejects a custom row missing required fields", async () => {
     await db.insert(specialists).values({
       id: nanoid(),
