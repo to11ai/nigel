@@ -63,8 +63,8 @@ export type LinearWorkspaceListItem = {
 };
 
 export class LinearWorkspaceRepositoryError extends Error {
-  readonly code: "not_found";
-  constructor(code: "not_found", message: string) {
+  readonly code: "not_found" | "already_exists";
+  constructor(code: "not_found" | "already_exists", message: string) {
     super(message);
     this.name = "LinearWorkspaceRepositoryError";
     this.code = code;
@@ -75,61 +75,31 @@ export class LinearWorkspaceRepositoryError extends Error {
       `linear workspace not found: ${query}`,
     );
   }
-}
-
-export type UpsertLinearWorkspaceInput = {
-  workspaceId: string;
-  botUserId: string;
-  teamRepoMap?: LinearTeamRepoMap;
-  // Patch semantics for secrets: passing `undefined` keeps the
-  // existing encrypted payload; passing an object replaces both
-  // fields. The admin UI uses this to allow rotating one field at a
-  // time by reading the current secrets, merging, and writing back.
-  // For the create path (no existing row), `secrets` is required —
-  // the caller must supply at least one valid value or the row
-  // won't be resolvable.
-  secrets?: LinearWorkspaceSecrets;
-};
-
-// Upserts the singleton workspace row. Behaviour:
-//   - If a row with `workspace_id` already exists: patch the
-//     supplied fields, leave others untouched.
-//   - Otherwise: insert. `secrets` is required on insert; throws
-//     when omitted on the create path.
-export async function upsertLinearWorkspace(
-  input: UpsertLinearWorkspaceInput,
-): Promise<LinearWorkspace> {
-  const existing = await getLinearWorkspaceByWorkspaceId(input.workspaceId);
-
-  if (existing) {
-    const patch: Partial<NewLinearWorkspace> = {
-      botUserId: input.botUserId,
-      updatedAt: new Date(),
-    };
-    if (input.teamRepoMap !== undefined) {
-      patch.teamRepoMap = input.teamRepoMap;
-    }
-    if (input.secrets !== undefined) {
-      const encrypted = encryptSecrets(input.secrets);
-      patch.secretsCiphertext = encrypted.ciphertext;
-      patch.secretsNonce = encrypted.nonce;
-      patch.secretsAuthTag = encrypted.authTag;
-      patch.keyVersion = encrypted.keyVersion;
-    }
-    const [updated] = await db
-      .update(linearWorkspace)
-      .set(patch)
-      .where(eq(linearWorkspace.id, existing.id))
-      .returning();
-    if (!updated) throw LinearWorkspaceRepositoryError.notFound(existing.id);
-    return updated;
-  }
-
-  if (!input.secrets) {
-    throw new Error(
-      "upsertLinearWorkspace: `secrets` required on create (no existing row to inherit from)",
+  static alreadyExists(workspaceId: string): LinearWorkspaceRepositoryError {
+    return new LinearWorkspaceRepositoryError(
+      "already_exists",
+      `linear workspace with workspace_id '${workspaceId}' already exists`,
     );
   }
+}
+
+export type CreateLinearWorkspaceInput = {
+  workspaceId: string;
+  botUserId: string;
+  secrets: LinearWorkspaceSecrets;
+  teamRepoMap?: LinearTeamRepoMap;
+};
+
+// Inserts a new workspace row. Split from update to keep the path
+// atomic — an earlier `upsert` implementation that read-then-inserted
+// raced on concurrent admin saves and could throw a 23505 unique-
+// constraint violation under load. With separate create + update,
+// the unique index on `workspace_id` cleanly fails the second
+// concurrent insert with a typed `already_exists` error the admin
+// UI can show as "row was just created by another admin — refresh".
+export async function createLinearWorkspace(
+  input: CreateLinearWorkspaceInput,
+): Promise<LinearWorkspace> {
   const encrypted = encryptSecrets(input.secrets);
   const row: NewLinearWorkspace = {
     id: nanoid(),
@@ -141,10 +111,63 @@ export async function upsertLinearWorkspace(
     keyVersion: encrypted.keyVersion,
     teamRepoMap: input.teamRepoMap ?? {},
   };
-  const [inserted] = await db.insert(linearWorkspace).values(row).returning();
-  if (!inserted)
-    throw new Error("upsertLinearWorkspace: insert returned no row");
-  return inserted;
+  try {
+    const [inserted] = await db.insert(linearWorkspace).values(row).returning();
+    if (!inserted) {
+      throw new Error("createLinearWorkspace: insert returned no row");
+    }
+    return inserted;
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw LinearWorkspaceRepositoryError.alreadyExists(input.workspaceId);
+    }
+    throw err;
+  }
+}
+
+export type UpdateLinearWorkspaceInput = {
+  id: string;
+  botUserId?: string;
+  teamRepoMap?: LinearTeamRepoMap;
+  // Patch semantics: passing `undefined` (or omitting) preserves the
+  // existing encrypted payload. The admin UI uses this to allow
+  // editing non-secret fields without re-supplying credentials.
+  secrets?: LinearWorkspaceSecrets;
+};
+
+export async function updateLinearWorkspace(
+  input: UpdateLinearWorkspaceInput,
+): Promise<LinearWorkspace> {
+  const patch: Partial<NewLinearWorkspace> = { updatedAt: new Date() };
+  if (input.botUserId !== undefined) patch.botUserId = input.botUserId;
+  if (input.teamRepoMap !== undefined) patch.teamRepoMap = input.teamRepoMap;
+  if (input.secrets !== undefined) {
+    const encrypted = encryptSecrets(input.secrets);
+    patch.secretsCiphertext = encrypted.ciphertext;
+    patch.secretsNonce = encrypted.nonce;
+    patch.secretsAuthTag = encrypted.authTag;
+    patch.keyVersion = encrypted.keyVersion;
+  }
+  const [updated] = await db
+    .update(linearWorkspace)
+    .set(patch)
+    .where(eq(linearWorkspace.id, input.id))
+    .returning();
+  if (!updated) throw LinearWorkspaceRepositoryError.notFound(input.id);
+  return updated;
+}
+
+// postgres-js surfaces Postgres errors as objects with a `code`
+// string field. 23505 is the SQLSTATE for `unique_violation`. We
+// check defensively rather than instanceof-matching a vendor type
+// so the helper survives a future driver swap.
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    "code" in err &&
+    (err as { code: unknown }).code === "23505"
+  );
 }
 
 export async function getLinearWorkspace(): Promise<LinearWorkspace | null> {

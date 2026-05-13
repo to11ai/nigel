@@ -5,13 +5,14 @@ import { db } from "@/lib/db/client";
 import { linearWorkspace } from "@/lib/db/schema";
 import { resetEncryptionKeyCacheForTests } from "@/lib/tool-connections/encryption";
 import {
+  createLinearWorkspace,
   deleteLinearWorkspace,
   getLinearWorkspace,
   getLinearWorkspaceByWorkspaceId,
   LinearWorkspaceRepositoryError,
   resolveLinearWorkspace,
   rowToListItem,
-  upsertLinearWorkspace,
+  updateLinearWorkspace,
 } from "./workspace-repository";
 
 const ORIGINAL_KEY = process.env.TOOL_CONNECTIONS_ENC_KEY;
@@ -44,9 +45,9 @@ const fixture = () => ({
   },
 });
 
-describe("upsertLinearWorkspace — insert path", () => {
+describe("createLinearWorkspace", () => {
   test("creates a row and encrypts the secrets payload", async () => {
-    const row = await upsertLinearWorkspace(fixture());
+    const row = await createLinearWorkspace(fixture());
     expect(row.workspaceId).toBe("ws-prod");
     expect(row.botUserId).toBe("user-nigel-bot");
     // Plaintext must NOT survive in any field.
@@ -54,34 +55,38 @@ describe("upsertLinearWorkspace — insert path", () => {
     expect(row.secretsCiphertext).not.toContain("lin_oauth_xyz");
   });
 
-  test("rejects insert when secrets are omitted", async () => {
-    await expect(
-      upsertLinearWorkspace({
-        workspaceId: "ws-prod",
-        botUserId: "user-nigel-bot",
-      }),
-    ).rejects.toThrow(/secrets.*required/);
-  });
-
   test("defaults teamRepoMap to empty object", async () => {
-    const row = await upsertLinearWorkspace({
+    const row = await createLinearWorkspace({
       workspaceId: "ws-prod",
       botUserId: "user-nigel-bot",
       secrets: fixture().secrets,
     });
     expect(row.teamRepoMap).toEqual({});
   });
+
+  test("throws already_exists on duplicate workspaceId", async () => {
+    await createLinearWorkspace(fixture());
+    try {
+      await createLinearWorkspace(fixture());
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LinearWorkspaceRepositoryError);
+      expect((err as LinearWorkspaceRepositoryError).code).toBe(
+        "already_exists",
+      );
+    }
+  });
 });
 
-describe("upsertLinearWorkspace — update path", () => {
+describe("updateLinearWorkspace", () => {
   test("preserves existing secrets when secrets is omitted", async () => {
-    const initial = await upsertLinearWorkspace(fixture());
+    const initial = await createLinearWorkspace(fixture());
     const before = {
       ciphertext: initial.secretsCiphertext,
       nonce: initial.secretsNonce,
     };
-    const updated = await upsertLinearWorkspace({
-      workspaceId: "ws-prod",
+    const updated = await updateLinearWorkspace({
+      id: initial.id,
       botUserId: "user-nigel-bot-renamed",
     });
     expect(updated.botUserId).toBe("user-nigel-bot-renamed");
@@ -90,10 +95,9 @@ describe("upsertLinearWorkspace — update path", () => {
   });
 
   test("rotates secrets when supplied", async () => {
-    const initial = await upsertLinearWorkspace(fixture());
-    const updated = await upsertLinearWorkspace({
-      workspaceId: "ws-prod",
-      botUserId: "user-nigel-bot",
+    const initial = await createLinearWorkspace(fixture());
+    const updated = await updateLinearWorkspace({
+      id: initial.id,
       secrets: { webhookSecret: "new", accessToken: "fresh" },
     });
     expect(updated.secretsCiphertext).not.toBe(initial.secretsCiphertext);
@@ -103,10 +107,9 @@ describe("upsertLinearWorkspace — update path", () => {
   });
 
   test("updates teamRepoMap independently", async () => {
-    await upsertLinearWorkspace(fixture());
-    const updated = await upsertLinearWorkspace({
-      workspaceId: "ws-prod",
-      botUserId: "user-nigel-bot",
+    const initial = await createLinearWorkspace(fixture());
+    const updated = await updateLinearWorkspace({
+      id: initial.id,
       teamRepoMap: { "team-other": "to11ai/other-repo" },
     });
     expect(updated.teamRepoMap).toEqual({
@@ -114,21 +117,16 @@ describe("upsertLinearWorkspace — update path", () => {
     });
   });
 
-  test("upsert is idempotent on workspaceId — second call updates the same row", async () => {
-    await upsertLinearWorkspace(fixture());
-    await upsertLinearWorkspace({
-      workspaceId: "ws-prod",
-      botUserId: "user-nigel-bot-2",
-    });
-    const rows = await db.select().from(linearWorkspace);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.botUserId).toBe("user-nigel-bot-2");
+  test("throws not_found for an unknown id", async () => {
+    await expect(
+      updateLinearWorkspace({ id: "does-not-exist", botUserId: "x" }),
+    ).rejects.toThrow(LinearWorkspaceRepositoryError);
   });
 });
 
 describe("resolveLinearWorkspace", () => {
   test("decrypts secrets and exposes the plaintext shape", async () => {
-    await upsertLinearWorkspace(fixture());
+    await createLinearWorkspace(fixture());
     const resolved = await resolveLinearWorkspace();
     expect(resolved).not.toBeNull();
     expect(resolved?.secrets.webhookSecret).toBe("whsec_abc123");
@@ -144,7 +142,7 @@ describe("resolveLinearWorkspace", () => {
   test("coerces a malformed team_repo_map JSON value to empty object", async () => {
     // Sneak a non-string value into the team_repo_map via a direct
     // update — simulates a hand-edited or migration-corrupted row.
-    await upsertLinearWorkspace(fixture());
+    await createLinearWorkspace(fixture());
     const row = await getLinearWorkspace();
     if (!row) throw new Error("seed row missing");
     await db
@@ -163,13 +161,13 @@ describe("resolveLinearWorkspace", () => {
 
 describe("delete + lookup", () => {
   test("getLinearWorkspaceByWorkspaceId returns the row", async () => {
-    await upsertLinearWorkspace(fixture());
+    await createLinearWorkspace(fixture());
     const row = await getLinearWorkspaceByWorkspaceId("ws-prod");
     expect(row?.workspaceId).toBe("ws-prod");
   });
 
   test("deleteLinearWorkspace removes the row", async () => {
-    const row = await upsertLinearWorkspace(fixture());
+    const row = await createLinearWorkspace(fixture());
     await deleteLinearWorkspace(row.id);
     const after = await getLinearWorkspace();
     expect(after).toBeNull();
@@ -184,7 +182,7 @@ describe("delete + lookup", () => {
 
 describe("rowToListItem", () => {
   test("excludes the encrypted secrets columns", async () => {
-    const row = await upsertLinearWorkspace(fixture());
+    const row = await createLinearWorkspace(fixture());
     const item = rowToListItem(row);
     // The list item shape is hand-typed to exclude these; if a
     // future refactor accidentally widens it, this test fails.

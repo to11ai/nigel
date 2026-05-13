@@ -4,6 +4,8 @@ export {
   markWebhookEventProcessed,
 } from "./webhook-events-repository";
 export {
+  type CreateLinearWorkspaceInput,
+  createLinearWorkspace,
   deleteLinearWorkspace,
   getLinearWorkspace,
   getLinearWorkspaceByWorkspaceId,
@@ -14,6 +16,6 @@ export {
   type ResolvedLinearWorkspace,
   resolveLinearWorkspace,
   rowToListItem,
-  type UpsertLinearWorkspaceInput,
-  upsertLinearWorkspace,
+  type UpdateLinearWorkspaceInput,
+  updateLinearWorkspace,
 } from "./workspace-repository";
