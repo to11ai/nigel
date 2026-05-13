@@ -31,17 +31,19 @@ export type LinearTriggerWorkflowInput = {
   branch?: string;
 };
 
-// Outcome discriminator for `markRunRunning`. The workflow has to
-// tell two cases apart that both result in "don't transition again":
+// Outcome discriminator for `markRunRunning`. The workflow needs
+// to distinguish three cases:
+//   - `transitioned`: was `pending`, now `running`. Proceed.
 //   - `already_running`: re-entry from a Workflow SDK step replay
 //     after a kill -9. Proceed; the planner work needs to run.
-//   - `already_terminal`: the run was externally cancelled /
-//     completed / failed (e.g. via /cancel comment in L4, or a
-//     manual admin action). Abort immediately; provisioning a
-//     sandbox and running the planner here would waste cloud
-//     resources and produce confusing output against a run that's
-//     already been closed out.
-type MarkRunOutcome = "transitioned" | "already_running" | "already_terminal";
+//   - `not_runnable`: the run is in a state that should NOT
+//     trigger execution. This covers terminals (`completed`,
+//     `failed`, `cancelled`) plus human-waited states (`blocked`,
+//     `awaiting_approval`) where the workflow proceeding would
+//     produce duplicate work — a blocked run might already have
+//     been picked up by a different process responding to the
+//     unblock signal. Abort regardless of the exact status.
+type MarkRunOutcome = "transitioned" | "already_running" | "not_runnable";
 
 const markRunRunning = async (agentRunId: string): Promise<MarkRunOutcome> => {
   "use step";
@@ -54,9 +56,11 @@ const markRunRunning = async (agentRunId: string): Promise<MarkRunOutcome> => {
   if (
     current.status === "completed" ||
     current.status === "failed" ||
-    current.status === "cancelled"
+    current.status === "cancelled" ||
+    current.status === "blocked" ||
+    current.status === "awaiting_approval"
   ) {
-    return "already_terminal";
+    return "not_runnable";
   }
   await updateRunStatus(agentRunId, "running");
   return "transitioned";
@@ -156,11 +160,13 @@ export async function runLinearTriggeredWorkflow(
   "use workflow";
 
   const outcome = await markRunRunning(input.agentRunId);
-  if (outcome === "already_terminal") {
-    // Run was externally cancelled or completed before the
-    // workflow picked it up. Exit without provisioning a sandbox
-    // or running the planner; the audit trail is already final.
-    console.log("[linear-trigger] run is already terminal; skipping", {
+  if (outcome === "not_runnable") {
+    // Run is in a state that should NOT trigger execution: terminal
+    // (completed/failed/cancelled) OR human-waited (blocked /
+    // awaiting_approval). Exit without provisioning; the audit
+    // trail is either already final or owned by a different
+    // resumption path (e.g. /resume comment after unblock).
+    console.log("[linear-trigger] run is not runnable; skipping", {
       agentRunId: input.agentRunId,
     });
     return;
