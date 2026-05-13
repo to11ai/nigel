@@ -93,11 +93,11 @@ describe("extractAssignmentToBot", () => {
     expect(out?.actorId).toBe("user-mattc");
   });
 
-  test("matches `Issue.update` with assigneeId at top level (alt envelope shape)", () => {
+  test("matches assignee_changed with assigneeId at top level (alt envelope shape)", () => {
     const envelope = linearWebhookEnvelopeSchema.parse({
       id: "evt_1",
       type: "Issue",
-      action: "update",
+      action: "assignee_changed",
       actor: { id: "user-mattc" },
       assigneeId: BOT,
       data: {
@@ -110,6 +110,29 @@ describe("extractAssignmentToBot", () => {
     const out = extractAssignmentToBot({ envelope, botUserId: BOT });
     expect(out).not.toBeNull();
     expect(out?.issue.id).toBe("iss_xyz");
+  });
+
+  test("ignores generic Issue.update events even when data.assigneeId === bot", () => {
+    // Critical anti-regression: title/description edits on a
+    // bot-assigned issue must NOT trigger a fresh Run.
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_1",
+      type: "Issue",
+      action: "update",
+      actor: { id: "user-mattc" },
+      data: {
+        id: "iss_already_bot",
+        identifier: "PLAT-3",
+        title: "User edited the title; assignee unchanged",
+        teamId: "team-platform",
+        // Bot was already the assignee — this `data` shape persists
+        // across any field edit. Without filtering on action,
+        // we'd spawn a Run on every edit.
+        assigneeId: BOT,
+        creator: { id: "user-creator" },
+      },
+    });
+    expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
   });
 
   test("returns null when new assignee is someone else", () => {

@@ -109,22 +109,29 @@ export function deriveExternalId(env: LinearWebhookEnvelope): string | null {
   return null;
 }
 
-// Is this an Issue.assignee_changed event where the new assignee
+// Is this an `Issue.assignee_changed` event where the new assignee
 // is the bot? Returns the issue + the actor when it matches.
 // Returns `null` for any other event so the route can quietly
 // acknowledge and move on without further work.
+//
+// Restricted to `assignee_changed` — NOT generic `Issue.update`.
+// The `data` payload of a generic update always contains the full
+// issue object including the current `assigneeId`; any title /
+// description edit on an already-bot-assigned issue would falsely
+// match and spawn a fresh `pending` Run. Only the dedicated
+// `assignee_changed` action carries the "the assignment itself
+// just changed" semantic the spec relies on.
+//
+// We do still tolerate the assigneeId being supplied either at the
+// envelope top level or nested in `data`. For `assignee_changed`
+// both refer to the new assignee, so there's no ambiguity.
 export function extractAssignmentToBot(input: {
   envelope: LinearWebhookEnvelope;
   botUserId: string;
 }): { issue: LinearIssue; actorId: string | null } | null {
   const env = input.envelope;
   if (env.type !== "Issue") return null;
-  // Linear emits assignment changes as `update` events whose data
-  // includes the new `assigneeId`. Some installations use the
-  // explicit `assignee_changed` action — accept both.
-  const isAssignmentChange =
-    env.action === "assignee_changed" || env.action === "update";
-  if (!isAssignmentChange) return null;
+  if (env.action !== "assignee_changed") return null;
   const newAssigneeId =
     env.assigneeId ??
     (isObject(env.data)
