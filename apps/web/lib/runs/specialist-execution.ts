@@ -143,6 +143,13 @@ export async function executeSpecialistViaLLM(
     "specialist.execute",
     { attributes: buildSpecialistSpanAttributes({ run, specialist }) },
     async (span) => {
+      // Declared outside the try so the `finally` can still flush
+      // the aggregate cost when the agent throws mid-run (budget
+      // exhaustion, network failure, etc). Without this, completed
+      // steps' costs would be recorded as individual events but
+      // the rollup attribute would be missing — making partial-run
+      // cost queries hard.
+      let totalCostMicros = 0;
       try {
         // dispatch_specialist callback — see comment near the
         // experimental_context binding for the lazy-import rationale.
@@ -194,12 +201,6 @@ export async function executeSpecialistViaLLM(
           nigelTools,
         );
         const callModel = gateway(model);
-
-        // Sum of every step's resolved cost in micros. Accumulated
-        // in `onStepFinish` so the parent span can carry the total
-        // when it ends. Independent from the `addCostMicros` DB
-        // write: if the write fails we still record on the span.
-        let totalCostMicros = 0;
 
         const agent = new ToolLoopAgent({
           model: callModel,
@@ -255,10 +256,6 @@ export async function executeSpecialistViaLLM(
         const result = await agent.generate({
           messages: [{ role: "user", content: task }],
         });
-
-        // Aggregate cost lands on the parent span as an attribute
-        // (not an event) so Dash0 can sum it across spans directly.
-        span.setAttribute("nigel.run.cost_total_micros", totalCostMicros);
         return { output: result.text };
       } catch (err) {
         span.recordException(err as Error);
@@ -268,6 +265,10 @@ export async function executeSpecialistViaLLM(
         });
         throw err;
       } finally {
+        // Always flush the running cost total, even on the error
+        // path — the attribute records work the run actually did
+        // before it failed, which is what cost dashboards need.
+        span.setAttribute("nigel.run.cost_total_micros", totalCostMicros);
         span.end();
       }
     },
