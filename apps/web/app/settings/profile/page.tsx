@@ -491,7 +491,13 @@ export default function ProfilePage() {
     subagentTotals.inputTokens + subagentTotals.outputTokens;
   const specialistTokens =
     specialistTotals.inputTokens + specialistTotals.outputTokens;
-  const hasUsage = totals.messageCount > 0;
+  // messageCount counts only agentType='main' rows (chat-turn proxy),
+  // so a user with only Linear-triggered specialist runs would have
+  // messageCount=0 and the whole usage section would be hidden —
+  // including the Specialists row this PR exists to surface. Treat
+  // any token volume as evidence of usage, matching usage-section.tsx.
+  const totalTokens = totals.inputTokens + totals.outputTokens;
+  const hasUsage = totalTokens > 0 || totals.messageCount > 0;
   const estimatedCostValue =
     costEstimate && costEstimate.pricedTokens > 0
       ? formatUsd(costEstimate.amount)
