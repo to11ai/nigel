@@ -3,7 +3,7 @@ import type { ToolSet } from "ai";
 // Maps a spec specialist tool category (e.g. "file") to the underlying
 // open-agent tool names that implement it. Categories not in this map
 // are silently ignored — they correspond to tools that this PR doesn't
-// wire up (e.g. `database:*`, `mcp:pulumi`, `cloud:*`, `linear`,
+// wire up (e.g. `database:*`, `mcp:pulumi`, `cloud:*`,
 // `screenshot_matrix`).
 const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   file: ["read", "write", "edit"],
@@ -21,6 +21,16 @@ const CATEGORY_TO_TOOLS: Record<string, readonly string[]> = {
   // `planner`) should include this category. dispatch.ts also enforces
   // may_recurse at runtime; the allowlist is the first line of defense.
   dispatch_specialist: ["dispatch_specialist"],
+  // Parallel fan-out variant of dispatch_specialist. Used by the
+  // planner to dispatch N independent sub-tasks in one tool call so
+  // wall-clock is max(child) rather than sum(child). Same may_recurse
+  // gate applies at the dispatch layer.
+  dispatch_specialists_parallel: ["dispatch_specialists_parallel"],
+  // Read + comment + attach surface against the singleton
+  // linear_workspace row. Write surface is intentionally narrow:
+  // status / assignee / label transitions route through the
+  // `linear-engineer` specialist with explicit authorization.
+  linear: ["linear_get_issue", "linear_comment", "linear_attach"],
   // SQL against a registered tool_connection of kind 'postgres'. The
   // tool callback enforces scope + read-only at runtime; the
   // allowlist is the first gate.
