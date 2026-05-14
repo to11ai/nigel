@@ -13,11 +13,12 @@ import { usageEvents } from "./schema";
 // audit — silent acceptance via plain `string` would let unrecognized
 // values slip into reporting queries.
 export type UsageSource = "web" | "linear" | "chained" | "cron";
-// Linear-triggered planner runs persist as "main" since they ARE the
-// main agent of their own run tree — see persistUsageEvent in
-// lib/runs/run-persistence.ts for the rationale (keeping the pie
-// chart's main/subagent split summing to the visible total).
-export type UsageAgentType = "main" | "subagent";
+// "specialist" tags Linear-triggered planner writes that fire once
+// per LLM step (vs chat's per-turn writes under "main"). The
+// usage UI renders it as its own pie segment so tokens are visible
+// without inflating row-count metrics like messageCount (which
+// counts agentType='main' rows as a proxy for chat interactions).
+export type UsageAgentType = "main" | "subagent" | "specialist";
 
 export async function recordUsage(
   userId: string,

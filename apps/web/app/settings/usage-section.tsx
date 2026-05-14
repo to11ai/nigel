@@ -22,8 +22,16 @@ import { UsageInsightsSection } from "./usage/usage-insights-section";
 
 interface DailyUsageRow {
   date: string;
-  source: "web";
-  agentType: "main" | "subagent";
+  // Mirrors lib/db/usage.ts UsageSource. The UI doesn't branch on
+  // this field today; broaden to the full union so rows from
+  // Linear/chained/cron triggers don't silently fail TS narrowing.
+  source: "web" | "linear" | "chained" | "cron";
+  // Mirrors lib/db/usage.ts UsageAgentType. "specialist" was added
+  // for Linear-triggered planner writes that fire once per LLM
+  // step (see lib/runs/run-persistence.ts) — rendered below as its
+  // own pie segment so tokens stay visible without contaminating
+  // chat's per-turn messageCount signal.
+  agentType: "main" | "subagent" | "specialist";
   provider: string | null;
   modelId: string | null;
   inputTokens: number;
@@ -567,6 +575,7 @@ export function UsageSection() {
     modelUsage,
     mainTotals,
     subagentTotals,
+    specialistTotals,
     costEstimate,
   } = useMemo(() => {
     const selectedUsage = data?.usage ?? [];
@@ -574,12 +583,16 @@ export function UsageSection() {
     const aggregatedModelUsage = aggregateByModel(selectedUsage);
     const main = selectedUsage.filter((r) => r.agentType === "main");
     const subagent = selectedUsage.filter((r) => r.agentType === "subagent");
+    const specialist = selectedUsage.filter(
+      (r) => r.agentType === "specialist",
+    );
     return {
       totals: sumRows(selectedUsage),
       chartData: mergeDays(chartUsage),
       modelUsage: aggregatedModelUsage,
       mainTotals: sumRows(main),
       subagentTotals: sumRows(subagent),
+      specialistTotals: sumRows(specialist),
       costEstimate: estimateUsageCost(
         aggregatedModelUsage,
         modelsData?.models ?? [],
@@ -608,6 +621,8 @@ export function UsageSection() {
   const mainTokens = mainTotals.inputTokens + mainTotals.outputTokens;
   const subagentTokens =
     subagentTotals.inputTokens + subagentTotals.outputTokens;
+  const specialistTokens =
+    specialistTotals.inputTokens + specialistTotals.outputTokens;
 
   const hasUsage = totalTokens > 0 || totals.messageCount > 0;
   const costEstimateValue =
@@ -627,6 +642,11 @@ export function UsageSection() {
       label: "Subagents",
       value: subagentTokens,
       color: CHART_COLORS[1] ?? "var(--chart-2)",
+    },
+    {
+      label: "Specialists",
+      value: specialistTokens,
+      color: CHART_COLORS[2] ?? "var(--chart-3)",
     },
   ];
 

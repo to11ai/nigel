@@ -193,16 +193,18 @@ async function persistUsageEvent(input: {
     id: nanoid(),
     userId: input.userId,
     source,
-    // Specialist runs ARE the main agent for their own run tree —
-    // the planner that drives the Linear-triggered execution loop
-    // is functionally the same role as the chat-side main agent.
-    // The distinction between "linear-triggered planner" and
-    // "chat main" is already encoded in `source`, so collapsing
-    // agentType to "main" preserves the analytics signal and keeps
-    // the usage pie chart's main/subagent split summing to the
-    // visible total. A separate "specialist" agentType would be
-    // silently excluded from the Main/Subagents pie segments.
-    agentType: "main",
+    // `agentType: "specialist"` distinguishes per-step specialist
+    // writes from chat's per-turn `recordUsage` write. The chat
+    // path writes once per chat turn; we write once per LLM step
+    // via onStepFinish. Reusing "main" would inflate
+    // getUsageHistory.messageCount (which counts rows where
+    // agentType='main') by ~N-per-run for Linear-triggered runs,
+    // breaking any "interactions" proxy built on messageCount.
+    // The usage UI's pie chart now recognizes "specialist" as a
+    // first-class segment alongside main/subagents (see
+    // app/settings/usage-section.tsx) so tokens stay visible
+    // without contaminating the message-count signal.
+    agentType: "specialist",
     provider: input.step.model?.provider ?? null,
     modelId: input.step.model?.modelId ?? null,
     inputTokens: input.step.usage?.inputTokens ?? 0,
