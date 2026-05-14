@@ -480,4 +480,31 @@ describe("extractAgentSessionCreated", () => {
       "user-envelope-actor",
     );
   });
+
+  test("accepts null for prompt / comment (Linear sends null for absent JSON fields)", () => {
+    // Regression for Cursor Medium: missing .nullable() on prompt
+    // and comment would fail the whole envelope parse when Linear
+    // delivered `null` instead of omitting the fields. The session
+    // would silently drop with kind="invalid_payload" — exactly
+    // the "did not respond" failure mode this PR exists to fix.
+    const raw: unknown = {
+      id: "evt_session_null",
+      type: "AgentSessionEvent",
+      action: "created",
+      agentSession: {
+        id: "session-null",
+        issue: { id: "iss_null" },
+        prompt: null,
+        comment: null,
+      },
+    };
+    const envelope = linearWebhookEnvelopeSchema.parse(raw);
+    const result = extractAgentSessionCreated({ envelope });
+    expect(result).toEqual({
+      agentSessionId: "session-null",
+      issueId: "iss_null",
+      actorId: null,
+      prompt: null,
+    });
+  });
 });

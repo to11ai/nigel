@@ -132,10 +132,16 @@ export const linearWebhookEnvelopeSchema = z
         // shape on the wire isn't 100% pinned across Linear API
         // revisions, so we accept either a plain string or an object
         // with a body field and let the extractor pick what's there.
+        // `.nullable()` because Linear JSON commonly sends `null` for
+        // absent fields rather than omitting them — without it the
+        // whole envelope parse fails on a session that was started
+        // with no prompt, dropping the AgentSessionEvent entirely
+        // and putting the session panel back to "did not respond".
         comment: z
           .union([z.string(), z.object({ body: z.string() }).passthrough()])
+          .nullable()
           .optional(),
-        prompt: z.string().optional(),
+        prompt: z.string().nullable().optional(),
       })
       .passthrough()
       .optional(),
