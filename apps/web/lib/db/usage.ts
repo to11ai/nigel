@@ -5,14 +5,17 @@ import type { UsageDateRange } from "@/lib/usage/date-range";
 import { db } from "./client";
 import { usageEvents } from "./schema";
 
-// `source` mirrors agent_runs.trigger_source (chat="web", plus
-// "linear" / "chained" / "cron" as Phase 6 trigger sources were
-// added). The DB column is plain text — kept as a string here for
-// forward-compat with new trigger sources.
-export type UsageSource = string;
-// "specialist" added when Phase 7-visibility wired Linear-triggered
-// planner + child runs through `executeSpecialistViaLLM`.
-export type UsageAgentType = string;
+// `source` mirrors agent_runs.trigger_source. Started as just "web"
+// when only the chat path wrote usage; Phase 6 added "linear",
+// "chained", "cron" as trigger sources flowed through the
+// run-persistence layer. Keep the union explicit so callers get a
+// compile-time error when a new source is added without a code-side
+// audit — silent acceptance via plain `string` would let unrecognized
+// values slip into reporting queries.
+export type UsageSource = "web" | "linear" | "chained" | "cron";
+// "specialist" added for Linear-triggered planner + child runs that
+// flow through `executeSpecialistViaLLM`.
+export type UsageAgentType = "main" | "subagent" | "specialist";
 
 export async function recordUsage(
   userId: string,
@@ -121,5 +124,12 @@ export async function getUsageHistory(
     )
     .orderBy(sql`date(${usageEvents.createdAt})`);
 
-  return rows;
+  // Schema-side type for `source` / `agent_type` is plain text since
+  // the column is unconstrained at the DB layer (relaxed in this PR
+  // for Linear/chained/cron + specialist support). The TS unions
+  // above are an audit boundary — narrow here so any unrecognized
+  // value passing through the DB surfaces in reporting as the
+  // generic union rather than silently propagating. A future
+  // migration adds CHECK constraints if we want DB-side enforcement.
+  return rows as DailyUsage[];
 }
