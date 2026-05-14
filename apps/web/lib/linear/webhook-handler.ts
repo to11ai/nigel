@@ -1,3 +1,4 @@
+import { startWebhookSpan } from "@/lib/observability/webhook-span";
 import { Run } from "@/lib/runs/create";
 import { commentOnIssue, reassignIssue } from "./client";
 import {
@@ -105,6 +106,53 @@ export type WebhookHandlerInput = {
 };
 
 export async function handleLinearWebhook(
+  input: WebhookHandlerInput,
+): Promise<WebhookHandlerOutcome> {
+  // The span wraps the whole intake so Datadog records latency +
+  // outcome counts. Started here (before signature verification)
+  // because signature failures are themselves a metric the
+  // dashboard should show.
+  const span = startWebhookSpan({
+    source: "linear",
+    externalId: input.deliveryHeader,
+    envelopeType: null,
+  });
+  try {
+    const outcome = await runHandler(input);
+    span.finish({
+      outcomeKind: outcome.kind,
+      runId: extractRunId(outcome),
+      outcomeReason: extractOutcomeReason(outcome),
+    });
+    return outcome;
+  } catch (err) {
+    span.fail(err);
+    throw err;
+  }
+}
+
+function extractRunId(outcome: WebhookHandlerOutcome): string | null {
+  if (outcome.kind === "run_created") return outcome.runId;
+  if (outcome.kind === "command") {
+    const inner = outcome.outcome;
+    if (inner.kind === "transitioned" || inner.kind === "run_started") {
+      return inner.runId;
+    }
+    if (inner.kind === "run_start_failed" && inner.runId) {
+      return inner.runId;
+    }
+  }
+  return null;
+}
+
+function extractOutcomeReason(outcome: WebhookHandlerOutcome): string | null {
+  if (outcome.kind === "invalid_payload") return outcome.reason;
+  if (outcome.kind === "ignored") return outcome.reason;
+  if (outcome.kind === "command") return outcome.outcome.kind;
+  return null;
+}
+
+async function runHandler(
   input: WebhookHandlerInput,
 ): Promise<WebhookHandlerOutcome> {
   const workspaceFn = input.deps?.resolveWorkspace ?? resolveLinearWorkspace;

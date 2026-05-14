@@ -1,0 +1,139 @@
+{
+  "title": "Nigel — Overview",
+  "description": "Top-level health of the Nigel platform: webhook intake, run lifecycle, specialist execution, and cost. Imported via Datadog API; do not edit in the UI — round-trip through this file.",
+  "layout_type": "ordered",
+  "widgets": [
+    {
+      "definition": {
+        "title": "Webhook intake (last 1h)",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "sum:trace.webhook.linear.intake.hits{service:nigel-web}.as_count()",
+            "aggregator": "sum"
+          }
+        ],
+        "precision": 0
+      }
+    },
+    {
+      "definition": {
+        "title": "Webhook intake by outcome",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:trace.webhook.linear.intake.hits{service:nigel-web} by {nigel.webhook.outcome}.as_count()",
+            "display_type": "bars"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Webhook errors by reason",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:trace.webhook.linear.intake.errors{service:nigel-web} by {nigel.webhook.outcome}.as_count()",
+            "display_type": "bars"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Run status transitions",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:trace.run.status_change.hits{service:nigel-web} by {nigel.run.status.to}.as_count()",
+            "display_type": "bars"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Terminal run outcomes by trigger",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:trace.run.status_change.hits{service:nigel-web,nigel.run.status.to:completed} by {nigel.run.trigger_source}.as_count()",
+            "display_type": "bars",
+            "style": { "palette": "green" }
+          },
+          {
+            "q": "sum:trace.run.status_change.hits{service:nigel-web,nigel.run.status.to:failed} by {nigel.run.trigger_source}.as_count()",
+            "display_type": "bars",
+            "style": { "palette": "warm" }
+          },
+          {
+            "q": "sum:trace.run.status_change.hits{service:nigel-web,nigel.run.status.to:cancelled} by {nigel.run.trigger_source}.as_count()",
+            "display_type": "bars",
+            "style": { "palette": "grey" }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Run duration p95 (ms) by trigger",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "p95:trace.run.status_change.duration_ms{service:nigel-web,nigel.run.status.to:completed} by {nigel.run.trigger_source}"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Cost ($) by trigger (last 1h)",
+        "type": "query_value",
+        "requests": [
+          {
+            "q": "sum:trace.run.status_change.cost_total_micros{service:nigel-web,nigel.run.depth:0}/1000000",
+            "aggregator": "sum"
+          }
+        ],
+        "precision": 2,
+        "custom_unit": "$"
+      }
+    },
+    {
+      "definition": {
+        "title": "Specialist runs by name",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:trace.specialist.execute.hits{service:nigel-web} by {nigel.specialist.name}.as_count()",
+            "display_type": "bars"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Specialist duration p95 by name",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "p95:trace.specialist.execute.duration{service:nigel-web} by {nigel.specialist.name}"
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "title": "Tool failures by tool + code",
+        "type": "timeseries",
+        "requests": [
+          {
+            "q": "sum:trace.tool.errors{service:nigel-web} by {nigel.tool.name,nigel.tool.error_code}.as_count()",
+            "display_type": "bars"
+          }
+        ]
+      }
+    }
+  ]
+}

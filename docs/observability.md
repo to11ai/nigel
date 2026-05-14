@@ -11,8 +11,12 @@ Nigel ships OpenTelemetry traces from the Next.js server runtime to Datadog. Thi
         │
         ├── nigel.specialist tracer  → specialist.execute spans       (Phase 7b)
         │
-        └── nigel.tool tracer        → tool.<name> spans              (Phase 7c)
-                                       (parent = specialist.execute)
+        ├── nigel.tool tracer        → tool.<name> spans              (Phase 7c)
+        │                              (parent = specialist.execute)
+        │
+        ├── nigel.run tracer         → run.status_change spans        (Phase 7 L1)
+        │
+        └── nigel.webhook tracer     → webhook.<source>.intake spans  (Phase 7 L1)
 ```
 
 All exports go via OTLP/HTTP. The recommended Vercel + Datadog pattern is to point `OTEL_EXPORTER_OTLP_ENDPOINT` at the Datadog Agent's OTLP receiver and let the Agent forward to Datadog. The Datadog Vercel integration provisions the Agent.
@@ -80,6 +84,38 @@ Per-tool:
 | `tool.mcp_call` | `nigel.tool.operation` (`list_tools` \| `call_tool`); `nigel.tool.mcp_tool_name` on `call_tool`. |
 | `tool.slack_post` | `nigel.tool.text_length`, `nigel.tool.has_blocks`. |
 
+### `run.status_change` spans (Phase 7 L1)
+
+Emitted by `lib/observability/lifecycle-span.ts` after every successful DB write inside `updateRunStatus`. Instantaneous spans — no body. Each one represents one transition in the run state machine.
+
+| Attribute | Description |
+|---|---|
+| `nigel.run.id` | The `agent_runs.id` that transitioned. |
+| `nigel.run.root_id`, `nigel.run.parent_id`, `nigel.run.depth` | Tree position (parent omitted on root runs). |
+| `nigel.run.trigger_source` | `chat` \| `linear` \| `chained` \| `cron`. |
+| `nigel.specialist.name` | The run's specialist preset (omitted when null). |
+| `nigel.run.status.from`, `nigel.run.status.to` | The transition itself. |
+| `nigel.run.duration_ms` | Wall-clock duration. Only set on terminal transitions where `endedAt` is being written this update. |
+| `nigel.run.cost_total_micros` | Cost rolled up onto the run row at transition time. |
+| `nigel.run.budget_micros` | Per-run budget cap — lets Datadog compute cost / budget ratios without a join. |
+
+Failed and cancelled transitions are recorded with `SpanStatusCode.ERROR` so the default Datadog error-rate widgets pick them up.
+
+### `webhook.<source>.intake` spans (Phase 7 L1)
+
+Emitted by `lib/observability/webhook-span.ts` wrapping every webhook handler invocation. `<source>` is currently `linear`; `github` will join when that intake ships.
+
+| Attribute | Description |
+|---|---|
+| `nigel.webhook.source` | `linear` (more sources later). |
+| `nigel.webhook.external_id` | The per-delivery UUID (`Linear-Delivery` header). Cross-references `webhook_events.external_id`. |
+| `nigel.webhook.envelope_type` | `Issue` \| `Comment` etc., when the parser surfaced one. |
+| `nigel.webhook.outcome` | The flat `WebhookHandlerOutcome.kind` discriminator: `run_created`, `command`, `signature_mismatch`, `duplicate`, `ignored`, etc. |
+| `nigel.webhook.outcome_reason` | Inner detail when the outcome has sub-classification (e.g. the `CommandHandlerOutcome.kind` for `outcome=command`, or the `invalid_payload.reason`). |
+| `nigel.run.id` | Set when the intake produced or transitioned a run, so dashboards can pivot from intake → run trace. |
+
+`signature_mismatch`, `invalid_payload`, `no_workspace_configured`, `unresolved_repo`, and `unresolved_owner` set `SpanStatusCode.ERROR`. `duplicate` and `ignored` are NOT errors — they're expected steady-state behavior.
+
 ## Datadog setup
 
 ### Vercel deployment
@@ -131,11 +167,32 @@ This means the gateway / PRICING table didn't resolve a cost for any step. The e
 
 The span attribute is recorded best-effort in `finally`; the DB write inside `addCostMicros` is also best-effort and logs on failure. If a step's DB write throws, the span has the cost but the DB rollup lags. Search Vercel logs for `[specialist-execution] addCostMicros failed for run` to find the run.
 
+## Dashboards
+
+Checked-in dashboard JSON lives under `infra/datadog/dashboards/`. Import them via the Datadog UI (Settings → Dashboards → Import) or the API:
+
+```bash
+curl -X POST "https://api.datadoghq.com/api/v1/dashboard" \
+  -H "DD-API-KEY: $DD_API_KEY" \
+  -H "DD-APPLICATION-KEY: $DD_APP_KEY" \
+  -H "Content-Type: application/json" \
+  -d @infra/datadog/dashboards/nigel-overview.json
+```
+
+Dashboards are owned by this repo — edit the JSON and re-import, do not edit live in the Datadog UI.
+
+| Dashboard | What it shows |
+|---|---|
+| `nigel-overview.json` | Top-level health: webhook intake by outcome, run lifecycle counts + p95 duration, cost rollup, specialist run breakdown, tool failure rates. |
+
 ## File pointers
 
 - `apps/web/instrumentation.ts` — `registerOTel()` server-side entry point.
 - `apps/web/lib/runs/specialist-execution.ts` — `specialist.execute` span instrumentation.
 - `apps/web/lib/observability/tool-span.ts` — shared `withToolSpan()` helper used by every tool callback.
+- `apps/web/lib/observability/lifecycle-span.ts` — `recordRunStatusChange()` called from `updateRunStatus`.
+- `apps/web/lib/observability/webhook-span.ts` — `startWebhookSpan()` called from the Linear webhook handler.
 - `apps/web/lib/runs/{database-query,clickhouse-query,redis-command,mcp-call,slack-post}.ts` — call sites for `withToolSpan`.
+- `infra/datadog/dashboards/` — checked-in dashboard JSON.
 - `infra/vercel/index.ts` — Pulumi env-var wiring (`otelExporterOtlpEndpoint`, `otelExporterOtlpHeaders`, `otelServiceName`).
 - `apps/web/.env.example` — Local-runtime env-var reference.
