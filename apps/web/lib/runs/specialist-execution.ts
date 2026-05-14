@@ -11,8 +11,11 @@ import { type Attributes, SpanStatusCode, trace } from "@opentelemetry/api";
 import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
-import { agentActivityCreate } from "@/lib/linear/client";
-import { resolveLinearWorkspace } from "@/lib/linear/workspace-repository";
+import { agentActivityCreate as defaultAgentActivityCreate } from "@/lib/linear/client";
+import {
+  resolveLinearWorkspace as defaultResolveLinearWorkspace,
+  type ResolvedLinearWorkspace,
+} from "@/lib/linear/workspace-repository";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import { checkRootBudget as defaultCheckRootBudget } from "./budget";
 import { createClickhouseQueryCallback } from "./clickhouse-query";
@@ -109,6 +112,14 @@ export type ExecuteSpecialistInput = {
     mcpCall?: McpCallCallback;
     // And the Slack equivalent.
     slackPost?: SlackPostCallback;
+    // Linear AgentSession streaming seams. Both have to be
+    // injectable separately: the workspace resolver decrypts
+    // secrets via the DB, while agentActivityCreate hits Linear's
+    // GraphQL API — tests stub each to verify the streaming
+    // path without network or DB access. Matches the seam
+    // pattern used for the other external dependencies above.
+    resolveLinearWorkspace?: () => Promise<ResolvedLinearWorkspace | null>;
+    agentActivityCreate?: typeof defaultAgentActivityCreate;
   };
 };
 
@@ -141,6 +152,10 @@ export async function executeSpecialistViaLLM(
   const model = specialist.model;
   const checkRootBudget = deps?.checkRootBudget ?? defaultCheckRootBudget;
   const addCostMicros = deps?.addCostMicros ?? defaultAddCostMicros;
+  const resolveLinearWorkspace =
+    deps?.resolveLinearWorkspace ?? defaultResolveLinearWorkspace;
+  const agentActivityCreate =
+    deps?.agentActivityCreate ?? defaultAgentActivityCreate;
 
   return tracer.startActiveSpan(
     "specialist.execute",
