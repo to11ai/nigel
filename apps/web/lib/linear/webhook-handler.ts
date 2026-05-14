@@ -534,6 +534,20 @@ async function runHandler(
   } catch (err) {
     if (isUniqueViolation(err)) {
       const existing = await getActiveRunByLinearIssue(match.issue.id);
+      // If THIS webhook had a session id and the winner doesn't,
+      // stamp it onto the winner so the AgentActivity stream
+      // still routes to the right Linear UI surface. Without this
+      // the AppUserNotification (no session id) wins the
+      // unique-violation race, the AgentSessionEvent loser
+      // exits here, and the run proceeds with no
+      // linearAgentSessionId — session panel stays stuck on "did
+      // not respond" despite the index closing the two-planners
+      // window. This is symmetric with the AgentSessionEvent
+      // upper-branch dedup (which also calls
+      // setRunLinearAgentSessionId when an earlier run is found).
+      if (existing && pendingAgentSessionId && !existing.linearAgentSessionId) {
+        await setRunLinearAgentSessionId(existing.id, pendingAgentSessionId);
+      }
       await markWebhookEventProcessed(
         existing ? { id: claim.id, runId: existing.id } : { id: claim.id },
       );
