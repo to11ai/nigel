@@ -183,4 +183,41 @@ describe("startWebhookSpan", () => {
       "Comment",
     );
   });
+
+  // Phase 7 L2: runInContext invokes the callback and propagates the
+  // return value. We can't easily assert OTel context propagation
+  // inside Bun's test process (no AsyncLocalStorage-based context
+  // manager is registered by default), but we can verify the call
+  // shape: the callback fires, errors bubble, the resolved value is
+  // returned to the caller. Production runs under @vercel/otel which
+  // installs the propagating context manager, so child spans really
+  // do nest in real deployments.
+  test("runInContext invokes the callback and resolves its value", async () => {
+    const handle = startWebhookSpan({
+      source: "linear",
+      externalId: "delivery-ctx",
+    });
+    const result = await handle.runInContext(async () => 42);
+    expect(result).toBe(42);
+    handle.finish({
+      outcomeKind: "ignored",
+      runId: null,
+      outcomeReason: null,
+      envelopeType: "Issue",
+    });
+  });
+
+  test("runInContext propagates throws", async () => {
+    const handle = startWebhookSpan({
+      source: "linear",
+      externalId: "delivery-throw-ctx",
+    });
+    const err = new Error("boom");
+    await expect(
+      handle.runInContext(async () => {
+        throw err;
+      }),
+    ).rejects.toBe(err);
+    handle.fail(err);
+  });
 });

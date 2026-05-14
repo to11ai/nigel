@@ -1,4 +1,9 @@
-import { type Attributes, SpanStatusCode, trace } from "@opentelemetry/api";
+import {
+  type Attributes,
+  context,
+  SpanStatusCode,
+  trace,
+} from "@opentelemetry/api";
 
 // Phase 7 L1: span helper for inbound webhook intake.
 //
@@ -46,6 +51,14 @@ export type WebhookOutcomeAttributes = {
 };
 
 export type WebhookSpanHandle = {
+  // Phase 7 L2: run a function with the intake span as the active
+  // OTel context. Any span created inside `fn` (or in any async task
+  // it awaits) automatically nests under the intake span — that
+  // includes auto-instrumented http/fetch client spans, manual spans
+  // from the command handler / lifecycle dispatcher, and future
+  // `withToolSpan` children. Without this wrapper the intake span
+  // is started but is NEVER active — descendants would orphan.
+  runInContext<T>(fn: () => Promise<T>): Promise<T>;
   finish(outcome: WebhookOutcomeAttributes): void;
   fail(err: unknown): void;
 };
@@ -66,6 +79,13 @@ export function startWebhookSpan(
     });
 
   return {
+    runInContext(fn) {
+      // Read context.active() at call time, not span-creation time —
+      // any baggage / parent context added between startWebhookSpan
+      // and runInContext (e.g. by future middleware) needs to be
+      // preserved alongside the intake span, not silently dropped.
+      return context.with(trace.setSpan(context.active(), span), fn);
+    },
     finish(outcome) {
       span.setAttribute("nigel.webhook.outcome", outcome.outcomeKind);
       if (outcome.runId) {
