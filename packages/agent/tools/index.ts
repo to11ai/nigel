@@ -35,6 +35,11 @@ export {
   dispatchSpecialistTool,
 } from "./dispatch-specialist";
 export {
+  type DispatchSpecialistsParallelCallback,
+  type DispatchSpecialistsParallelInput,
+  dispatchSpecialistsParallelTool,
+} from "./dispatch-specialists-parallel";
+export {
   type McpCallCallback,
   type McpCallInput,
   mcpCallTool,

@@ -16,6 +16,7 @@ import {
   clickhouseQueryTool,
   databaseQueryTool,
   dispatchSpecialistTool,
+  dispatchSpecialistsParallelTool,
   editFileTool,
   globTool,
   grepTool,
@@ -90,6 +91,7 @@ export const nigelTools = {
   skill: skillTool,
   web_fetch: webFetchTool,
   dispatch_specialist: dispatchSpecialistTool,
+  dispatch_specialists_parallel: dispatchSpecialistsParallelTool,
   database_query: databaseQueryTool,
   clickhouse_query: clickhouseQueryTool,
   redis_command: redisCommandTool,
@@ -101,6 +103,7 @@ export const nigelTools = {
 // specialist-only tools whose callbacks the chat path doesn't wire.
 const {
   dispatch_specialist: _unusedDispatchTool,
+  dispatch_specialists_parallel: _unusedDispatchParallelTool,
   database_query: _unusedDatabaseQueryTool,
   clickhouse_query: _unusedClickhouseQueryTool,
   redis_command: _unusedRedisCommandTool,
