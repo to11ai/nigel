@@ -130,22 +130,40 @@ export async function dispatchSpecialistsParallel(
       }),
     ),
   );
-  return settled.map((s, i) =>
-    s.status === "fulfilled"
-      ? s.value
-      : {
-          specialistName: inputs[i].specialistName,
-          output: "",
-          error: s.reason instanceof Error ? s.reason.message : String(s.reason),
-        },
-  );
+  // For each rejected slot, the child run row was NOT inserted (the
+  // rejection happened pre-spawn — sandbox provision, validation, etc.),
+  // so the terminal-status release path in Step 3 will never fire for
+  // it. Release the reservation here, in the same loop that maps the
+  // result. Fire-and-await each release before returning so a release
+  // failure surfaces in logs / spans rather than leaking silently.
+  const results: DispatchSpecialistResult[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const s = settled[i];
+    if (s.status === "fulfilled") {
+      results.push(s.value);
+    } else {
+      await releaseReservation(reservations[i]).catch((releaseErr) => {
+        console.error(
+          "[dispatch] reservation release after pre-spawn failure failed; reservation may leak",
+          { reservation: reservations[i], releaseErr },
+        );
+      });
+      results.push({
+        specialistName: inputs[i].specialistName,
+        output: "",
+        error: s.reason instanceof Error ? s.reason.message : String(s.reason),
+      });
+    }
+  }
+  return results;
 }
 ```
 
-Two correctness points:
+Three correctness points:
 
 - **`Promise.allSettled`, not `Promise.all`.** A single child rejection (e.g., a sandbox provision failure or an LLM error mid-loop) does NOT abort siblings — this is the "one child failure does not abort siblings" guarantee from Task 2. `Promise.all` would reject the whole batch on any rejection.
-- **Reservation release is the child's responsibility, not this caller's.** If `dispatchSpecialist` is called with a `reservation` argument, the child run row gets tagged with the reservation amount, and the terminal transition (`completed` / `failed` / `cancelled`) releases it (Step 3). If `dispatchSpecialist` itself rejects *before* the child run row is even inserted (a pre-spawn failure), the caller's `try/catch` here must release that slot's reservation immediately — capture this case with an additional `releaseReservation(reservation)` call in the rejected branch of the `.map`.
+- **Successful children: reservation release is the child's responsibility.** When `dispatchSpecialist` returns a fulfilled result, the child run row has been inserted and tagged with the reservation. The terminal-status transition (`completed` / `failed` / `cancelled`) decrements `root.cost_usd_reserved_micros` by the child's allocated budget (Step 3). The caller does not (and must not) release here — that would double-release once the child terminates.
+- **Rejected children: caller must release the reservation.** When `dispatchSpecialist` rejects before the child run row is inserted (pre-spawn failure — sandbox provision throws, validation throws, etc.), the terminal-status release path will never fire for that slot because no child row exists. The caller's rejected branch must explicitly call `releaseReservation(reservation)` to return the slot + budget to the root. The implementation above does this inside the `for` loop. Don't move it to a background "fire and forget" — a release failure (lost DB connection, etc.) is real and must surface in logs/spans, not get swallowed.
 
 - [ ] **Step 5: Add the `skipReservation` + `reservation` private fields to `dispatchSpecialist`**
 
