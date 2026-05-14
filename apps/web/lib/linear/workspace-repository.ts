@@ -255,10 +255,27 @@ async function maybeRefreshAccessToken(
     return workspace;
   }
 
-  const nextExpiresAt =
-    refreshed.expiresIn !== null
-      ? new Date(Date.now() + refreshed.expiresIn * 1000).toISOString()
-      : null;
+  // When Linear omits expires_in on a refresh response (allowed by
+  // RFC 6749 §6), we don't know when the new token expires. Persist
+  // the PREVIOUS expiresAt rather than null: null would short-circuit
+  // the refresh guard on the next call (`if (!(refreshToken &&
+  // accessTokenExpiresAt))`) and the workspace would never refresh
+  // again, silently dying once the new token actually expired. The
+  // worst case with this fallback is refreshing more often than
+  // needed — still preferable to never refreshing.
+  let nextExpiresAt: string | null;
+  if (refreshed.expiresIn !== null) {
+    nextExpiresAt = new Date(
+      Date.now() + refreshed.expiresIn * 1000,
+    ).toISOString();
+  } else {
+    // biome-ignore lint/suspicious/noConsole: ops signal — Linear omitted expires_in
+    console.warn(
+      "[linear-workspace] refresh response omitted expires_in; preserving previous expiry",
+      { workspaceId: workspace.workspaceId },
+    );
+    nextExpiresAt = workspace.secrets.accessTokenExpiresAt ?? null;
+  }
   // Persist the new tokens. Last-write-wins under concurrent refresh —
   // acceptable trade-off vs introducing a single-flight lock.
   try {
