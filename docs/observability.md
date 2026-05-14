@@ -116,6 +116,8 @@ Emitted by `lib/observability/webhook-span.ts` wrapping every webhook handler in
 
 `signature_mismatch`, `invalid_payload`, `no_workspace_configured`, `unresolved_repo`, and `unresolved_owner` set `SpanStatusCode.ERROR`. `duplicate` and `ignored` are NOT errors — they're expected steady-state behavior.
 
+**Trace context propagation (Phase 7 L2).** The intake span is set as the active OTel context for the duration of the handler via `runInContext`. Every span created inside the handler — auto-instrumented HTTP client spans to `api.linear.app` / `api.github.com`, `run.status_change` spans emitted by `updateRunStatus`, future tool spans from the command handler — nests under it. The fire-and-forget lifecycle dispatcher (`onRunStatusChange`) captures the context at task-spawn time, so the comment/reassign HTTP calls it makes also nest. Result: a Linear webhook delivery produces a single trace tree from intake through all downstream side-effects rather than orphaned root spans.
+
 ## Datadog setup
 
 ### Vercel deployment

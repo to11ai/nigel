@@ -121,9 +121,16 @@ export async function handleLinearWebhook(
   // biome-ignore lint/style/useConst: assigned inside the try block after parsing
   let envelopeType: string | null = null;
   try {
-    const outcome = await runHandler(input, (type) => {
-      envelopeType = type;
-    });
+    // Phase 7 L2: run inside the span's active context so every
+    // downstream span (auto-instrumented http client fetches to
+    // api.linear.app / api.github.com, manual run.status_change
+    // spans emitted by updateRunStatus, future tool spans from
+    // the command handler) nests under this intake span.
+    const outcome = await span.runInContext(() =>
+      runHandler(input, (type) => {
+        envelopeType = type;
+      }),
+    );
     span.finish({
       outcomeKind: outcome.kind,
       runId: extractRunId(outcome),
