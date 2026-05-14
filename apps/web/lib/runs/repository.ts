@@ -1,6 +1,17 @@
-import { and, desc, eq, gte, isNull, lt, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  type InferSelectModel,
+  isNull,
+  lt,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agentRuns } from "@/lib/db/schema";
+import { agentRuns, runMessages, runToolCalls } from "@/lib/db/schema";
 import { recordRunStatusChange } from "@/lib/observability/lifecycle-span";
 import { onRunStatusChange } from "./lifecycle";
 import {
@@ -9,6 +20,9 @@ import {
   terminalStates,
 } from "./state-machine";
 import type { AgentRun, SandboxPolicy, TriggerSource } from "./types";
+
+export type RunMessage = InferSelectModel<typeof runMessages>;
+export type RunToolCall = InferSelectModel<typeof runToolCalls>;
 
 export type InsertRunInput = {
   id: string;
@@ -57,6 +71,36 @@ export async function getRun(id: string): Promise<AgentRun | null> {
 
 export async function listChildren(parentId: string): Promise<AgentRun[]> {
   return db.select().from(agentRuns).where(eq(agentRuns.parentRunId, parentId));
+}
+
+// Activity-log queries for the run-detail view. Both order by
+// createdAt ASC so the viewer can render the agent's behavior in
+// the order it actually happened. Linear-triggered and chat-triggered
+// runs alike are populated by `executeSpecialistViaLLM`'s
+// onStepFinish hook (see lib/runs/run-persistence.ts).
+//
+// Limited to 2000 rows per query — the planner's MAX_STEPS=50 with
+// many tool calls per step can produce hundreds of rows on a busy
+// run, but two thousand is a safe ceiling for a single-page render.
+// Pagination is a known follow-up if agent runs grow past this.
+const ACTIVITY_PAGE_LIMIT = 2000;
+
+export async function listRunMessages(runId: string): Promise<RunMessage[]> {
+  return db
+    .select()
+    .from(runMessages)
+    .where(eq(runMessages.runId, runId))
+    .orderBy(asc(runMessages.createdAt))
+    .limit(ACTIVITY_PAGE_LIMIT);
+}
+
+export async function listRunToolCalls(runId: string): Promise<RunToolCall[]> {
+  return db
+    .select()
+    .from(runToolCalls)
+    .where(eq(runToolCalls.runId, runId))
+    .orderBy(asc(runToolCalls.createdAt))
+    .limit(ACTIVITY_PAGE_LIMIT);
 }
 
 // Phase 6 L4: find the run associated with a Linear issue.

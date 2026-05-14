@@ -19,6 +19,7 @@ import { createDatabaseQueryCallback } from "./database-query";
 import { createMcpCallCallback } from "./mcp-call";
 import { createRedisCommandCallback } from "./redis-command";
 import { createSlackPostCallback } from "./slack-post";
+import { persistInitialUserMessage, persistRunStep } from "./run-persistence";
 import { addCostMicros as defaultAddCostMicros } from "./repository";
 import type { AgentSandboxContext } from "./sandbox-coordinator";
 import { filterAgentTools } from "./tool-allowlist";
@@ -240,6 +241,26 @@ export async function executeSpecialistViaLLM(
                 step.usage?.inputTokenDetails?.cacheReadTokens ?? 0,
               ...(micros !== null ? { "step.cost_micros": micros } : {}),
             });
+            // Persist visibility artifacts: run_messages (assistant
+            // content), run_tool_calls (per tool invocation), and
+            // usage_events (per-step token counts). All three are
+            // best-effort — same rationale as the cost write below.
+            // Before this hook every Linear-triggered run was
+            // invisible after the fact; the planner could burn the
+            // whole budget with no record of what it did.
+            try {
+              await persistRunStep({
+                runId: run.id,
+                userId: run.humanOwnerId,
+                step,
+                triggerSource: run.triggerSource,
+              });
+            } catch (err) {
+              console.error(
+                `[specialist-execution] persistRunStep failed for run ${run.id}; activity log under-reported`,
+                err,
+              );
+            }
             if (micros === null) return;
             totalCostMicros += micros;
             try {
@@ -252,6 +273,20 @@ export async function executeSpecialistViaLLM(
             }
           },
         });
+
+        // Record the user-message that kicked off this run so the
+        // viewer can show the task text alongside the assistant
+        // response chain. Best-effort: a write failure here would
+        // be a strange state (DB writable for cost rollup but not
+        // for the initial message) so we log and continue.
+        try {
+          await persistInitialUserMessage({ runId: run.id, text: task });
+        } catch (err) {
+          console.error(
+            `[specialist-execution] persistInitialUserMessage failed for run ${run.id}`,
+            err,
+          );
+        }
 
         const result = await agent.generate({
           messages: [{ role: "user", content: task }],

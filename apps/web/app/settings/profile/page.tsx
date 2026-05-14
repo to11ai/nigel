@@ -19,8 +19,14 @@ import { UsageInsightsSection } from "../usage/usage-insights-section";
 
 interface DailyUsageRow {
   date: string;
-  source: "web";
-  agentType: "main" | "subagent";
+  // Mirrors lib/db/usage.ts UsageSource. The page doesn't branch
+  // on this field today; broaden so Linear/chained/cron rows
+  // narrow safely.
+  source: "web" | "linear" | "chained" | "cron";
+  // Mirrors lib/db/usage.ts UsageAgentType. "specialist" tags
+  // Linear-triggered planner writes — rendered here as a third
+  // agent-split bucket alongside main/subagents.
+  agentType: "main" | "subagent" | "specialist";
   provider: string | null;
   modelId: string | null;
   inputTokens: number;
@@ -455,6 +461,7 @@ export default function ProfilePage() {
     modelUsage,
     mainTotals,
     subagentTotals,
+    specialistTotals,
     costEstimate,
   } = useMemo(() => {
     const selectedUsage = data?.usage ?? [];
@@ -462,12 +469,16 @@ export default function ProfilePage() {
     const aggregatedModelUsage = aggregateByModel(selectedUsage);
     const main = selectedUsage.filter((r) => r.agentType === "main");
     const subagent = selectedUsage.filter((r) => r.agentType === "subagent");
+    const specialist = selectedUsage.filter(
+      (r) => r.agentType === "specialist",
+    );
     return {
       totals: sumRows(selectedUsage),
       chartData: mergeDays(chartUsage),
       modelUsage: aggregatedModelUsage,
       mainTotals: sumRows(main),
       subagentTotals: sumRows(subagent),
+      specialistTotals: sumRows(specialist),
       costEstimate: estimateUsageCost(
         aggregatedModelUsage,
         modelsData?.models ?? [],
@@ -478,7 +489,15 @@ export default function ProfilePage() {
   const mainTokens = mainTotals.inputTokens + mainTotals.outputTokens;
   const subagentTokens =
     subagentTotals.inputTokens + subagentTotals.outputTokens;
-  const hasUsage = totals.messageCount > 0;
+  const specialistTokens =
+    specialistTotals.inputTokens + specialistTotals.outputTokens;
+  // messageCount counts only agentType='main' rows (chat-turn proxy),
+  // so a user with only Linear-triggered specialist runs would have
+  // messageCount=0 and the whole usage section would be hidden —
+  // including the Specialists row this PR exists to surface. Treat
+  // any token volume as evidence of usage, matching usage-section.tsx.
+  const totalTokens = totals.inputTokens + totals.outputTokens;
+  const hasUsage = totalTokens > 0 || totals.messageCount > 0;
   const estimatedCostValue =
     costEstimate && costEstimate.pricedTokens > 0
       ? formatUsd(costEstimate.amount)
@@ -488,6 +507,7 @@ export default function ProfilePage() {
   const agentItems = [
     { label: "Main agent", value: formatTokens(mainTokens) },
     { label: "Subagents", value: formatTokens(subagentTokens) },
+    { label: "Specialists", value: formatTokens(specialistTokens) },
   ].filter((i) => i.value !== "0");
 
   // Build ranked-list items for model usage (top 5)
