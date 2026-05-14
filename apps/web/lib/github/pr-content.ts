@@ -301,7 +301,9 @@ export async function generatePullRequestContentFromSandbox(
   let prContent: z.infer<typeof prContentSchema>;
   try {
     const { output } = await generateText({
-      model: gateway("anthropic/claude-haiku-4.5"),
+      model: gateway("openai/gpt-5.4-mini", {
+        providerOptionsOverrides: { openai: { reasoningEffort: "low" } },
+      }),
       output: Output.object({
         schema: prContentSchema,
       }),

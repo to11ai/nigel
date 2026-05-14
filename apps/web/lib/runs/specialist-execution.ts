@@ -246,7 +246,11 @@ export async function executeSpecialistViaLLM(
           specialist.toolAllowlist,
           nigelTools,
         );
-        const callModel = gateway(model);
+        const callModel = specialist.providerOptions
+          ? gateway(model, {
+              providerOptionsOverrides: specialist.providerOptions,
+            })
+          : gateway(model);
 
         const agent = new ToolLoopAgent({
           model: callModel,

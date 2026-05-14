@@ -1,6 +1,7 @@
 import type { LanguageModel } from "ai";
-import { gateway, stepCountIs, ToolLoopAgent } from "ai";
+import { stepCountIs, ToolLoopAgent } from "ai";
 import { z } from "zod";
+import { gateway } from "../models";
 import { bashTool } from "../tools/bash";
 import { globTool } from "../tools/glob";
 import { grepTool } from "../tools/grep";
@@ -59,7 +60,7 @@ const callOptionsSchema = z.object({
 export type ExecutorCallOptions = z.infer<typeof callOptionsSchema>;
 
 export const executorSubagent = new ToolLoopAgent({
-  model: gateway("anthropic/claude-haiku-4.5"),
+  model: gateway("openai/gpt-5-codex"),
   instructions: EXECUTOR_SYSTEM_PROMPT,
   tools: {
     read: readFileTool(),

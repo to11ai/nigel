@@ -1,3 +1,4 @@
+import type { ProviderOptionsByProvider } from "@nigel/agent";
 import type { InferSelectModel } from "drizzle-orm";
 import type { specialists } from "@/lib/db/schema";
 import type { SandboxPolicy } from "@/lib/runs/types";
@@ -11,6 +12,10 @@ export type ResolvedSpecialist = {
   kind: SpecialistKind;
   systemPrompt: string | null;
   model: string | null;
+  // Per-specialist provider options merged on top of model defaults.
+  // Used to set reasoningEffort (and similar knobs) without leaking
+  // the choice into the model id string.
+  providerOptions?: ProviderOptionsByProvider;
   toolAllowlist: readonly string[];
   sandboxPolicy: SandboxPolicy;
   mayRecurse: boolean;
