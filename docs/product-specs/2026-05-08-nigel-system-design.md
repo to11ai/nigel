@@ -242,7 +242,7 @@ The existing chat path becomes `Run.create({trigger_source: 'chat', specialist_i
 
 | Name | Default model | Sandbox | Recurse? | needs_local_stack | Tools (allowlist) |
 |---|---|---|---|---|---|
-| `planner` | sonnet-4.6 | inherit | yes | false | `file`, `search`, `dispatch_specialist`, `dispatch_specialists_parallel`, `web`, `linear` |
+| `planner` | sonnet-4.6 | inherit | yes | false | `file_read`, `search`, `dispatch_specialist`, `dispatch_specialists_parallel`, `web`, `linear` |
 | `coder` | sonnet-4.6 | inherit | no | false | `file`, `search`, `shell`, `git` |
 | `linter` | haiku-4.5 | fresh | no | false | `file`, `search`, `shell` |
 | `formatter` | (scripted, no LLM) | fresh | no | false | `shell` |
@@ -258,6 +258,23 @@ The existing chat path becomes `Run.create({trigger_source: 'chat', specialist_i
 | `pulumi-engineer` | sonnet-4.6 | inherit | no | false | `file`, `search`, `shell`, `git`, `mcp:pulumi`, `cloud:*` |
 
 Admins can extend this roster via `kind='custom'` rows or override individual fields via `kind='override'` rows.
+
+#### Planner role — coordinator-only constraint
+
+The `planner` is the only specialist whose toolset is deliberately *narrower* than its dispatch surface implies. It can dispatch any specialist in the roster, but its own allowlist is `file_read` + `search` + `web` + the two dispatch tools + `linear`. It cannot write files, run shell, run git, or hold any mutation surface against the working tree.
+
+This is a hard rule. The planner is a coordinator, not a worker.
+
+Rationale:
+
+1. **Budget attribution.** When the planner does the work itself, root-budget spend gets booked to the planner Run rather than the worker Run that would naturally own the change. Every code edit and shell call should show up on a child Run's cost ledger so per-specialist budget caps actually mean something. The "patch trivially without dispatching" escape hatch breaks per-worker accounting.
+2. **Sandbox + allowlist hygiene.** Workers run with the right scope by construction: `coder` has `git` because code edits need commits; `linter` has `shell` for a narrow purpose; `reviewer` is read-only. When the planner short-circuits to "I'll just patch this myself," it patches with planner-grade tool surface — typically broader than the worker's. This silently widens the trust boundary.
+3. **Auditability and lineage.** Every code change in a Nigel Run should be attributable to a dispatched worker Run identified by name in the trace tree. "Trivial patches" by the planner skip that lineage and produce a Run tree where the diff appears to have come from nowhere.
+4. **Observed cost behavior.** In practice the escape hatch consumes the budget. A planner that *can* edit will edit, will then read more files to verify its edit, and will then dispatch a verification specialist whose budget was meant to cover the verification but now covers re-reading work the planner already did. The classical pattern (read + decompose + dispatch + synthesize, never mutate) keeps the planner's spend bounded by coordination overhead.
+
+The planner is permitted `linear` because Linear-triggered Runs need a callback channel at completion: post the PR URL as a comment, attach the visual-proof gallery. The `linear` tool exposed to the planner is intentionally limited to read + comment + attach operations (`linear_get_issue`, `linear_comment`, `linear_attach`). Workflow-state mutations on Linear issues (status, assignee, labels, project, cycle, estimate) route through the `linear-engineer` specialist with explicit `may_transition: true` authorization, per Section 3 lifecycle and the `linear-engineer` working principles. Comments are not state changes; attachments are not state changes.
+
+Custom specialists registered via `kind='custom'` may opt into a wider allowlist than the planner. The coordinator-only constraint applies only to the `planner` preset row and any `kind='override'` row that targets it (the resolver enforces this — overrides on `planner` must not add `file`, `shell`, or `git`).
 
 #### Recursion and budget invariants
 
