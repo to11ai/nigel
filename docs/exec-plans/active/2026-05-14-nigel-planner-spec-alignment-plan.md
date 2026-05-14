@@ -129,12 +129,34 @@ export async function dispatchSpecialistsParallel(
   inputs: DispatchSpecialistInput[],
 ): Promise<DispatchSpecialistResult[]> {
   if (inputs.length === 0) return [];
+  // Resolve the actual per-child budgets BEFORE reserving. The LLM is
+  // allowed to omit `budgetUsdMicros`; in that case `dispatchSpecialist`
+  // defaults to `specialist.budgetUsdDefaultMicros` (see dispatch.ts
+  // `budgetUsdCapMicros: input.budgetUsdMicros ?? specialist.budgetUsdDefaultMicros`).
+  // If the reservation also defaults to 0, the child runs with its full
+  // preset budget while the reservation records nothing — defeating the
+  // whole point of the atomic-reservation pre-flight. So the caller
+  // resolves the effective budget per child by looking up the specialist
+  // preset, then passes the resolved values into the reservation.
+  const resolvedBudgets = await Promise.all(
+    inputs.map(async (i) => {
+      if (i.budgetUsdMicros !== undefined) return i.budgetUsdMicros;
+      const { getSpecialist } = await import("@/lib/specialists");
+      const sp = await getSpecialist(i.specialistName);
+      if (!sp) {
+        throw new Error(
+          `[dispatch] cannot reserve budget for unknown specialist: ${i.specialistName}`,
+        );
+      }
+      return sp.budgetUsdDefaultMicros;
+    }),
+  );
   // Atomic pre-flight: reserve N child slots + sum-of-budgets in one
   // transaction. Either all dispatches are authorized or none.
   const reservations = await reserveChildSlotsAndBudget({
     parentRunId: inputs[0].parentRunId,
     rootRunId: inputs[0].rootRunId,
-    requestedBudgetsMicros: inputs.map((i) => i.budgetUsdMicros ?? 0),
+    requestedBudgetsMicros: resolvedBudgets,
     requestedSlots: inputs.length,
   });
   // dispatchSpecialist itself must skip its own slot + budget
@@ -208,6 +230,8 @@ In `dispatch.test.ts`, add:
 - Terminal reservation release: dispatch one child with `budget = $2`, mark it `completed`, verify root `costUsdReservedMicros` decremented by $2 AND parent `child_count` is NOT decremented (the slot was consumed by an actual run).
 - Pre-spawn reservation release: simulate `dispatchSpecialist` rejecting before child row insertion (e.g., sandbox provision failure). Verify BOTH root `costUsdReservedMicros` AND parent `child_count` are restored — pre-spawn failures must not consume the parent's lifetime slot quota, otherwise a string of pre-spawn failures permanently inflates `child_count` and the parent eventually can't dispatch valid work.
 - Idempotency of terminal release: write the terminal status twice (simulating Workflow SDK kill-9 replay); verify the second write is a no-op (the `>=` guard catches it), `costUsdReservedMicros` is not double-decremented below zero.
+- **Budget resolution from preset default**: parallel-of-2 where neither input supplies `budgetUsdMicros` and the targeted specialists' presets have `budgetUsdDefaultMicros = $5` and `$3` respectively. Reservation records `$8` ($5 + $3), not `$0`. Verify by inspecting `costUsdReservedMicros` after the call. This is the case the original snippet (`?? 0`) silently broke — the children would have run with their preset defaults while the reservation said `$0`, defeating the entire budget gate.
+- **Unknown specialist refused at reservation**: parallel-of-1 with `specialistName: "does-not-exist"` (no preset, no DB row). The resolver throws BEFORE the reservation transaction starts; no slots or budget are reserved on the parent / root.
 - `Promise.allSettled` semantics: parallel-of-3 where the second child's `dispatchSpecialist` rejects; the other two complete normally; the returned array has `error` set on index 1 and `output` set on indices 0 + 2.
 - Zero-input case: `dispatchSpecialistsParallel([])` returns `[]` without touching the DB.
 - Happy path: parallel-of-3 under cap, all three spawn, all three return their child output.
@@ -439,6 +463,20 @@ const dispatchSpecialistsParallelFn:
               ...(d.sandboxPolicyOverride !== undefined
                 ? { sandboxPolicyOverride: d.sandboxPolicyOverride }
                 : {}),
+              // Same `shouldForwardInheritedSandbox` gate as the single-
+              // dispatch callback at specialist-execution.ts:216-221.
+              // Without this, every LLM specialist dispatched via the
+              // parallel path would fail at sandbox provisioning
+              // (`provisionSandboxForRun` receives `inheritFrom: null`
+              // and throws `SandboxCoordinatorError`). Each child gets
+              // its own evaluation of the gate against its own per-
+              // dispatch `sandboxPolicyOverride`.
+              ...(shouldForwardInheritedSandbox(
+                sandbox.state,
+                d.sandboxPolicyOverride,
+              )
+                ? { inheritSandboxState: sandbox.state }
+                : {}),
             })),
           );
           return {
@@ -452,7 +490,11 @@ const dispatchSpecialistsParallelFn:
     : undefined;
 ```
 
-Gate the init on `specialist.toolAllowlist.includes("dispatch_specialists_parallel")`, mirroring the `linearFn` treatment in Step 2 below. Specialists whose resolved allowlist doesn't include parallel dispatch (today: every specialist except `planner`) don't get the callback at all, and Step 3 omits the key from `experimental_context`. This is defense-in-depth — `filterAgentTools` already drops the tool from the agent's toolset when the allowlist doesn't include it, but matching the absence of the callback to the absence of the tool keeps "callbacks should be absent when the allowlist doesn't include the category" (Step 4) true by construction.
+Two constraints:
+
+1. **Gate the init on the allowlist.** Mirrors the `linearFn` treatment in Step 2 below. Specialists whose resolved allowlist doesn't include parallel dispatch (today: every specialist except `planner`) don't get the callback at all, and Step 3 omits the key from `experimental_context`. This is defense-in-depth — `filterAgentTools` already drops the tool from the agent's toolset when the allowlist doesn't include it, but matching the absence of the callback to the absence of the tool keeps "callbacks should be absent when the allowlist doesn't include the category" (Step 4) true by construction.
+
+2. **Forward `inheritSandboxState` per-child, not per-batch.** The single-dispatch callback at `specialist-execution.ts:216-221` uses `shouldForwardInheritedSandbox(sandbox.state, callInput.sandboxPolicyOverride)` to decide per-call whether to pass the parent's sandbox state down. The parallel callback must do the same evaluation **per dispatched child** — each child has its own `sandboxPolicyOverride`, so the gate's answer can differ across the array. Without this, every LLM specialist child dispatched via the parallel path would fail at sandbox provisioning (`provisionSandboxForRun` receives `inheritFrom: null` and throws `SandboxCoordinatorError`).
 
 - [ ] **Step 2: Build the Linear callback (gated on allowlist)**
 
@@ -490,7 +532,8 @@ The `dispatchSpecialistsParallel` and `linear` keys are each omitted entirely (n
 
 - [ ] **Step 4: Tests**
 
-Cover that the new callbacks are present in `experimental_context` when the specialist's allowlist includes the corresponding categories, and absent otherwise (defense-in-depth — if `filterAgentTools` drops the tool, the callback being present in context is benign, but if the allowlist filter is ever bypassed, the callback should also be absent).
+- Allowlist gating: a specialist with `["dispatch_specialists_parallel"]` in its resolved allowlist has the `dispatchSpecialistsParallel` callback present in `experimental_context`; a specialist without it (e.g., `coder`, `linter`) does NOT (defense-in-depth — if `filterAgentTools` drops the tool, the callback being present in context is benign, but if the allowlist filter is ever bypassed, the callback should also be absent). Same assertion for `linear`.
+- **Sandbox state forwarding per child**: parallel dispatch with three inputs — one with `sandboxPolicyOverride: "fresh"` (must NOT inherit sandbox state — the override forces a fresh sandbox), one with no override (inherits whichever the specialist preset says), one with `sandboxPolicyOverride: "fresh_clean"` (must NOT inherit). Assert that each `DispatchSpecialistInput` passed to the underlying `dispatchSpecialistsParallel` carries (or omits) `inheritSandboxState` according to `shouldForwardInheritedSandbox(sandbox.state, d.sandboxPolicyOverride)` evaluated per child. The original snippet omitted this entirely and would have failed sandbox provisioning for every LLM child.
 
 ---
 
