@@ -313,7 +313,7 @@ describe("shouldForwardInheritedSandbox", () => {
 });
 
 describe("Linear AgentActivity phase markers", () => {
-  type Posted = { kind: string; body: string };
+  type Posted = { type: string; body: string };
 
   function callWithLinear(opts: {
     linearAgentSessionId?: string;
@@ -324,8 +324,25 @@ describe("Linear AgentActivity phase markers", () => {
   }) {
     const posted: Posted[] = [];
     const agentActivityStub = mock(
-      async (input: { kind: string; body: string }) => {
-        posted.push({ kind: input.kind, body: input.body });
+      async (input: {
+        content:
+          | {
+              type: "thought" | "response" | "error" | "elicitation";
+              body: string;
+            }
+          | {
+              type: "action";
+              action: string;
+              parameter: string;
+              result?: string;
+            };
+      }) => {
+        const c = input.content;
+        // Phase-marker posts are only ever thought/response/error — the
+        // action shape (no body) is exercised by the per-step posts the
+        // onStepFinish hook owns, which other tests cover.
+        const body = "body" in c ? c.body : "";
+        posted.push({ type: c.type, body });
         return { activityId: "act_stub" };
       },
     );
@@ -369,7 +386,7 @@ describe("Linear AgentActivity phase markers", () => {
     const posted = await callWithLinear({ specialistName: "planner" });
     const start = posted.find((p) => p.body.includes("**planner** starting"));
     expect(start).toBeDefined();
-    expect(start?.kind).toBe("thought");
+    expect(start?.type).toBe("thought");
   });
 
   test("'starting' thought is prefixed with ↳ when the run is a dispatched child (depth > 0)", async () => {
@@ -384,9 +401,9 @@ describe("Linear AgentActivity phase markers", () => {
 
   test("always emits a final response activity so the Linear panel exits the 'still working' state — even when the agent generated no final text", async () => {
     const posted = await callWithLinear({ generateText: "" });
-    const responses = posted.filter((p) => p.kind === "response");
+    const responses = posted.filter((p) => p.type === "response");
     expect(responses).toHaveLength(1);
-    const response = posted.find((p) => p.kind === "response");
+    const response = posted.find((p) => p.type === "response");
     expect(response?.body).toMatch(/finished without a final response/);
   });
 
@@ -394,7 +411,7 @@ describe("Linear AgentActivity phase markers", () => {
     const posted = await callWithLinear({
       generateText: "Done — opened PR #99.",
     });
-    const response = posted.find((p) => p.kind === "response");
+    const response = posted.find((p) => p.type === "response");
     expect(response?.body).toBe("Done — opened PR #99.");
   });
 });

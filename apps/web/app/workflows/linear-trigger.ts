@@ -230,8 +230,10 @@ async function postProvisioningMarker(input: {
     await agentActivityCreate({
       accessToken: workspace.secrets.accessToken,
       agentSessionId: input.linearAgentSessionId,
-      kind: "thought",
-      body: `Provisioning sandbox: \`${input.repoRef}${branchSuffix}\``,
+      content: {
+        type: "thought",
+        body: `Provisioning sandbox: \`${input.repoRef}${branchSuffix}\``,
+      },
     });
   } catch (err) {
     console.error("[linear-trigger] provisioning marker post failed", err);
