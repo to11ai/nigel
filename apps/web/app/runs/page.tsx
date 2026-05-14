@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getPresetNames } from "@/lib/specialists";
-import { listRootRunsForUser } from "@/lib/runs/repository";
+import {
+  type ChildRunSummary,
+  listChildSummariesForRoots,
+  listRootRunsForUser,
+} from "@/lib/runs/repository";
 import {
   type AgentRun,
   runStatusSchema,
@@ -52,6 +56,15 @@ export default async function RunsPage({
     userId: session.user.id,
     ...filters,
   });
+  // Annotate each root with its dispatched specialists so the user
+  // can see "planner dispatched coder, executor" at a glance, instead
+  // of having to click into every row's detail page to find out which
+  // sub-specialists ran. One round-trip for the page-worth of roots.
+  const childSummaries = await listChildSummariesForRoots({
+    rootRunIds: rows.map((r) => r.id),
+    userId: session.user.id,
+  });
+  const childrenByRoot = groupChildrenByRoot(childSummaries);
   const presetNames = getPresetNames();
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
@@ -70,7 +83,7 @@ export default async function RunsPage({
       {rows.length === 0 ? (
         <EmptyState hasFilters={hasAnyFilter(filters)} />
       ) : (
-        <RunsTable rows={rows} />
+        <RunsTable rows={rows} childrenByRoot={childrenByRoot} />
       )}
     </div>
   );
@@ -128,7 +141,13 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
   );
 }
 
-function RunsTable({ rows }: { rows: AgentRun[] }) {
+function RunsTable({
+  rows,
+  childrenByRoot,
+}: {
+  rows: AgentRun[];
+  childrenByRoot: Map<string, ChildRunSummary[]>;
+}) {
   return (
     <div className="overflow-hidden rounded-md border">
       <table className="w-full text-sm">
@@ -137,6 +156,7 @@ function RunsTable({ rows }: { rows: AgentRun[] }) {
             <th className="px-3 py-2 font-medium">Specialist</th>
             <th className="px-3 py-2 font-medium">Trigger</th>
             <th className="px-3 py-2 font-medium">Status</th>
+            <th className="px-3 py-2 font-medium">Dispatched</th>
             <th className="px-3 py-2 font-medium">Cost</th>
             <th className="px-3 py-2 font-medium">Duration</th>
             <th className="px-3 py-2 font-medium">Started</th>
@@ -169,6 +189,12 @@ function RunsTable({ rows }: { rows: AgentRun[] }) {
                   </span>
                 ) : null}
               </td>
+              <td className="px-3 py-2">
+                <DispatchedSpecialists
+                  rootId={row.id}
+                  dispatched={childrenByRoot.get(row.id) ?? []}
+                />
+              </td>
               <td className="px-3 py-2 font-mono text-xs">
                 {formatCostUsd(row.costUsdActualMicros)}
                 <span className="text-muted-foreground">
@@ -186,6 +212,64 @@ function RunsTable({ rows }: { rows: AgentRun[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Group child rows into a map keyed by rootRunId for O(1) lookup
+// from the row renderer. listChildSummariesForRoots already orders
+// by createdAt asc, so insertion order in each bucket reflects
+// dispatch order — useful in the UI to read "planner dispatched
+// coder, then reviewer".
+function groupChildrenByRoot(
+  children: ReadonlyArray<ChildRunSummary>,
+): Map<string, ChildRunSummary[]> {
+  const out = new Map<string, ChildRunSummary[]>();
+  for (const c of children) {
+    const bucket = out.get(c.rootRunId);
+    if (bucket) bucket.push(c);
+    else out.set(c.rootRunId, [c]);
+  }
+  return out;
+}
+
+// Render one badge per dispatched child specialist. A child with
+// non-terminal status (running / blocked / awaiting_approval /
+// pending) is the active leaf — when one exists we mark it with
+// the "now" caret so the user can see at a glance which specialist
+// is currently doing work, and which ones have already finished.
+// Empty state — "no children dispatched yet" — uses an em-dash
+// rather than empty space to distinguish from layout glitches.
+function DispatchedSpecialists({
+  rootId,
+  dispatched,
+}: {
+  rootId: string;
+  dispatched: ReadonlyArray<ChildRunSummary>;
+}) {
+  if (dispatched.length === 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {dispatched.map((c) => {
+        const isActive =
+          c.status === "running" ||
+          c.status === "pending" ||
+          c.status === "blocked" ||
+          c.status === "awaiting_approval";
+        return (
+          <Link
+            key={c.id}
+            href={`/runs/${rootId}`}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted/40 ${statusBadgeClass(c.status)}`}
+            title={`${c.specialistId ?? "—"} · ${c.status}`}
+          >
+            {isActive ? <span className="text-[8px]">▶</span> : null}
+            <span>{c.specialistId ?? "—"}</span>
+          </Link>
+        );
+      })}
     </div>
   );
 }
