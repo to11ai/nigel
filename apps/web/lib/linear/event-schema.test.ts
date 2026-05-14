@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deriveExternalId,
+  extractAgentSessionCreated,
   extractAppUserNotificationDelegation,
   extractAssignmentToBot,
   linearWebhookEnvelopeSchema,
@@ -357,5 +358,153 @@ describe("extractAppUserNotificationDelegation", () => {
       botUserId: BOT,
     });
     expect(result).toEqual({ issueId: "iss_pinned", actorId: "user-mattc" });
+  });
+});
+
+describe("extractAgentSessionCreated", () => {
+  // Real-shape AgentSessionEvent envelope: type at envelope top
+  // level, agentSession block carries id + issue + creator. The
+  // prompt field shape isn't pinned across Linear API versions —
+  // we accept either a top-level `prompt` string or a nested
+  // `comment.body` object/string.
+  function makeSessionEnvelope(input: {
+    action?: string;
+    sessionId?: string;
+    issueId?: string;
+    creatorId?: string;
+    prompt?: string;
+    commentBody?: string;
+    commentAsString?: boolean;
+  }): unknown {
+    const session: Record<string, unknown> = {
+      id: input.sessionId ?? "agent-session-xyz",
+      issue: { id: input.issueId ?? "iss_xyz", title: "Triage me" },
+    };
+    if (input.creatorId) session.creator = { id: input.creatorId };
+    if (input.prompt) session.prompt = input.prompt;
+    if (input.commentBody) {
+      session.comment = input.commentAsString
+        ? input.commentBody
+        : { body: input.commentBody };
+    }
+    return {
+      id: "evt_session_1",
+      type: "AgentSessionEvent",
+      action: input.action ?? "created",
+      agentSession: session,
+    };
+  }
+
+  test("matches a freshly-created session with creator id", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeSessionEnvelope({ creatorId: "user-mattc" }),
+    );
+    expect(extractAgentSessionCreated({ envelope })).toEqual({
+      agentSessionId: "agent-session-xyz",
+      issueId: "iss_xyz",
+      actorId: "user-mattc",
+      prompt: null,
+    });
+  });
+
+  test("extracts a prompt from session.prompt", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeSessionEnvelope({ prompt: "fix this bug please" }),
+    );
+    expect(extractAgentSessionCreated({ envelope })?.prompt).toBe(
+      "fix this bug please",
+    );
+  });
+
+  test("extracts a prompt from session.comment.body when prompt is absent", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeSessionEnvelope({ commentBody: "look at the auth path" }),
+    );
+    expect(extractAgentSessionCreated({ envelope })?.prompt).toBe(
+      "look at the auth path",
+    );
+  });
+
+  test("accepts session.comment as a plain string", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeSessionEnvelope({
+        commentBody: "stringy prompt",
+        commentAsString: true,
+      }),
+    );
+    expect(extractAgentSessionCreated({ envelope })?.prompt).toBe(
+      "stringy prompt",
+    );
+  });
+
+  test("returns null for actions other than 'created'", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeSessionEnvelope({ action: "updated" }),
+    );
+    expect(extractAgentSessionCreated({ envelope })).toBeNull();
+  });
+
+  test("returns null for non-AgentSessionEvent envelope types", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_x",
+      type: "Issue",
+      action: "create",
+      data: { id: "iss_1", teamId: "team-1", title: "x", identifier: "X-1" },
+    });
+    expect(extractAgentSessionCreated({ envelope })).toBeNull();
+  });
+
+  test("returns null when agentSession.issue.id is missing", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_session_2",
+      type: "AgentSessionEvent",
+      action: "created",
+      agentSession: { id: "session-x" },
+    });
+    expect(extractAgentSessionCreated({ envelope })).toBeNull();
+  });
+
+  test("falls back to envelope.actor when session.creator is absent", () => {
+    const raw: unknown = {
+      id: "evt_session_3",
+      type: "AgentSessionEvent",
+      action: "created",
+      actor: { id: "user-envelope-actor" },
+      agentSession: {
+        id: "session-y",
+        issue: { id: "iss_y" },
+      },
+    };
+    const envelope = linearWebhookEnvelopeSchema.parse(raw);
+    expect(extractAgentSessionCreated({ envelope })?.actorId).toBe(
+      "user-envelope-actor",
+    );
+  });
+
+  test("accepts null for prompt / comment (Linear sends null for absent JSON fields)", () => {
+    // Regression for Cursor Medium: missing .nullable() on prompt
+    // and comment would fail the whole envelope parse when Linear
+    // delivered `null` instead of omitting the fields. The session
+    // would silently drop with kind="invalid_payload" — exactly
+    // the "did not respond" failure mode this PR exists to fix.
+    const raw: unknown = {
+      id: "evt_session_null",
+      type: "AgentSessionEvent",
+      action: "created",
+      agentSession: {
+        id: "session-null",
+        issue: { id: "iss_null" },
+        prompt: null,
+        comment: null,
+      },
+    };
+    const envelope = linearWebhookEnvelopeSchema.parse(raw);
+    const result = extractAgentSessionCreated({ envelope });
+    expect(result).toEqual({
+      agentSessionId: "session-null",
+      issueId: "iss_null",
+      actorId: null,
+      prompt: null,
+    });
   });
 });

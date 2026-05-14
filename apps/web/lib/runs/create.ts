@@ -18,6 +18,12 @@ export type CreateRunInput = {
   workflowRunId?: string | null;
   chatId?: string | null;
   budgetUsdCapMicros: number;
+  // Linear AgentSession id when the run was triggered by the
+  // session-panel UI (AgentSessionEvent.created). Stamps the run
+  // up-front so the step-finish hook can post AgentActivity events
+  // without a follow-up update. Null for chat / cron / chained
+  // runs and for legacy Linear assignments that don't carry one.
+  linearAgentSessionId?: string | null;
 };
 
 async function createRun(input: CreateRunInput): Promise<AgentRun> {
@@ -61,6 +67,7 @@ async function createRun(input: CreateRunInput): Promise<AgentRun> {
     workflowRunId: input.workflowRunId ?? null,
     chatId: input.chatId ?? null,
     budgetUsdCapMicros: input.budgetUsdCapMicros,
+    linearAgentSessionId: input.linearAgentSessionId ?? null,
   });
 
   const created = await getRun(id);

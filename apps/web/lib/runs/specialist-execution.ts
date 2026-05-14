@@ -11,6 +11,11 @@ import { type Attributes, SpanStatusCode, trace } from "@opentelemetry/api";
 import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
+import { agentActivityCreate as defaultAgentActivityCreate } from "@/lib/linear/client";
+import {
+  resolveLinearWorkspace as defaultResolveLinearWorkspace,
+  type ResolvedLinearWorkspace,
+} from "@/lib/linear/workspace-repository";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import { checkRootBudget as defaultCheckRootBudget } from "./budget";
 import { createClickhouseQueryCallback } from "./clickhouse-query";
@@ -107,6 +112,14 @@ export type ExecuteSpecialistInput = {
     mcpCall?: McpCallCallback;
     // And the Slack equivalent.
     slackPost?: SlackPostCallback;
+    // Linear AgentSession streaming seams. Both have to be
+    // injectable separately: the workspace resolver decrypts
+    // secrets via the DB, while agentActivityCreate hits Linear's
+    // GraphQL API — tests stub each to verify the streaming
+    // path without network or DB access. Matches the seam
+    // pattern used for the other external dependencies above.
+    resolveLinearWorkspace?: () => Promise<ResolvedLinearWorkspace | null>;
+    agentActivityCreate?: typeof defaultAgentActivityCreate;
   };
 };
 
@@ -139,6 +152,10 @@ export async function executeSpecialistViaLLM(
   const model = specialist.model;
   const checkRootBudget = deps?.checkRootBudget ?? defaultCheckRootBudget;
   const addCostMicros = deps?.addCostMicros ?? defaultAddCostMicros;
+  const resolveLinearWorkspace =
+    deps?.resolveLinearWorkspace ?? defaultResolveLinearWorkspace;
+  const agentActivityCreate =
+    deps?.agentActivityCreate ?? defaultAgentActivityCreate;
 
   return tracer.startActiveSpan(
     "specialist.execute",
@@ -151,6 +168,34 @@ export async function executeSpecialistViaLLM(
       // the rollup attribute would be missing — making partial-run
       // cost queries hard.
       let totalCostMicros = 0;
+      // Resolve the Linear workspace ONCE per run when this run
+      // has an AgentSession id stamped. resolveLinearWorkspace
+      // decrypts the secrets bag — calling it per-step would be
+      // wasteful, and the 24h access token comfortably outlives
+      // even long planner runs. Failures here just disable
+      // AgentActivity streaming for this run; the run itself
+      // proceeds normally and Linear's session panel will fall
+      // back to its "did not respond" placeholder.
+      let agentSessionContext: {
+        accessToken: string;
+        agentSessionId: string;
+      } | null = null;
+      if (run.linearAgentSessionId) {
+        try {
+          const workspace = await resolveLinearWorkspace();
+          if (workspace) {
+            agentSessionContext = {
+              accessToken: workspace.secrets.accessToken,
+              agentSessionId: run.linearAgentSessionId,
+            };
+          }
+        } catch (err) {
+          console.error(
+            `[specialist-execution] resolveLinearWorkspace failed for run ${run.id}; AgentActivity disabled`,
+            err,
+          );
+        }
+      }
       try {
         // dispatch_specialist callback — see comment near the
         // experimental_context binding for the lazy-import rationale.
@@ -261,15 +306,42 @@ export async function executeSpecialistViaLLM(
                 err,
               );
             }
-            if (micros === null) return;
-            totalCostMicros += micros;
-            try {
-              await addCostMicros(run.id, micros);
-            } catch (err) {
-              console.error(
-                `[specialist-execution] addCostMicros failed for run ${run.id}; cost under-reported`,
-                err,
-              );
+            if (micros !== null) {
+              totalCostMicros += micros;
+              try {
+                await addCostMicros(run.id, micros);
+              } catch (err) {
+                console.error(
+                  `[specialist-execution] addCostMicros failed for run ${run.id}; cost under-reported`,
+                  err,
+                );
+              }
+            }
+            // Stream a short AgentActivity to the Linear session
+            // panel so the user sees that work is happening. Kind:
+            //   - "action" if the step issued any tool call
+            //   - "thought" if it was reasoning-only
+            // The final response goes out via a separate call after
+            // agent.generate resolves. Fire-and-forget: a Linear
+            // API hiccup must NOT abort the agent loop or fail
+            // an otherwise-successful step.
+            if (agentSessionContext) {
+              const body = buildStepActivityBody(step);
+              if (body) {
+                const kind: "action" | "thought" =
+                  (step.toolCalls?.length ?? 0) > 0 ? "action" : "thought";
+                agentActivityCreate({
+                  accessToken: agentSessionContext.accessToken,
+                  agentSessionId: agentSessionContext.agentSessionId,
+                  kind,
+                  body,
+                }).catch((err) => {
+                  console.error(
+                    `[specialist-execution] agentActivityCreate failed for run ${run.id}`,
+                    err,
+                  );
+                });
+              }
             }
           },
         });
@@ -291,6 +363,24 @@ export async function executeSpecialistViaLLM(
         const result = await agent.generate({
           messages: [{ role: "user", content: task }],
         });
+        // Final user-visible reply. Linear's session panel renders
+        // this as the "response" body so the user sees something
+        // concrete instead of the default "did not respond"
+        // placeholder. Same fire-and-forget rationale as the
+        // per-step posts above.
+        if (agentSessionContext && result.text) {
+          agentActivityCreate({
+            accessToken: agentSessionContext.accessToken,
+            agentSessionId: agentSessionContext.agentSessionId,
+            kind: "response",
+            body: result.text,
+          }).catch((err) => {
+            console.error(
+              `[specialist-execution] final agentActivityCreate failed for run ${run.id}`,
+              err,
+            );
+          });
+        }
         return { output: result.text };
       } catch (err) {
         span.recordException(err as Error);
@@ -298,6 +388,29 @@ export async function executeSpecialistViaLLM(
           code: SpanStatusCode.ERROR,
           message: err instanceof Error ? err.message : String(err),
         });
+        // Post a kind="error" AgentActivity so the Linear session
+        // panel shows the failure instead of going silent after the
+        // last successful step's activity. Without this, a budget-
+        // exhausted or network-failed run would emit partial step
+        // activities and then stop — the user sees "did not respond"
+        // for the exact failure mode this PR exists to fix.
+        // Fire-and-forget (same rationale as the per-step posts);
+        // a Linear API hiccup on the error path can't mask the
+        // original throw that the catch is about to re-raise.
+        if (agentSessionContext) {
+          const message = err instanceof Error ? err.message : String(err);
+          agentActivityCreate({
+            accessToken: agentSessionContext.accessToken,
+            agentSessionId: agentSessionContext.agentSessionId,
+            kind: "error",
+            body: `Run failed: ${message}`,
+          }).catch((postErr) => {
+            console.error(
+              `[specialist-execution] error agentActivityCreate failed for run ${run.id}`,
+              postErr,
+            );
+          });
+        }
         throw err;
       } finally {
         // Always flush the running cost total, even on the error
@@ -308,6 +421,57 @@ export async function executeSpecialistViaLLM(
       }
     },
   );
+}
+
+// Build a short Markdown body for an AgentActivity step post.
+// Returns null when the step has neither text content nor tool
+// calls — that's a step worth no UI noise.
+//
+// Format:
+//   - Text content (if any) up to 500 chars
+//   - A bulleted list of tool-call names (if any)
+//
+// Long bodies waste session-panel real estate AND Linear's API has
+// payload caps. We keep it tight: snippet + tool-name list. The
+// Datadog Activity log on the run-detail page is the place to see
+// full step content; AgentActivity is the at-a-glance signal.
+type StepShapeForActivity = {
+  content?: unknown;
+  toolCalls?: ReadonlyArray<{ toolName: string }>;
+};
+
+const ACTIVITY_BODY_SNIPPET_LIMIT = 500;
+
+function buildStepActivityBody(step: StepShapeForActivity): string | null {
+  const parts: string[] = [];
+  // Pull any plain-text part from content[] into a snippet.
+  if (Array.isArray(step.content)) {
+    const text = step.content
+      .filter(
+        (p): p is { type: "text"; text: string } =>
+          typeof p === "object" &&
+          p !== null &&
+          "type" in p &&
+          (p as { type: unknown }).type === "text" &&
+          typeof (p as { text?: unknown }).text === "string",
+      )
+      .map((p) => p.text)
+      .join("\n")
+      .trim();
+    if (text) {
+      parts.push(
+        text.length > ACTIVITY_BODY_SNIPPET_LIMIT
+          ? `${text.slice(0, ACTIVITY_BODY_SNIPPET_LIMIT)}…`
+          : text,
+      );
+    }
+  }
+  const toolCalls = step.toolCalls ?? [];
+  if (toolCalls.length > 0) {
+    parts.push(toolCalls.map((tc) => `- \`${tc.toolName}\``).join("\n"));
+  }
+  if (parts.length === 0) return null;
+  return parts.join("\n\n");
 }
 
 // Resolves per-step cost in micros, preferring gateway-reported cost

@@ -247,3 +247,146 @@ describe("handleLinearWebhook — idempotency", () => {
     expect(rows).toHaveLength(2);
   });
 });
+
+describe("handleLinearWebhook — AgentSessionEvent", () => {
+  function sessionBody(overrides: {
+    sessionId?: string;
+    issueId?: string;
+    creatorId?: string;
+    externalId?: string;
+    action?: string;
+  }): string {
+    return JSON.stringify({
+      id: overrides.externalId ?? "evt_session_1",
+      type: "AgentSessionEvent",
+      action: overrides.action ?? "created",
+      agentSession: {
+        id: overrides.sessionId ?? "agent-session-xyz",
+        issue: {
+          id: overrides.issueId ?? "iss_abc",
+          title: "Fix it",
+          description: null,
+        },
+        creator: { id: overrides.creatorId ?? TEST_LINEAR_ID },
+      },
+    });
+  }
+
+  test("creates a Run with linear_agent_session_id stamped on first AgentSessionEvent for an issue", async () => {
+    const fetchSpy = async () => ({
+      id: "iss_abc",
+      identifier: "PLAT-1",
+      title: "Fix it",
+      description: null,
+      teamId: "team-platform",
+      url: undefined,
+      creator: { id: TEST_LINEAR_ID },
+      labels: [],
+      attachments: [],
+    });
+    const body = sessionBody({});
+    const outcome = await handleLinearWebhook({
+      rawBody: body,
+      signatureHeader: sign(body),
+      deliveryHeader: "delivery-session-1",
+      defaultBudgetUsdMicros: 5_000_000,
+      deps: {
+        resolveWorkspace: async () => fakeWorkspace(),
+        fetchIssue: fetchSpy,
+      },
+    });
+    expect(outcome.kind).toBe("run_created");
+    const rows = await db.select().from(agentRuns);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.linearAgentSessionId).toBe("agent-session-xyz");
+    expect(rows[0]?.triggerRef).toBe("iss_abc");
+  });
+
+  test("attaches session id to existing run when AppUserNotification arrived first", async () => {
+    // Simulate the prior intake: hand-insert an active Linear run
+    // for the same issue with NO session id yet.
+    await db.insert(agentRuns).values({
+      id: "run_preexisting",
+      rootRunId: "run_preexisting",
+      parentRunId: null,
+      depth: 0,
+      triggerSource: "linear",
+      triggerRef: "iss_abc",
+      specialistId: "planner",
+      sandboxPolicy: "fresh",
+      humanOwnerId: TEST_USER_ID,
+      repoRef: "to11ai/nigel",
+      budgetUsdCapMicros: 5_000_000,
+      costUsdActualMicros: 0,
+      status: "running",
+    });
+
+    const body = sessionBody({});
+    const outcome = await handleLinearWebhook({
+      rawBody: body,
+      signatureHeader: sign(body),
+      deliveryHeader: "delivery-session-attach",
+      defaultBudgetUsdMicros: 5_000_000,
+      deps: { resolveWorkspace: async () => fakeWorkspace() },
+    });
+    expect(outcome.kind).toBe("agent_session_attached");
+    if (outcome.kind === "agent_session_attached") {
+      expect(outcome.runId).toBe("run_preexisting");
+      expect(outcome.agentSessionId).toBe("agent-session-xyz");
+    }
+    const rows = await db.select().from(agentRuns);
+    // No new run created — just stamped.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.linearAgentSessionId).toBe("agent-session-xyz");
+  });
+
+  test("AppUserNotification arriving AFTER session-created run is dropped (no second run)", async () => {
+    // Step 1: session creates the run.
+    const fetchSpy = async () => ({
+      id: "iss_abc",
+      identifier: "PLAT-1",
+      title: "Fix it",
+      description: null,
+      teamId: "team-platform",
+      url: undefined,
+      creator: { id: TEST_LINEAR_ID },
+      labels: [],
+      attachments: [],
+    });
+    const bodySession = sessionBody({});
+    const sessionOutcome = await handleLinearWebhook({
+      rawBody: bodySession,
+      signatureHeader: sign(bodySession),
+      deliveryHeader: "delivery-session-first",
+      defaultBudgetUsdMicros: 5_000_000,
+      deps: {
+        resolveWorkspace: async () => fakeWorkspace(),
+        fetchIssue: fetchSpy,
+      },
+    });
+    expect(sessionOutcome.kind).toBe("run_created");
+
+    // Step 2: AppUserNotification for the same issue arrives second.
+    const bodyDelegation = JSON.stringify({
+      id: "evt_delegate_after",
+      type: "AppUserNotification",
+      appUserId: BOT_LINEAR_ID,
+      notification: {
+        type: "issueAssignedToYou",
+        issueId: "iss_abc",
+      },
+      actor: { id: TEST_LINEAR_ID },
+    });
+    const delegationOutcome = await handleLinearWebhook({
+      rawBody: bodyDelegation,
+      signatureHeader: sign(bodyDelegation),
+      deliveryHeader: "delivery-delegation-after",
+      defaultBudgetUsdMicros: 5_000_000,
+      deps: { resolveWorkspace: async () => fakeWorkspace() },
+    });
+    expect(delegationOutcome.kind).toBe("ignored");
+
+    const rows = await db.select().from(agentRuns);
+    expect(rows).toHaveLength(1);
+  });
+});
