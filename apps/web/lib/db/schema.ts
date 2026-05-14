@@ -398,6 +398,28 @@ export const agentRuns = pgTable(
     costUsdActualMicros: bigint("cost_usd_actual_micros", { mode: "number" })
       .notNull()
       .default(0),
+    // Reserved-but-not-yet-spent dollars for in-flight child dispatches.
+    // Only meaningful on the ROOT row (child rows always = 0). Mutated in
+    // a single transaction with parent.child_count by the atomic
+    // reservation primitive in `lib/runs/dispatch.ts`. Released back to
+    // zero either when the child reaches a terminal status (in
+    // `updateRunStatus`) or when the parallel-dispatch path observes a
+    // pre-spawn rejection. Remaining budget at reservation time is:
+    //   remaining = budget_usd_cap_micros
+    //             - cost_usd_actual_micros
+    //             - cost_usd_reserved_micros.
+    costUsdReservedMicros: bigint("cost_usd_reserved_micros", {
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    // Lifetime count of children dispatched by this row (NOT a
+    // concurrency counter — terminal children are NOT decremented).
+    // Atomically incremented inside `reserveChildSlotsAndBudget` so
+    // concurrent dispatchers see a serialized view of "did the next
+    // child push us over max_children". Decremented only by the
+    // pre-spawn-failure release path (see `releasePreSpawnReservation`).
+    childCount: integer("child_count").notNull().default(0),
 
     status: text("status", {
       enum: [

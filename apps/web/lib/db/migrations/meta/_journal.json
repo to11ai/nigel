@@ -351,6 +351,13 @@
       "when": 1778773315692,
       "tag": "0049_funny_tomorrow_man",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1778787565857,
+      "tag": "0050_lean_madame_hydra",
+      "breakpoints": true
     }
   ]
 }
