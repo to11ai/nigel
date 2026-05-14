@@ -88,9 +88,13 @@ remaining = budgetUsdCapMicros - costUsdActualMicros - costUsdReservedMicros
 
 Return a list of `{ reservationToken: string, budgetUsdMicros: number }` — one per requested slot — so the caller can later release each reservation when its corresponding child terminates. The token is a synthetic id stored in `agent_runs.reservation_token` on each child (new nullable column on `agent_runs`, no migration churn beyond the one this step already adds), or simpler: tie the reservation to the child's own `agentRunId` once the child row is inserted. The mechanic doesn't matter as long as "child terminal → release that child's reservation" is unambiguous; pick whichever feels least invasive to the existing rollup trigger.
 
-- [ ] **Step 3: Reservation release on child terminal**
+- [ ] **Step 3: Two distinct reservation-release paths**
 
-Wherever `agent_runs.status` transitions to a terminal state (`completed`, `failed`, `cancelled`), the same transaction must:
+The reservation occupies *two* slots in the data model: a budget reservation on the ROOT (`cost_usd_reserved_micros`) and a child slot on the PARENT (`child_count`). The release semantics differ between "child actually spawned and ran" and "child never existed (pre-spawn failure)."
+
+**Path A — terminal-status release.** The child run row was inserted, the child ran (or failed during execution), and is now transitioning to `completed` / `failed` / `cancelled`. The budget reservation should be returned to the root (the worker either spent less than reserved, or spent it and then some — the rollup trigger handles the "spent more" case via `costUsdActualMicros`; reservation release just returns the unspent portion). The PARENT's `child_count` is NOT decremented — `max_children` is a lifetime quota per parent, not a concurrency cap; a child that ran consumes its slot regardless of outcome.
+
+The transaction that writes the terminal status must, in the same transaction:
 
 ```sql
 UPDATE agent_runs
@@ -98,9 +102,25 @@ SET cost_usd_reserved_micros = cost_usd_reserved_micros - :released
 WHERE id = :rootRunId AND cost_usd_reserved_micros >= :released
 ```
 
-Where `released` is the child's originally-reserved `budgetUsdMicros`. The `>=` guard makes the operation idempotent against duplicate terminal-state writes (Workflow SDK can replay terminal transitions after kill-9 resume).
+The `>=` guard makes the operation idempotent against duplicate terminal-status writes (Workflow SDK can replay terminal transitions after kill-9 resume).
 
-If the child's `costUsdActualMicros` ends up less than its reservation (the typical case — workers usually under-spend their cap), the excess is freed at release time. If it exceeds the reservation, the rollup trigger already handles that (the child's actual spend rolls up to root regardless of reservation; the per-call budget gate inside the child's tool loop is the cap, not the reservation).
+**Path B — pre-spawn-failure release.** `dispatchSpecialist` rejected before inserting the child run row (validation failure, sandbox provision threw, transient infra error). Nothing was spawned, so BOTH the budget reservation AND the child slot must be returned to the parent — otherwise a string of pre-spawn failures permanently inflates `child_count` and the parent eventually can't dispatch valid work even though no children ever ran. This is what the Cursor Bugbot finding caught.
+
+The transaction must update BOTH rows:
+
+```sql
+UPDATE agent_runs
+SET cost_usd_reserved_micros = cost_usd_reserved_micros - :released
+WHERE id = :rootRunId AND cost_usd_reserved_micros >= :released;
+
+UPDATE agent_runs
+SET child_count = child_count - 1
+WHERE id = :parentRunId AND child_count >= 1;
+```
+
+Same `>=` idempotency guards. Lock order matches the reservation primitive: ROOT first, PARENT second (skip the second if parent === root).
+
+**Implementation note.** Expose two distinct helpers, not one with a flag — the call sites are different (one in `repository.updateRunStatus`, one in `dispatchSpecialistsParallel` / `dispatchSpecialist` error paths), and "release with slot restore" vs "release without slot restore" is a real semantic distinction that shouldn't hide behind a boolean parameter. Suggested names: `releaseTerminalReservation({ rootRunId, budgetUsdMicros })` and `releasePreSpawnReservation({ parentRunId, rootRunId, budgetUsdMicros })`.
 
 - [ ] **Step 4: Rewrite `dispatchSpecialistsParallel`**
 
@@ -142,9 +162,18 @@ export async function dispatchSpecialistsParallel(
     if (s.status === "fulfilled") {
       results.push(s.value);
     } else {
-      await releaseReservation(reservations[i]).catch((releaseErr) => {
+      // Pre-spawn failure: no child row was inserted, so the terminal-
+      // status release in Step 3 will never fire. Release BOTH the
+      // budget AND the child_count slot — using `releasePreSpawnReservation`
+      // (NOT `releaseTerminalReservation`, which only handles the budget
+      // and is for the "child ran and finished" case).
+      await releasePreSpawnReservation({
+        parentRunId: inputs[i].parentRunId,
+        rootRunId: inputs[i].rootRunId,
+        budgetUsdMicros: reservations[i].budgetUsdMicros,
+      }).catch((releaseErr) => {
         console.error(
-          "[dispatch] reservation release after pre-spawn failure failed; reservation may leak",
+          "[dispatch] pre-spawn reservation release failed; reservation may leak",
           { reservation: reservations[i], releaseErr },
         );
       });
@@ -176,8 +205,9 @@ In `dispatch.test.ts`, add:
 - Concurrent single-dispatch race: two single `dispatchSpecialist` calls fired concurrently against a parent with `max_children = 3` and `child_count = 2` — exactly one succeeds, the other returns `max_children_exceeded`. This is the case where the atomic reservation in `dispatchSpecialist` itself (serialized via the same `SELECT ... FOR UPDATE` primitive) prevents the TOCTOU race.
 - Budget race: parent with `cap = $10`, `actual = $5`, `reserved = $0` receiving a parallel-of-3 each requesting `$2` — entire batch rejected `budget_exhausted_at_reservation` (sum=$6, remaining=$5), no children spawn, root `costUsdReservedMicros` still 0.
 - **Concurrent budget reservation race**: two parallel-of-2 calls fired concurrently against a root with `cap = $10`, `actual = $4`, `reserved = $0`, each requesting `$3` per child. Exactly one succeeds and reserves $6; the other sees `remaining = $0` (10 - 4 - 6) and is rejected `budget_exhausted_at_reservation`. This is the case the original Step 1 design did NOT close — it only locked `child_count`, leaving the budget read-then-write race wide open.
-- Reservation release on child terminal: dispatch one child with `budget = $2`, mark it `completed`, verify root `costUsdReservedMicros` decremented by $2.
-- Reservation release on pre-spawn failure: simulate `dispatchSpecialist` rejecting before child row insertion (e.g., sandbox provision failure); verify root `costUsdReservedMicros` is restored (caller's catch released it).
+- Terminal reservation release: dispatch one child with `budget = $2`, mark it `completed`, verify root `costUsdReservedMicros` decremented by $2 AND parent `child_count` is NOT decremented (the slot was consumed by an actual run).
+- Pre-spawn reservation release: simulate `dispatchSpecialist` rejecting before child row insertion (e.g., sandbox provision failure). Verify BOTH root `costUsdReservedMicros` AND parent `child_count` are restored — pre-spawn failures must not consume the parent's lifetime slot quota, otherwise a string of pre-spawn failures permanently inflates `child_count` and the parent eventually can't dispatch valid work.
+- Idempotency of terminal release: write the terminal status twice (simulating Workflow SDK kill-9 replay); verify the second write is a no-op (the `>=` guard catches it), `costUsdReservedMicros` is not double-decremented below zero.
 - `Promise.allSettled` semantics: parallel-of-3 where the second child's `dispatchSpecialist` rejects; the other two complete normally; the returned array has `error` set on index 1 and `output` set on indices 0 + 2.
 - Zero-input case: `dispatchSpecialistsParallel([])` returns `[]` without touching the DB.
 - Happy path: parallel-of-3 under cap, all three spawn, all three return their child output.
