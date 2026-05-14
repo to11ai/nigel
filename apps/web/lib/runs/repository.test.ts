@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns, users } from "@/lib/db/schema";
 import { nanoid } from "nanoid";
@@ -229,6 +230,81 @@ describe("runs repository", () => {
         status: "running",
       });
       expect(out.map((r) => r.id)).toEqual([match]);
+    });
+  });
+
+  describe("updateRunStatus — terminal reservation release", () => {
+    test("decrements root.reserved on terminal child transition (single execution)", async () => {
+      // Set up a root with reserved=$2 and a child carrying
+      // budgetUsdCapMicros=$2. Transition the child to "completed"
+      // and verify the root's reserved was released exactly once.
+      const root = nanoid();
+      const child = nanoid();
+      await insertRun({
+        id: root,
+        parentRunId: null,
+        rootRunId: root,
+        depth: 0,
+        triggerSource: "chat",
+        humanOwnerId: TEST_USER_ID,
+        sandboxPolicy: "inherit",
+        budgetUsdCapMicros: 10_000_000,
+      });
+      // Seed reserved on root directly.
+      await db
+        .update(agentRuns)
+        .set({ costUsdReservedMicros: 2_000_000 })
+        .where(eq(agentRuns.id, root));
+      await insertRun({
+        id: child,
+        parentRunId: root,
+        rootRunId: root,
+        depth: 1,
+        triggerSource: "chained",
+        humanOwnerId: TEST_USER_ID,
+        sandboxPolicy: "inherit",
+        budgetUsdCapMicros: 2_000_000,
+      });
+
+      await updateRunStatus(child, "running");
+      await updateRunStatus(child, "completed");
+
+      const refreshedRoot = await getRun(root);
+      expect(refreshedRoot?.costUsdReservedMicros).toBe(0);
+
+      // Duplicate terminal call throws and does NOT release again.
+      await expect(updateRunStatus(child, "completed")).rejects.toThrow(
+        /invalid.*transition/,
+      );
+      const stillZero = await getRun(root);
+      expect(stillZero?.costUsdReservedMicros).toBe(0);
+    });
+
+    test("does not decrement on terminal transition of a root row", async () => {
+      // Root rows hold the reservation pool; they don't draw from it.
+      // Transitioning a root to "completed" must not touch its own
+      // reserved column.
+      const root = nanoid();
+      await insertRun({
+        id: root,
+        parentRunId: null,
+        rootRunId: root,
+        depth: 0,
+        triggerSource: "chat",
+        humanOwnerId: TEST_USER_ID,
+        sandboxPolicy: "inherit",
+        budgetUsdCapMicros: 10_000_000,
+      });
+      await db
+        .update(agentRuns)
+        .set({ costUsdReservedMicros: 1_500_000 })
+        .where(eq(agentRuns.id, root));
+
+      await updateRunStatus(root, "running");
+      await updateRunStatus(root, "completed");
+
+      const refreshed = await getRun(root);
+      expect(refreshed?.costUsdReservedMicros).toBe(1_500_000);
     });
   });
 });
