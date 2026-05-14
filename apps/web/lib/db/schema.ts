@@ -445,6 +445,23 @@ export const agentRuns = pgTable(
     // to find its run, or to dedupe an incoming AppUserNotification
     // against an AgentSessionEvent that arrived first.
     index("agent_runs_linear_agent_session_idx").on(table.linearAgentSessionId),
+    // Race-safe dedupe for Linear-triggered runs on the same
+    // issue. AppUserNotification + AgentSessionEvent commonly fire
+    // within milliseconds of each other; a TOCTOU window between
+    // the application-level `getActiveRunByLinearIssue` read and
+    // `Run.create` insert could let both webhooks observe null and
+    // each spawn a planner. This partial unique index forces the
+    // race to resolve at the DB layer — the second insert raises a
+    // unique_violation, which the webhook handler catches and
+    // converts to an "ignored" outcome.
+    //
+    // Scoped to NON-terminal states so a completed run on the same
+    // issue doesn't block a future fresh run.
+    uniqueIndex("agent_runs_active_linear_issue_unique")
+      .on(table.triggerRef)
+      .where(
+        sql`${table.triggerSource} = 'linear' AND ${table.status} IN ('pending', 'running', 'blocked', 'awaiting_approval')`,
+      ),
   ],
 );
 

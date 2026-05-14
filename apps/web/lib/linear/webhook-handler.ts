@@ -33,6 +33,7 @@ import {
   markWebhookEventProcessed,
 } from "./webhook-events-repository";
 import {
+  isUniqueViolation,
   type ResolvedLinearWorkspace,
   resolveLinearWorkspace,
 } from "./workspace-repository";
@@ -403,76 +404,26 @@ async function runHandler(
   if (match) {
     matchKind = "assignment";
   } else if (delegation) {
-    const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
-    let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
-    try {
-      rawIssue = await fetchFn({
-        accessToken: workspace.secrets.accessToken,
-        issueId: delegation.issueId,
-      });
-    } catch (err) {
-      await markWebhookEventProcessed({ id: claim.id });
-      console.error("[linear-webhook] fetchIssue failed for delegation", {
-        issueId: delegation.issueId,
-        err,
-      });
-      return {
-        kind: "invalid_payload",
-        reason: `delegation issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-    if (!rawIssue) {
-      await markWebhookEventProcessed({ id: claim.id });
-      return {
-        kind: "invalid_payload",
-        reason: `delegation issue not found: ${delegation.issueId}`,
-      };
-    }
-    const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
-    if (!enriched) {
-      await markWebhookEventProcessed({ id: claim.id });
-      return {
-        kind: "invalid_payload",
-        reason: `delegation issue payload did not parse: ${delegation.issueId}`,
-      };
-    }
-    match = { issue: enriched, actorId: delegation.actorId };
+    const fetched = await fetchAndParseIssue({
+      issueId: delegation.issueId,
+      accessToken: workspace.secrets.accessToken,
+      fetchFn: input.deps?.fetchIssue ?? fetchIssue,
+      kind: "delegation",
+      claimId: claim.id,
+    });
+    if (fetched.outcome === "error") return fetched.error;
+    match = { issue: fetched.issue, actorId: delegation.actorId };
     matchKind = "delegation";
   } else if (sessionMatch) {
-    const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
-    let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
-    try {
-      rawIssue = await fetchFn({
-        accessToken: workspace.secrets.accessToken,
-        issueId: sessionMatch.issueId,
-      });
-    } catch (err) {
-      await markWebhookEventProcessed({ id: claim.id });
-      console.error("[linear-webhook] fetchIssue failed for agent session", {
-        issueId: sessionMatch.issueId,
-        err,
-      });
-      return {
-        kind: "invalid_payload",
-        reason: `agent session issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-    if (!rawIssue) {
-      await markWebhookEventProcessed({ id: claim.id });
-      return {
-        kind: "invalid_payload",
-        reason: `agent session issue not found: ${sessionMatch.issueId}`,
-      };
-    }
-    const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
-    if (!enriched) {
-      await markWebhookEventProcessed({ id: claim.id });
-      return {
-        kind: "invalid_payload",
-        reason: `agent session issue payload did not parse: ${sessionMatch.issueId}`,
-      };
-    }
-    match = { issue: enriched, actorId: sessionMatch.actorId };
+    const fetched = await fetchAndParseIssue({
+      issueId: sessionMatch.issueId,
+      accessToken: workspace.secrets.accessToken,
+      fetchFn: input.deps?.fetchIssue ?? fetchIssue,
+      kind: "agent session",
+      claimId: claim.id,
+    });
+    if (fetched.outcome === "error") return fetched.error;
+    match = { issue: fetched.issue, actorId: sessionMatch.actorId };
     matchKind = "session";
   }
 
@@ -555,20 +506,44 @@ async function runHandler(
     };
   }
 
-  const run = await Run.create({
-    triggerSource: "linear",
-    triggerRef: match.issue.id,
-    specialistId: "planner",
-    humanOwnerId,
-    // Top-level Linear runs need a fresh sandbox of their own —
-    // L2b's `provisionFreshSandboxForRun` does the actual clone.
-    // `inherit` was a placeholder before L2b shipped; now the
-    // workflow uses fresh.
-    sandboxPolicy: "fresh",
-    repoRef,
-    budgetUsdCapMicros: input.defaultBudgetUsdMicros,
-    linearAgentSessionId: pendingAgentSessionId,
-  });
+  // Race-safe insert: the partial unique index on
+  // (trigger_ref) WHERE trigger_source='linear' AND status IN
+  // (pending/running/blocked/awaiting_approval) forces the second
+  // webhook for the same issue to fail at the DB layer instead of
+  // succeeding past the earlier `getActiveRunByLinearIssue` check.
+  // The losing call observes 23505 (unique_violation) and converts
+  // to "ignored" — same outcome as the application-level dedupe
+  // for the AppUserNotification path, but resilient against the
+  // TOCTOU window between read and insert.
+  let run: Awaited<ReturnType<typeof Run.create>>;
+  try {
+    run = await Run.create({
+      triggerSource: "linear",
+      triggerRef: match.issue.id,
+      specialistId: "planner",
+      humanOwnerId,
+      // Top-level Linear runs need a fresh sandbox of their own —
+      // L2b's `provisionFreshSandboxForRun` does the actual clone.
+      // `inherit` was a placeholder before L2b shipped; now the
+      // workflow uses fresh.
+      sandboxPolicy: "fresh",
+      repoRef,
+      budgetUsdCapMicros: input.defaultBudgetUsdMicros,
+      linearAgentSessionId: pendingAgentSessionId,
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      const existing = await getActiveRunByLinearIssue(match.issue.id);
+      await markWebhookEventProcessed(
+        existing ? { id: claim.id, runId: existing.id } : { id: claim.id },
+      );
+      return {
+        kind: "ignored",
+        reason: `race lost: another webhook already created a run for ${match.issue.id}`,
+      };
+    }
+    throw err;
+  }
 
   await markWebhookEventProcessed({ id: claim.id, runId: run.id });
 
@@ -602,6 +577,71 @@ async function runHandler(
     repoRef,
     humanOwnerId,
   };
+}
+
+// Shared issue fetch + parse for the delegation and session
+// intake branches. Both events deliver only { issueId, ... } and
+// need to round-trip to Linear's GraphQL to populate teamId /
+// attachments / labels for the resolver pipeline. The two paths
+// were verbatim copies of the same fetch → null-check →
+// parseLinearIssue → error-return logic; extract here so a bug
+// fix lands on both at once.
+//
+// The `kind` field is interpolated into error messages /
+// reason strings so the existing failure-path observability
+// stays readable.
+async function fetchAndParseIssue(input: {
+  issueId: string;
+  accessToken: string;
+  fetchFn: typeof fetchIssue;
+  kind: "delegation" | "agent session";
+  claimId: string;
+}): Promise<
+  | { outcome: "ok"; issue: LinearIssue }
+  | { outcome: "error"; error: WebhookHandlerOutcome }
+> {
+  let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
+  try {
+    rawIssue = await input.fetchFn({
+      accessToken: input.accessToken,
+      issueId: input.issueId,
+    });
+  } catch (err) {
+    await markWebhookEventProcessed({ id: input.claimId });
+    console.error(`[linear-webhook] fetchIssue failed for ${input.kind}`, {
+      issueId: input.issueId,
+      err,
+    });
+    return {
+      outcome: "error",
+      error: {
+        kind: "invalid_payload",
+        reason: `${input.kind} issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    };
+  }
+  if (!rawIssue) {
+    await markWebhookEventProcessed({ id: input.claimId });
+    return {
+      outcome: "error",
+      error: {
+        kind: "invalid_payload",
+        reason: `${input.kind} issue not found: ${input.issueId}`,
+      },
+    };
+  }
+  const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
+  if (!enriched) {
+    await markWebhookEventProcessed({ id: input.claimId });
+    return {
+      outcome: "error",
+      error: {
+        kind: "invalid_payload",
+        reason: `${input.kind} issue payload did not parse: ${input.issueId}`,
+      },
+    };
+  }
+  return { outcome: "ok", issue: enriched };
 }
 
 // Comment + reassign for the `unresolved_repo` failure path. The

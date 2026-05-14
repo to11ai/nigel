@@ -257,6 +257,15 @@ export async function agentActivityCreate(input: {
   kind: AgentActivityKind;
   body: string;
 }): Promise<{ activityId: string | null }> {
+  // Linear's AgentActivityCreateInput accepts ONLY
+  //   { agentSessionId: String!, content: JSONObject! }
+  // at the top level — `body` and `type` go INSIDE the `content`
+  // object. Sending them as siblings of `agentSessionId` triggers
+  // a GraphQL error that the fire-and-forget caller in
+  // specialist-execution.ts swallows, so every activity post would
+  // silently disappear and the session panel would stay stuck on
+  // "did not respond" — exactly the failure mode this PR exists
+  // to fix.
   const data = await linearGraphql<{
     agentActivityCreate: {
       success: boolean;
@@ -267,13 +276,11 @@ export async function agentActivityCreate(input: {
     query: `
       mutation CreateAgentActivity(
         $agentSessionId: String!
-        $body: String!
-        $kind: AgentActivityType!
+        $content: JSONObject!
       ) {
         agentActivityCreate(input: {
           agentSessionId: $agentSessionId
-          body: $body
-          type: $kind
+          content: $content
         }) {
           success
           agentActivity { id }
@@ -282,8 +289,7 @@ export async function agentActivityCreate(input: {
     `,
     variables: {
       agentSessionId: input.agentSessionId,
-      body: input.body,
-      kind: input.kind,
+      content: { type: input.kind, body: input.body },
     },
   });
   return {

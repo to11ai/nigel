@@ -388,6 +388,29 @@ export async function executeSpecialistViaLLM(
           code: SpanStatusCode.ERROR,
           message: err instanceof Error ? err.message : String(err),
         });
+        // Post a kind="error" AgentActivity so the Linear session
+        // panel shows the failure instead of going silent after the
+        // last successful step's activity. Without this, a budget-
+        // exhausted or network-failed run would emit partial step
+        // activities and then stop — the user sees "did not respond"
+        // for the exact failure mode this PR exists to fix.
+        // Fire-and-forget (same rationale as the per-step posts);
+        // a Linear API hiccup on the error path can't mask the
+        // original throw that the catch is about to re-raise.
+        if (agentSessionContext) {
+          const message = err instanceof Error ? err.message : String(err);
+          agentActivityCreate({
+            accessToken: agentSessionContext.accessToken,
+            agentSessionId: agentSessionContext.agentSessionId,
+            kind: "error",
+            body: `Run failed: ${message}`,
+          }).catch((postErr) => {
+            console.error(
+              `[specialist-execution] error agentActivityCreate failed for run ${run.id}`,
+              postErr,
+            );
+          });
+        }
         throw err;
       } finally {
         // Always flush the running cost total, even on the error
