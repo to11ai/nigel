@@ -144,10 +144,10 @@ export async function refreshAccessToken(input: {
       expires_in?: number;
       scope?: string;
     } | null;
-    if (!(json?.access_token && json.token_type && json.scope)) {
+    if (!(json?.access_token && json.token_type)) {
       throw new LinearOAuthError(
         "malformed_response",
-        "Linear token refresh response missing access_token / token_type / scope",
+        "Linear token refresh response missing access_token / token_type",
       );
     }
     return {
@@ -159,7 +159,12 @@ export async function refreshAccessToken(input: {
       // capability.
       refreshToken: json.refresh_token ?? input.refreshToken,
       expiresIn: json.expires_in ?? null,
-      scope: json.scope,
+      // RFC 6749 §6: scope is OPTIONAL on refresh responses (assumed
+      // equal to the original grant when omitted). Falling back to an
+      // empty string keeps the shape consistent; callers don't act on
+      // scope from refresh — only the initial exchange — so the value
+      // is informational.
+      scope: json.scope ?? "",
     };
   } finally {
     clearTimeout(timer);
