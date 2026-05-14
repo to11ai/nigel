@@ -111,18 +111,24 @@ export async function handleLinearWebhook(
   // The span wraps the whole intake so Datadog records latency +
   // outcome counts. Started here (before signature verification)
   // because signature failures are themselves a metric the
-  // dashboard should show.
+  // dashboard should show. envelopeType is resolved inside the
+  // body (after JSON parse succeeds) via a captured `let` so the
+  // finish call can stamp it.
   const span = startWebhookSpan({
     source: "linear",
     externalId: input.deliveryHeader,
-    envelopeType: null,
   });
+  // biome-ignore lint/style/useConst: assigned inside the try block after parsing
+  let envelopeType: string | null = null;
   try {
-    const outcome = await runHandler(input);
+    const outcome = await runHandler(input, (type) => {
+      envelopeType = type;
+    });
     span.finish({
       outcomeKind: outcome.kind,
       runId: extractRunId(outcome),
       outcomeReason: extractOutcomeReason(outcome),
+      envelopeType,
     });
     return outcome;
   } catch (err) {
@@ -154,6 +160,11 @@ function extractOutcomeReason(outcome: WebhookHandlerOutcome): string | null {
 
 async function runHandler(
   input: WebhookHandlerInput,
+  // Callback used by the entrypoint to stamp the envelope type onto
+  // the intake span once JSON parsing succeeds. Pulled out as a
+  // callback rather than threading the span object so runHandler
+  // stays decoupled from the observability layer.
+  setEnvelopeType: (type: string) => void,
 ): Promise<WebhookHandlerOutcome> {
   const workspaceFn = input.deps?.resolveWorkspace ?? resolveLinearWorkspace;
   const workspace = await workspaceFn();
@@ -180,6 +191,7 @@ async function runHandler(
       reason: err instanceof Error ? err.message : String(err),
     };
   }
+  setEnvelopeType(envelope.type);
 
   const externalId = deriveExternalId({
     envelope,

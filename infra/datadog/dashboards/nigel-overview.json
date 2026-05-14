@@ -1,6 +1,6 @@
 {
   "title": "Nigel — Overview",
-  "description": "Top-level health of the Nigel platform: webhook intake, run lifecycle, specialist execution, and cost. Imported via Datadog API; do not edit in the UI — round-trip through this file.",
+  "description": "Top-level health of the Nigel platform: webhook intake, run lifecycle, specialist execution, and cost. Imported via Datadog API; do not edit in the UI — round-trip through this file.\n\nWidgets querying numeric span attributes (durations, costs) use the `spans` data source (Trace Analytics) rather than `trace.<op>.<attr>` metrics, which Datadog does NOT auto-generate — APM only derives `.hits`, `.errors`, `.duration`, `.apdex`. Cost widgets filter to terminal transitions only because every status_change span carries the cumulative cost so far; summing across all transitions would multi-count.",
   "layout_type": "ordered",
   "widgets": [
     {
@@ -30,7 +30,7 @@
     },
     {
       "definition": {
-        "title": "Webhook errors by reason",
+        "title": "Webhook errors by outcome",
         "type": "timeseries",
         "requests": [
           {
@@ -77,27 +77,65 @@
     },
     {
       "definition": {
-        "title": "Run duration p95 (ms) by trigger",
+        "title": "Run duration p95 (ms) by trigger (terminal=completed)",
         "type": "timeseries",
         "requests": [
           {
-            "q": "p95:trace.run.status_change.duration_ms{service:nigel-web,nigel.run.status.to:completed} by {nigel.run.trigger_source}"
+            "queries": [
+              {
+                "name": "duration",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:run.status_change @nigel.run.status.to:completed"
+                },
+                "compute": {
+                  "aggregation": "pc95",
+                  "metric": "@nigel.run.duration_ms"
+                },
+                "group_by": [
+                  {
+                    "facet": "@nigel.run.trigger_source",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "pc95" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries"
           }
         ]
       }
     },
     {
       "definition": {
-        "title": "Cost ($) by trigger (last 1h)",
-        "type": "query_value",
+        "title": "Cost ($) sum by trigger — terminal root runs only",
+        "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.run.status_change.cost_total_micros{service:nigel-web,nigel.run.depth:0}/1000000",
-            "aggregator": "sum"
+            "queries": [
+              {
+                "name": "cost",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:run.status_change @nigel.run.depth:0 @nigel.run.status.to:(completed OR failed OR cancelled)"
+                },
+                "compute": {
+                  "aggregation": "sum",
+                  "metric": "@nigel.run.cost_total_micros"
+                },
+                "group_by": [
+                  {
+                    "facet": "@nigel.run.trigger_source",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "sum" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries",
+            "formulas": [{ "formula": "cost / 1000000", "alias": "$ USD" }]
           }
-        ],
-        "precision": 2,
-        "custom_unit": "$"
+        ]
       }
     },
     {

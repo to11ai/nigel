@@ -73,12 +73,12 @@ describe("startWebhookSpan", () => {
     const handle = startWebhookSpan({
       source: "linear",
       externalId: "delivery-abc",
-      envelopeType: "Issue",
     });
     handle.finish({
       outcomeKind: "run_created",
       runId: "run_new",
       outcomeReason: null,
+      envelopeType: "Issue",
     });
     expect(captured.spans).toHaveLength(1);
     const span = captured.spans[0]!;
@@ -96,12 +96,12 @@ describe("startWebhookSpan", () => {
     const handle = startWebhookSpan({
       source: "linear",
       externalId: "delivery-bad",
-      envelopeType: null,
     });
     handle.finish({
       outcomeKind: "signature_mismatch",
       runId: null,
       outcomeReason: null,
+      envelopeType: null,
     });
     expect(captured.spans[0]?.status?.code).toBe(SpanStatusCode.ERROR);
     expect(captured.spans[0]?.status?.message).toBe("signature_mismatch");
@@ -111,22 +111,22 @@ describe("startWebhookSpan", () => {
     const dupHandle = startWebhookSpan({
       source: "linear",
       externalId: "d1",
-      envelopeType: null,
     });
     dupHandle.finish({
       outcomeKind: "duplicate",
       runId: null,
       outcomeReason: null,
+      envelopeType: "Issue",
     });
     const ignHandle = startWebhookSpan({
       source: "linear",
       externalId: "d2",
-      envelopeType: null,
     });
     ignHandle.finish({
       outcomeKind: "ignored",
       runId: null,
       outcomeReason: "not an assignment-to-bot event",
+      envelopeType: "Issue",
     });
     expect(captured.spans[0]?.status).toBeNull();
     expect(captured.spans[1]?.status).toBeNull();
@@ -139,7 +139,6 @@ describe("startWebhookSpan", () => {
     const handle = startWebhookSpan({
       source: "linear",
       externalId: "delivery-throw",
-      envelopeType: null,
     });
     const err = new Error("workspace lookup failed");
     handle.fail(err);
@@ -154,12 +153,12 @@ describe("startWebhookSpan", () => {
     const handle = startWebhookSpan({
       source: "linear",
       externalId: null,
-      envelopeType: null,
     });
     handle.finish({
       outcomeKind: "invalid_payload",
       runId: null,
       outcomeReason: "no Linear-Delivery header and no event id in envelope",
+      envelopeType: null,
     });
     expect(
       captured.spans[0]?.attributes["nigel.webhook.external_id"],
@@ -167,5 +166,21 @@ describe("startWebhookSpan", () => {
     expect(
       captured.spans[0]?.attributes["nigel.webhook.envelope_type"],
     ).toBeUndefined();
+  });
+
+  test("stamps envelope_type on finish for parsed Comment events", () => {
+    const handle = startWebhookSpan({
+      source: "linear",
+      externalId: "delivery-cmd",
+    });
+    handle.finish({
+      outcomeKind: "command",
+      runId: null,
+      outcomeReason: "transitioned",
+      envelopeType: "Comment",
+    });
+    expect(captured.spans[0]?.attributes["nigel.webhook.envelope_type"]).toBe(
+      "Comment",
+    );
   });
 });

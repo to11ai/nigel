@@ -23,9 +23,6 @@ export type WebhookIntakeAttributes = {
   // span can be cross-referenced with the corresponding row in
   // webhook_events when triaging a specific intake.
   externalId: string | null;
-  // The envelope type (e.g. "Issue", "Comment") so dashboards can
-  // group by event family without parsing the outcome union.
-  envelopeType: string | null;
 };
 
 export type WebhookOutcomeAttributes = {
@@ -42,6 +39,10 @@ export type WebhookOutcomeAttributes = {
   //   invalid_payload  → reason
   //   command          → outcome.kind of the inner CommandHandlerOutcome
   outcomeReason: string | null;
+  // Resolved after JSON parsing succeeds, which is why it lands here
+  // (in finish) rather than at start. Set to null when the payload
+  // didn't parse — the span still records the failure.
+  envelopeType: string | null;
 };
 
 export type WebhookSpanHandle = {
@@ -57,9 +58,6 @@ export function startWebhookSpan(
   };
   if (attrs.externalId) {
     spanAttributes["nigel.webhook.external_id"] = attrs.externalId;
-  }
-  if (attrs.envelopeType) {
-    spanAttributes["nigel.webhook.envelope_type"] = attrs.envelopeType;
   }
   const span = trace
     .getTracer(TRACER_NAME)
@@ -78,6 +76,9 @@ export function startWebhookSpan(
           "nigel.webhook.outcome_reason",
           outcome.outcomeReason,
         );
+      }
+      if (outcome.envelopeType) {
+        span.setAttribute("nigel.webhook.envelope_type", outcome.envelopeType);
       }
       if (isErrorOutcome(outcome.outcomeKind)) {
         span.setStatus({
