@@ -34,3 +34,8 @@ config:
   nigel-vercel:vercelProjectId: prj_4rsz1UxHv1X6l42gaKseGGR9PyKU
   nigel-vercel:toolConnectionsEncKey:
     secure: AAABABrFB4qoDbDJRXDhebc+2dQ1hruKntkxH54rihVoIPDm9KVTFB0hxJYHMzUAxzKAvJdNDJbErLSxd6htnlWvH1eW2EXLBPz4XQ==
+  nigel-vercel:linearOauthClientId: c04b08dd03223ce87a45dd2978c36e33
+  nigel-vercel:linearOauthClientSecret:
+    secure: AAABABiJ6M/ux1mPaU5Fjdff7zL3B9r/rAYrBJujLZMjvdyNRYpQgWBZqrVQf9T/PdZGSsEpP+2jWOjfAehqzA==
+  nigel-vercel:linearWebhookSecret:
+    secure: AAABAEyJaKjXb2mGO+uiALhftphk7VC6fbw7TiblqDUtfoCGarYqYHOTWEi1wbLkC2wsPgDaBke4Gno0Tfg1fKGl+avbjRxHAmn+zsqkQbyI8qA=
