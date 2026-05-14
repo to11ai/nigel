@@ -12,12 +12,22 @@
 // issue identifier (e.g. PLAT-123) for traceability and the issue
 // title + description verbatim. The planner's own prompt instructs
 // it to re-state the task in its own words before decomposing.
-export function buildTaskText(issue: {
-  identifier: string;
-  title: string;
-  description?: string | null;
-  url?: string;
-}): string {
+export function buildTaskText(
+  issue: {
+    identifier: string;
+    title: string;
+    description?: string | null;
+    url?: string;
+  },
+  // Optional user-typed prompt from Linear's session panel
+  // (AgentSessionEvent.agentSession.prompt / .comment.body). When
+  // present this is the direct instruction the user wants Nigel
+  // to follow — surfaced AFTER the ticket body so the planner sees
+  // ticket context first, then the live user request. Without
+  // threading this through, the prompt is silently dropped and the
+  // planner reads only the static ticket title/description.
+  agentSessionPrompt?: string | null,
+): string {
   const body =
     issue.description && issue.description.trim().length > 0
       ? issue.description.trim()
@@ -28,6 +38,13 @@ export function buildTaskText(issue: {
     "",
     body,
   ];
+  if (agentSessionPrompt && agentSessionPrompt.trim().length > 0) {
+    lines.push(
+      "",
+      "User instructions (from Linear session panel):",
+      agentSessionPrompt.trim(),
+    );
+  }
   return lines.join("\n");
 }
 

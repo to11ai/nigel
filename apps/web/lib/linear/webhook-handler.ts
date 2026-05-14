@@ -251,6 +251,13 @@ async function runHandler(
   // AppUserNotification → assignment extractor surface untouched.
   const sessionMatch = extractAgentSessionCreated({ envelope });
   let pendingAgentSessionId: string | null = null;
+  // The user-typed prompt that opened the session, when present.
+  // Threaded into buildTaskText below so the planner sees the
+  // direct instruction (e.g. "focus on the auth module") alongside
+  // the static ticket body. Null/empty falls back to ticket-only
+  // task text, preserving the legacy behavior for assignment-only
+  // intake paths.
+  let pendingAgentSessionPrompt: string | null = null;
   if (sessionMatch) {
     const existing = await getActiveRunByLinearIssue(sessionMatch.issueId);
     if (existing) {
@@ -272,6 +279,7 @@ async function runHandler(
       };
     }
     pendingAgentSessionId = sessionMatch.agentSessionId;
+    pendingAgentSessionPrompt = sessionMatch.prompt;
   }
 
   // L4: comment-command events branch here. Comment.create from a
@@ -536,7 +544,7 @@ async function runHandler(
   try {
     await startWorkflow({
       agentRunId: run.id,
-      taskText: buildTaskText(match.issue),
+      taskText: buildTaskText(match.issue, pendingAgentSessionPrompt),
     });
   } catch (err) {
     // The Run row exists and is in `pending`. If workflow-start
