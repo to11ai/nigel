@@ -23,12 +23,34 @@ export const runtime = "nodejs";
 const AUTHORIZE_URL = "https://linear.app/oauth/authorize";
 
 // The scopes we need:
-//   read         — list issues, teams, users for repo/owner resolution
-//   write        — issueUpdate (reassignment)
-//   issues:create — currently unused but reserved for future "create
-//                   issue from chat" flow; cheap to ask for now
-//   comments:create — commentCreate (status comments)
-const SCOPES = ["read", "write", "issues:create", "comments:create"].join(",");
+//   read              — list issues, teams, users for repo/owner resolution
+//   write             — issueUpdate (reassignment)
+//   issues:create     — reserved for future "create issue from chat" flow
+//   comments:create   — commentCreate (status comments)
+//   app:assignable    — REQUIRED for the app to appear in the assignee
+//                       picker. Without it, actor=app installs are
+//                       invisible in Linear's UI even though API
+//                       mutations work. Per Linear's agent docs:
+//                       "Allow the app to be assigned as a delegate
+//                       on issues and made a member of projects."
+//                       Assigning an issue to the app sets the
+//                       `delegate` field (not `assignee`), and fires
+//                       an AppUserNotification webhook with
+//                       notification.type=issueAssignedToYou (handled
+//                       by extractAppUserNotificationDelegation).
+//   app:mentionable   — REQUIRED for the app to appear in @-mention
+//                       pickers. We'll use this once chat-with-the-
+//                       agent surfaces ship, but Linear lights up the
+//                       UI affordance only when both scopes are
+//                       requested up-front, so include now.
+const SCOPES = [
+  "read",
+  "write",
+  "issues:create",
+  "comments:create",
+  "app:assignable",
+  "app:mentionable",
+].join(",");
 
 export async function GET(req: Request): Promise<Response> {
   const clientId = process.env.LINEAR_OAUTH_CLIENT_ID;

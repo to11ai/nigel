@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -94,6 +94,28 @@ export function LinearWorkspaceForm({ existing, onSubmitted }: Props) {
 
   return (
     <form className="space-y-5" onSubmit={handleSubmit}>
+      <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">
+              {isEdit ? "Reconnect Linear" : "Install via OAuth"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {isEdit
+                ? "Re-runs the OAuth flow against Linear to mint a fresh access token. Use this after uninstalling on Linear's side, after a permission change (new scopes), or to recover from an expired token."
+                : "One-click install. Approves the Nigel Linear app for your workspace and persists the OAuth token. The manual form below is a fallback for non-OAuth installs."}
+            </p>
+          </div>
+          <Button asChild variant="secondary" size="sm">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- api-route redirect, not a Next page; next/link would intercept and prevent the server-side redirect from reaching the route handler */}
+            <a href="/api/linear/oauth/start">
+              <ExternalLink className="size-4" />
+              {isEdit ? "Reconnect" : "Connect Linear"}
+            </a>
+          </Button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="workspaceId">Workspace ID</Label>

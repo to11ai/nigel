@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   deriveExternalId,
+  extractAppUserNotificationDelegation,
   extractAssignmentToBot,
   linearWebhookEnvelopeSchema,
 } from "./event-schema";
@@ -228,5 +229,133 @@ describe("extractAssignmentToBot", () => {
       }),
     );
     expect(extractAssignmentToBot({ envelope, botUserId: BOT })).toBeNull();
+  });
+});
+
+describe("extractAppUserNotificationDelegation", () => {
+  // Real-shape payload mirroring linear/linear-agent-demo's
+  // AgentNotificationWebhook type. appUserId + notification live at
+  // the envelope TOP LEVEL, NOT under data. Regression fixture for
+  // the bug Bugbot caught: the original implementation read these
+  // off env.data which would always be undefined for delegations.
+  function makeDelegationEnvelope(input: {
+    appUserId?: string;
+    notificationType?: string;
+    issueId?: string;
+    issueIdNested?: boolean;
+    actorAtEnvelope?: boolean;
+    actorAtNotification?: boolean;
+    actorId?: string;
+  }): unknown {
+    const issueId = input.issueId ?? "iss_xyz";
+    const env: Record<string, unknown> = {
+      id: "evt_delegate_1",
+      type: "AppUserNotification",
+      appUserId: input.appUserId ?? BOT,
+      notification: {
+        type: input.notificationType ?? "issueAssignedToYou",
+        ...(input.issueIdNested
+          ? { issue: { id: issueId, title: "Triage me" } }
+          : { issueId }),
+        ...(input.actorAtNotification
+          ? { actor: { id: input.actorId ?? "user-mattc" } }
+          : {}),
+      },
+      webhookId: "wh_456",
+    };
+    if (input.actorAtEnvelope) {
+      env.actor = { id: input.actorId ?? "user-mattc" };
+    }
+    return env;
+  }
+
+  test("matches a freshly-delegated issue with envelope-level actor", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeDelegationEnvelope({ actorAtEnvelope: true }),
+    );
+    const result = extractAppUserNotificationDelegation({
+      envelope,
+      botUserId: BOT,
+    });
+    expect(result).toEqual({ issueId: "iss_xyz", actorId: "user-mattc" });
+  });
+
+  test("falls back to notification.actor when envelope.actor is absent", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeDelegationEnvelope({ actorAtNotification: true }),
+    );
+    const result = extractAppUserNotificationDelegation({
+      envelope,
+      botUserId: BOT,
+    });
+    expect(result?.actorId).toBe("user-mattc");
+  });
+
+  test("falls back to notification.issue.id when issueId is omitted", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeDelegationEnvelope({
+        issueIdNested: true,
+        actorAtEnvelope: true,
+      }),
+    );
+    const result = extractAppUserNotificationDelegation({
+      envelope,
+      botUserId: BOT,
+    });
+    expect(result?.issueId).toBe("iss_xyz");
+  });
+
+  test("returns null when appUserId doesn't match the bot (other app installed)", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeDelegationEnvelope({ appUserId: "different-app-uuid" }),
+    );
+    expect(
+      extractAppUserNotificationDelegation({ envelope, botUserId: BOT }),
+    ).toBeNull();
+  });
+
+  test("returns null for non-issueAssignedToYou notification types", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse(
+      makeDelegationEnvelope({ notificationType: "issueNewComment" }),
+    );
+    expect(
+      extractAppUserNotificationDelegation({ envelope, botUserId: BOT }),
+    ).toBeNull();
+  });
+
+  test("returns null for non-AppUserNotification envelope types", () => {
+    const envelope = linearWebhookEnvelopeSchema.parse({
+      id: "evt_x",
+      type: "Issue",
+      action: "assignee_changed",
+      data: {},
+    });
+    expect(
+      extractAppUserNotificationDelegation({ envelope, botUserId: BOT }),
+    ).toBeNull();
+  });
+
+  // Regression: the original implementation read env.data.appUserId
+  // instead of env.appUserId. An AppUserNotification payload without
+  // a `data` wrapper would silently return null. This test pins the
+  // real-shape access path.
+  test("does NOT rely on env.data — appUserId/notification at top level only", () => {
+    const rawWithNoData: unknown = {
+      id: "evt_no_data",
+      type: "AppUserNotification",
+      appUserId: BOT,
+      notification: {
+        type: "issueAssignedToYou",
+        issueId: "iss_pinned",
+      },
+      actor: { id: "user-mattc" },
+      webhookId: "wh_no_data",
+    };
+    const envelope = linearWebhookEnvelopeSchema.parse(rawWithNoData);
+    const result = extractAppUserNotificationDelegation({
+      envelope,
+      botUserId: BOT,
+    });
+    expect(result).toEqual({ issueId: "iss_pinned", actorId: "user-mattc" });
   });
 });

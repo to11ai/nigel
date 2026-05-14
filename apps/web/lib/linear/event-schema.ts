@@ -87,6 +87,28 @@ export const linearWebhookEnvelopeSchema = z
     // nested in `data`. Capture both forms.
     assigneeId: z.string().nullable().optional(),
     oldAssigneeId: z.string().nullable().optional(),
+    // AppUserNotification puts these at the TOP level, not under
+    // `data` (confirmed against linear/linear-agent-demo's
+    // AgentNotificationWebhook type: { type, appUserId, notification,
+    // webhookId }). Declared here so the matcher can read them
+    // type-safely.
+    appUserId: z.string().min(1).optional(),
+    notification: z
+      .object({
+        type: z.string().min(1),
+        issueId: z.string().min(1).optional(),
+        issue: z
+          .object({
+            id: z.string().min(1),
+            title: z.string().optional(),
+            description: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .optional(),
+        actor: linearActorSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
@@ -163,6 +185,82 @@ export function extractAssignmentToBot(input: {
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object";
+}
+
+// AppUserNotification: delegation events.
+//
+// Linear migrated app-assignment from `Issue.assignee_changed`
+// (which used `assigneeId`) to `AppUserNotification` (which fires
+// `notification.type === "issueAssignedToYou"`). The user no longer
+// becomes the "assignee" — they become the "delegate". Per Linear's
+// agent docs and the linear-agent-demo sample, the on-the-wire
+// event for delegation is:
+//
+//   {
+//     type: "AppUserNotification",
+//     appUserId: "<app's actor uuid>",  // TOP-LEVEL, not in data
+//     notification: {                   // TOP-LEVEL, not in data
+//       type: "issueAssignedToYou",
+//       issueId: "...",
+//       issue: { id, title, description },
+//       actor: { id: <human who delegated> },  // optional
+//     },
+//     webhookId: "...",
+//   }
+//
+// Important: AppUserNotification does NOT use the `data` wrapper
+// that issue / comment events use. We read `env.appUserId` and
+// `env.notification` directly (both declared on the envelope schema
+// above so access is type-safe).
+//
+// Required for this to fire: the OAuth token must have been issued
+// with the `app:assignable` scope AND the workspace's Linear app
+// must subscribe to "Inbox notifications" webhook events.
+
+export type ExtractedDelegation = {
+  // Linear's AppUserNotification.issueAssignedToYou payload includes
+  // only { id, title, description } per their NotificationIssue type
+  // — the fields the repo resolver / planner prompt need (teamId,
+  // attachments, labels) AREN'T present. The handler must call
+  // fetchIssue to enrich. Returning just the id keeps this extractor
+  // honest about what Linear actually delivers.
+  issueId: string;
+  actorId: string | null;
+};
+
+export function extractAppUserNotificationDelegation(input: {
+  envelope: LinearWebhookEnvelope;
+  botUserId: string;
+}): ExtractedDelegation | null {
+  const env = input.envelope;
+  if (env.type !== "AppUserNotification") return null;
+
+  // appUserId lives at the envelope TOP LEVEL, not in env.data
+  // (confirmed against linear-agent-demo's AgentNotificationWebhook
+  // type). Verify it matches our bot so a stray notification for a
+  // different app installed in the same workspace doesn't trigger
+  // our runs.
+  if (env.appUserId !== input.botUserId) return null;
+
+  // notification is also top-level.
+  const notification = env.notification;
+  if (!notification) return null;
+  if (notification.type !== "issueAssignedToYou") return null;
+
+  // Prefer the explicit issueId; fall back to the nested issue.id
+  // for payload variants that omit it.
+  const issueId = notification.issueId ?? notification.issue?.id ?? null;
+  if (!issueId) return null;
+
+  // The actor on a delegation is the human who set the app as the
+  // delegate. Prefer envelope.actor; fall back to notification.actor
+  // for shapes that nest it.
+  const envelopeActor = env.actor?.id ?? null;
+  const notificationActor = notification.actor?.id ?? null;
+  return {
+    issueId,
+    actorId: envelopeActor ?? notificationActor,
+  };
 }
 
 // Phase 6 L4: command-comment intake.
