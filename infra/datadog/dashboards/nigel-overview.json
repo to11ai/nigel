@@ -1,6 +1,6 @@
 {
   "title": "Nigel — Overview",
-  "description": "Top-level health of the Nigel platform: webhook intake, run lifecycle, specialist execution, and cost. Imported via Datadog API; do not edit in the UI — round-trip through this file.\n\nWidgets querying numeric span attributes (durations, costs) use the `spans` data source (Trace Analytics) rather than `trace.<op>.<attr>` metrics, which Datadog does NOT auto-generate — APM only derives `.hits`, `.errors`, `.duration`, `.apdex`. Cost widgets filter to terminal transitions only because every status_change span carries the cumulative cost so far; summing across all transitions would multi-count.",
+  "description": "Top-level health of the Nigel platform: webhook intake, run lifecycle, specialist execution, and cost. Imported via Datadog API; do not edit in the UI — round-trip through this file.\n\nEVERY widget that groups by a custom span attribute (e.g. nigel.webhook.outcome, nigel.run.status.to, nigel.run.trigger_source) uses data_source: spans (Trace Analytics). Datadog's auto-derived trace.*.hits / .errors metrics only support standard tags — they cannot group by custom attributes. The numeric-attribute widgets (duration, cost) need spans data source for the same reason. The total-count widget at the top can still use trace.*.hits since it's not grouping.\n\nCost widgets filter to terminal transitions on root runs only because every status_change span carries the cumulative cost so far; summing across all transitions or all dispatched children would multi-count.",
   "layout_type": "ordered",
   "widgets": [
     {
@@ -22,8 +22,25 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.webhook.linear.intake.hits{service:nigel-web} by {nigel.webhook.outcome}.as_count()",
-            "display_type": "bars"
+            "queries": [
+              {
+                "name": "intake",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:webhook.linear.intake"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.webhook.outcome",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries",
+            "style": { "palette": "dog_classic" }
           }
         ]
       }
@@ -34,8 +51,25 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.webhook.linear.intake.errors{service:nigel-web} by {nigel.webhook.outcome}.as_count()",
-            "display_type": "bars"
+            "queries": [
+              {
+                "name": "errors",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:webhook.linear.intake status:error"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.webhook.outcome",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries",
+            "style": { "palette": "warm" }
           }
         ]
       }
@@ -46,8 +80,25 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.run.status_change.hits{service:nigel-web} by {nigel.run.status.to}.as_count()",
-            "display_type": "bars"
+            "queries": [
+              {
+                "name": "transitions",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:run.status_change"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.run.status.to",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries",
+            "style": { "palette": "dog_classic" }
           }
         ]
       }
@@ -58,19 +109,54 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.run.status_change.hits{service:nigel-web,nigel.run.status.to:completed} by {nigel.run.trigger_source}.as_count()",
-            "display_type": "bars",
-            "style": { "palette": "green" }
-          },
-          {
-            "q": "sum:trace.run.status_change.hits{service:nigel-web,nigel.run.status.to:failed} by {nigel.run.trigger_source}.as_count()",
-            "display_type": "bars",
-            "style": { "palette": "warm" }
-          },
-          {
-            "q": "sum:trace.run.status_change.hits{service:nigel-web,nigel.run.status.to:cancelled} by {nigel.run.trigger_source}.as_count()",
-            "display_type": "bars",
-            "style": { "palette": "grey" }
+            "queries": [
+              {
+                "name": "completed",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:run.status_change @nigel.run.status.to:completed"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.run.trigger_source",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              },
+              {
+                "name": "failed",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:run.status_change @nigel.run.status.to:failed"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.run.trigger_source",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              },
+              {
+                "name": "cancelled",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:run.status_change @nigel.run.status.to:cancelled"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.run.trigger_source",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries"
           }
         ]
       }
@@ -144,8 +230,24 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.specialist.execute.hits{service:nigel-web} by {nigel.specialist.name}.as_count()",
-            "display_type": "bars"
+            "queries": [
+              {
+                "name": "runs",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:specialist.execute"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.specialist.name",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries"
           }
         ]
       }
@@ -156,7 +258,24 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "p95:trace.specialist.execute.duration{service:nigel-web} by {nigel.specialist.name}"
+            "queries": [
+              {
+                "name": "duration",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:specialist.execute"
+                },
+                "compute": { "aggregation": "pc95", "metric": "@duration" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.specialist.name",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "pc95" }
+                  }
+                ]
+              }
+            ],
+            "response_format": "timeseries"
           }
         ]
       }
@@ -167,8 +286,25 @@
         "type": "timeseries",
         "requests": [
           {
-            "q": "sum:trace.tool.errors{service:nigel-web} by {nigel.tool.name,nigel.tool.error_code}.as_count()",
-            "display_type": "bars"
+            "queries": [
+              {
+                "name": "failures",
+                "data_source": "spans",
+                "search": {
+                  "query": "service:nigel-web operation_name:(tool.database_query OR tool.clickhouse_query OR tool.redis_command OR tool.mcp_call OR tool.slack_post) status:error"
+                },
+                "compute": { "aggregation": "count" },
+                "group_by": [
+                  {
+                    "facet": "@nigel.tool.name",
+                    "limit": 10,
+                    "sort": { "order": "desc", "aggregation": "count" }
+                  },
+                  { "facet": "@nigel.tool.error_code", "limit": 10 }
+                ]
+              }
+            ],
+            "response_format": "timeseries"
           }
         ]
       }
