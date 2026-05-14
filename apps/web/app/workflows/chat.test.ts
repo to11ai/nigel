@@ -585,7 +585,7 @@ describe("runAgentWorkflow", () => {
   test("persists model metadata even without a finish-step chunk", async () => {
     await runAgentWorkflow(
       makeOptions({
-        selectedModelId: "variant:builtin:gpt-5.4-xhigh",
+        selectedModelId: "variant:builtin:gpt-5.5-xhigh",
         modelId: "openai/gpt-5.4",
       }),
     );
@@ -600,7 +600,7 @@ describe("runAgentWorkflow", () => {
     };
 
     expect(persistedMessage.metadata).toMatchObject({
-      selectedModelId: "variant:builtin:gpt-5.4-xhigh",
+      selectedModelId: "variant:builtin:gpt-5.5-xhigh",
       modelId: "openai/gpt-5.4",
     });
   });
@@ -617,7 +617,7 @@ describe("runAgentWorkflow", () => {
 
     await runAgentWorkflow(
       makeOptions({
-        selectedModelId: "variant:builtin:gpt-5.4-xhigh",
+        selectedModelId: "variant:builtin:gpt-5.5-xhigh",
         modelId: "openai/gpt-5.4",
       }),
     );
@@ -635,7 +635,7 @@ describe("runAgentWorkflow", () => {
     );
 
     expect(metadataChunks.at(-1)?.messageMetadata).toMatchObject({
-      selectedModelId: "variant:builtin:gpt-5.4-xhigh",
+      selectedModelId: "variant:builtin:gpt-5.5-xhigh",
       modelId: "openai/gpt-5.4",
     });
 
@@ -649,7 +649,7 @@ describe("runAgentWorkflow", () => {
     };
 
     expect(persistedMessage.metadata).toMatchObject({
-      selectedModelId: "variant:builtin:gpt-5.4-xhigh",
+      selectedModelId: "variant:builtin:gpt-5.5-xhigh",
       modelId: "openai/gpt-5.4",
     });
   });
@@ -672,7 +672,7 @@ describe("runAgentWorkflow", () => {
             role: "assistant" as const,
             parts: [{ type: "text", text: "Need your approval" }],
             metadata: {
-              selectedModelId: "variant:builtin:gpt-5.4-xhigh",
+              selectedModelId: "variant:builtin:gpt-5.5-xhigh",
               modelId: "openai/gpt-5.4",
             },
           },

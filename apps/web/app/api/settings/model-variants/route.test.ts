@@ -123,7 +123,7 @@ describe("/api/settings/model-variants", () => {
     const body = (await response.json()) as { modelVariants: ModelVariant[] };
 
     expect(body.modelVariants.map((variant) => variant.id)).toEqual([
-      "variant:builtin:gpt-5.4-xhigh",
+      "variant:builtin:gpt-5.5-xhigh",
     ]);
   });
 
@@ -268,7 +268,7 @@ describe("/api/settings/model-variants", () => {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: "variant:builtin:gpt-5.4-xhigh",
+          id: "variant:builtin:gpt-5.5-xhigh",
           name: "Modified",
         }),
       }),
@@ -357,7 +357,7 @@ describe("/api/settings/model-variants", () => {
       new Request("http://localhost/api/settings/model-variants", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: "variant:builtin:gpt-5.4-xhigh" }),
+        body: JSON.stringify({ id: "variant:builtin:gpt-5.5-xhigh" }),
       }),
     );
 

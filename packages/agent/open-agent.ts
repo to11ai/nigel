@@ -54,7 +54,7 @@ const callOptionsSchema = z.object({
 
 export type OpenAgentCallOptions = z.infer<typeof callOptionsSchema>;
 
-export const defaultModelLabel = "openai/gpt-5-codex" as const;
+export const defaultModelLabel = "openai/gpt-5.4" as const;
 export const defaultModel = gateway(defaultModelLabel);
 
 function normalizeAgentModelSelection(

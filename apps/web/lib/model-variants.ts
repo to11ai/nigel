@@ -161,9 +161,9 @@ export function isBuiltInVariant(variantId: string): boolean {
 
 export const BUILT_IN_VARIANTS: ModelVariant[] = [
   {
-    id: `${BUILT_IN_VARIANT_ID_PREFIX}gpt-5.4-xhigh`,
-    name: "GPT-5.4 (XHigh)",
-    baseModelId: "openai/gpt-5.4",
+    id: `${BUILT_IN_VARIANT_ID_PREFIX}gpt-5.5-xhigh`,
+    name: "GPT-5.5 (XHigh)",
+    baseModelId: "openai/gpt-5.5",
     providerOptions: {
       reasoningEffort: "xhigh",
       reasoningSummary: "auto",

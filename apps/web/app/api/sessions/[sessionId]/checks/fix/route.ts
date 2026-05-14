@@ -6,7 +6,8 @@ import type { CheckRun } from "@/lib/github/pulls";
 import { getUserGitHubToken } from "@/lib/github/token";
 import { checkRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { Octokit } from "@octokit/rest";
-import { gateway, generateText } from "ai";
+import { gateway } from "@nigel/agent";
+import { generateText } from "ai";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -157,7 +158,9 @@ async function compactLog(rawLog: string): Promise<string> {
   }
 
   const result = await generateText({
-    model: gateway("openai/gpt-5-codex"),
+    model: gateway("openai/gpt-5.4-mini", {
+      providerOptionsOverrides: { openai: { reasoningEffort: "low" } },
+    }),
     system: LOG_SUMMARIZATION_PROMPT,
     prompt: logInput,
   });

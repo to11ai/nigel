@@ -1,5 +1,6 @@
 import { connectSandbox } from "@nigel/sandbox";
-import { gateway, generateText } from "ai";
+import { gateway } from "@nigel/agent";
+import { generateText } from "ai";
 import { checkBotProtection } from "@/lib/botid";
 import { getSessionById } from "@/lib/db/sessions";
 import { checkRateLimit, rateLimitKey } from "@/lib/rate-limit";
@@ -57,7 +58,9 @@ export async function POST(
   }
 
   const result = await generateText({
-    model: gateway("openai/gpt-5-codex"),
+    model: gateway("openai/gpt-5.4-nano", {
+      providerOptionsOverrides: { openai: { reasoningEffort: "low" } },
+    }),
     prompt: `Generate a concise git commit message for these changes. Use conventional commit format (e.g., "feat:", "fix:", "refactor:"). One line only, max 72 characters.
 
 Session context: ${dbSession.title}

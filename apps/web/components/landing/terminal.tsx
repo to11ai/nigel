@@ -11,7 +11,7 @@ const scenes: readonly Scene[] = [
     name: "agent",
     data: [
       { tone: "muted", text: "> build the auth flow with github oauth" },
-      { tone: "dim", text: "openai/gpt-5-codex" },
+      { tone: "dim", text: "openai/gpt-5.4" },
       { tone: "plain", text: "" },
       { tone: "ok", text: "searching files matching auth*" },
       { tone: "ok", text: "reading lib/session.ts (142 lines)" },

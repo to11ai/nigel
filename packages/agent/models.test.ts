@@ -103,6 +103,7 @@ describe("getProviderOptionsForModel", () => {
 
     expect(result).toEqual({
       openai: {
+        reasoningEffort: "medium",
         reasoningSummary: "detailed",
         include: ["reasoning.encrypted_content"],
         store: false,
@@ -139,6 +140,7 @@ describe("getProviderOptionsForModel", () => {
 
     expect(result).toEqual({
       openai: {
+        reasoningEffort: "medium",
         reasoningSummary: "detailed",
         include: ["reasoning.encrypted_content"],
         store: false,
