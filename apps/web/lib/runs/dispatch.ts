@@ -120,6 +120,12 @@ export async function dispatchSpecialist(
   }
 
   // Run.create handles depth > MAX_DEPTH and parent existence.
+  // Inherit `linearAgentSessionId` from the parent: a Linear-triggered
+  // planner that dispatches a coder must hand the same AgentSession
+  // down so the coder's per-step AgentActivity posts arrive in the
+  // same session panel. Without this, every dispatched specialist
+  // runs silently from Linear's perspective and the panel appears
+  // stuck while real work is happening in the child run.
   const childRun = await Run.create({
     triggerSource: "chained",
     humanOwnerId: parent.humanOwnerId,
@@ -130,6 +136,7 @@ export async function dispatchSpecialist(
     chatId: parent.chatId,
     budgetUsdCapMicros:
       input.budgetUsdMicros ?? specialist.budgetUsdDefaultMicros,
+    linearAgentSessionId: parent.linearAgentSessionId,
   });
 
   // Phase 2 only supports scripted execution end-to-end. LLM-driven

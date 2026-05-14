@@ -129,6 +129,19 @@ const executePlannerStep = async (input: {
     throw new Error("planner specialist not found in registry");
   }
 
+  // Phase-marker thought before sandbox provisioning: a fresh
+  // Vercel Sandbox + repo clone routinely takes 10-30s and emits
+  // nothing visible. Without a marker the Linear session panel
+  // shows the `Picked up by Nigel` comment, then a long silence
+  // before the first specialist step lands — the user can't tell
+  // whether work is happening or the run wedged. Fire-and-forget;
+  // a Linear API hiccup must not abort the workflow.
+  await postProvisioningMarker({
+    linearAgentSessionId: run.linearAgentSessionId,
+    repoRef: run.repoRef,
+    branch: input.branch,
+  });
+
   const sandbox = await provisionFreshSandboxForRun({
     repoRef: run.repoRef,
     // Omit branch → `provisionFreshSandboxForRun` resolves the
@@ -192,5 +205,35 @@ export async function runLinearTriggeredWorkflow(
     // SDK's record is the source of truth for "should I retry the
     // workflow itself" (we don't auto-retry).
     throw err;
+  }
+}
+
+// Post a "Provisioning sandbox" thought to the Linear AgentSession
+// panel before the long provisioning fetch. Resolves the workspace
+// access token lazily — runs without a `linearAgentSessionId`
+// (chat / cron / pre-AgentSession-era Linear runs) skip the post
+// entirely, no work done. Fire-and-forget: errors are logged and
+// swallowed so the workflow proceeds even when Linear is sour.
+async function postProvisioningMarker(input: {
+  linearAgentSessionId: string | null;
+  repoRef: string;
+  branch: string | undefined;
+}): Promise<void> {
+  if (!input.linearAgentSessionId) return;
+  try {
+    const { resolveLinearWorkspace } =
+      await import("@/lib/linear/workspace-repository");
+    const { agentActivityCreate } = await import("@/lib/linear/client");
+    const workspace = await resolveLinearWorkspace();
+    if (!workspace) return;
+    const branchSuffix = input.branch ? `@${input.branch}` : "";
+    await agentActivityCreate({
+      accessToken: workspace.secrets.accessToken,
+      agentSessionId: input.linearAgentSessionId,
+      kind: "thought",
+      body: `Provisioning sandbox: \`${input.repoRef}${branchSuffix}\``,
+    });
+  } catch (err) {
+    console.error("[linear-trigger] provisioning marker post failed", err);
   }
 }
