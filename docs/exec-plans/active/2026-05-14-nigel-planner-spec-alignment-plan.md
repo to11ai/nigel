@@ -19,8 +19,12 @@
 | `packages/agent/tools/linear.ts` (new) | Three AI SDK tool wrappers: `linear_get_issue`, `linear_comment`, `linear_attach` |
 | `packages/agent/tools/linear.test.ts` (new) | Unit tests for the three wrappers — schema + callback wiring + error mapping |
 | `packages/agent/tools/index.ts` (modify) | Re-export the four new tools |
-| `apps/web/lib/runs/dispatch.ts` (modify) | Replace `dispatchSpecialistsParallel` Promise.all with atomic N-slot reservation against `max_children` + root-budget pre-flight |
-| `apps/web/lib/runs/dispatch.test.ts` (modify) | Add tests for the atomic reservation: concurrent dispatch sees the right cap; pre-flight rejection when sum-of-budgets exceeds remaining root budget |
+| `apps/web/lib/db/schema.ts` (modify) | Add `costUsdReservedMicros` (bigint, default 0) to `agent_runs` for atomic budget reservation |
+| `apps/web/lib/db/migrations/00XX_agent_runs_cost_reserved.sql` (new, generated) | Drizzle migration: ADD COLUMN `cost_usd_reserved_micros` |
+| `apps/web/lib/runs/dispatch.ts` (modify) | `dispatchSpecialistsParallel` uses `Promise.allSettled` + atomic N-slot + budget reservation in one transaction; adds `reserveChildSlotsAndBudget` primitive locking ROOT (budget) and PARENT (child_count) rows |
+| `apps/web/lib/runs/dispatch.test.ts` (modify) | Cover atomic batch rejection on `max_children`, concurrent single-dispatch race, concurrent budget-reservation race, reservation release on child terminal + pre-spawn failure, `Promise.allSettled` partial-success semantics |
+| `apps/web/lib/runs/repository.ts` (modify) | When `updateRunStatus` transitions to a terminal state, release the run's reservation from the root in the same transaction |
+| `apps/web/lib/runs/repository.test.ts` (modify) | Cover idempotent reservation release on duplicate terminal transitions |
 | `apps/web/lib/runs/tool-allowlist.ts` (modify) | Add `dispatch_specialists_parallel` and `linear` entries to `CATEGORY_TO_TOOLS` |
 | `apps/web/lib/runs/tool-allowlist.test.ts` (modify) | Cover the two new categories |
 | `apps/web/lib/linear/agent-tool-impl.ts` (new) | Server-side callback impl that resolves the singleton `linear_workspace`, holds the GraphQL client, exposes `getIssue`, `comment`, `attach` |
@@ -44,23 +48,61 @@
 
 ---
 
-### Task 1: Server-side parallel dispatch — fix TOCTOU on `max_children`
+### Task 1: Server-side parallel dispatch — fix TOCTOU on `max_children` and on budget
 
 **Files:**
+- Modify: `apps/web/lib/db/schema.ts` (add `costUsdReservedMicros`)
+- New: `apps/web/lib/db/migrations/00XX_agent_runs_cost_reserved.sql` (generated via `bun run --cwd apps/web db:generate`)
 - Modify: `apps/web/lib/runs/dispatch.ts`
 - Modify: `apps/web/lib/runs/dispatch.test.ts`
+- Modify: `apps/web/lib/runs/repository.ts` (release reservation on terminal status)
+- Modify: `apps/web/lib/runs/repository.test.ts`
 
-The existing `dispatchSpecialistsParallel` at `apps/web/lib/runs/dispatch.ts:222-226` is a thin `Promise.all` over independent `dispatchSpecialist` calls. Each call evaluates `parent.maxChildren` against the parent's *current* `child_count` at validation time. Under concurrency, N parallel dispatches all see `child_count = k` simultaneously, all pass the gate, and the parent ends up with `k + N` children even when `k + N > max_children`. Same problem applies to root-budget pre-flight: each call sees the same remaining budget, all reserve their `budget_usd`, the parent ends up over the cap.
+The existing `dispatchSpecialistsParallel` at `apps/web/lib/runs/dispatch.ts:222-226` is a thin `Promise.all` over independent `dispatchSpecialist` calls. Each call evaluates `parent.maxChildren` against the parent's *current* `child_count` at validation time. Under concurrency, N parallel dispatches all see `child_count = k` simultaneously, all pass the gate, and the parent ends up with `k + N` children even when `k + N > max_children`. The same problem applies to root-budget pre-flight: each call computes `cap - actual` (the current schema has no "reserved" notion), all see the same remaining budget, all pass the gate, and the root ends up over-committed once children start spending. And `Promise.all` itself rejects the whole batch when any single child rejects — contradicting the per-child error-handling guarantee Task 2 makes to the LLM.
 
-- [ ] **Step 1: Define the atomic reservation primitive**
+This task closes all three of those: adds a `costUsdReservedMicros` column so the reservation has somewhere to live, locks ROOT + PARENT in one transaction during reservation, releases reservations on child terminal transitions, and replaces `Promise.all` with `Promise.allSettled` so a single child rejection doesn't poison the batch.
 
-Add a transaction-wrapped helper that, given `parentRunId` + an array of intended budgets, attempts to:
-1. `SELECT child_count, max_children, root_budget_remaining FROM agent_runs ... FOR UPDATE` (row lock on the parent).
-2. Compute `child_count + inputs.length <= max_children` and `sum(budgets) <= root_budget_remaining`.
-3. If both pass: `UPDATE agent_runs SET child_count = child_count + inputs.length WHERE id = ?` (in the same transaction).
-4. If either fails: throw a typed error (`max_children_exceeded` or `budget_exhausted_at_reservation`) and roll back. Caller does not partial-spawn.
+- [ ] **Step 1: Add `costUsdReservedMicros` to `agent_runs`**
 
-- [ ] **Step 2: Rewrite `dispatchSpecialistsParallel`**
+Budget tracking today uses two columns on `agent_runs`: `budgetUsdCapMicros` (the cap, populated on the root) and `costUsdActualMicros` (the running spend, incremented per model/tool call and rolled up from children to root via a trigger). "Remaining budget" is derived as `cap - actual`. That's fine for already-spent dollars but it has no notion of *reserved-but-not-yet-spent* dollars, which is what a multi-child dispatch needs.
+
+Add a new column `costUsdReservedMicros` (`bigint`, default 0) to `agent_runs`. Only meaningful on root rows in practice, but populate on every row for schema simplicity (children have it = 0). Migrate via Drizzle Kit (`bun run --cwd apps/web db:generate`).
+
+Remaining budget becomes:
+
+```
+remaining = budgetUsdCapMicros - costUsdActualMicros - costUsdReservedMicros
+```
+
+- [ ] **Step 2: Define the atomic reservation primitive**
+
+`reserveChildSlotsAndBudget({ parentRunId, rootRunId, requestedBudgetsMicros, requestedSlots })`, transaction-wrapped:
+
+1. Lock the rows in a deterministic order to avoid deadlock: ROOT first, then PARENT (if different from root). Use `SELECT ... FOR UPDATE` on `agent_runs.id = rootRunId`, then on `agent_runs.id = parentRunId` (skip the second if `parentRunId === rootRunId`).
+2. Read `budgetUsdCapMicros`, `costUsdActualMicros`, `costUsdReservedMicros` from the root row and `childCount`, `maxChildren` from the parent row.
+3. Compute `childCount + requestedSlots <= maxChildren` and `cap - actual - reserved >= sum(requestedBudgetsMicros)`.
+4. If both pass, in the same transaction:
+   - `UPDATE agent_runs SET cost_usd_reserved_micros = cost_usd_reserved_micros + :sum WHERE id = :rootRunId`
+   - `UPDATE agent_runs SET child_count = child_count + :requestedSlots WHERE id = :parentRunId`
+5. If either check fails, throw a typed error (`max_children_exceeded` or `budget_exhausted_at_reservation`) and roll back the transaction. Caller does not partial-spawn.
+
+Return a list of `{ reservationToken: string, budgetUsdMicros: number }` — one per requested slot — so the caller can later release each reservation when its corresponding child terminates. The token is a synthetic id stored in `agent_runs.reservation_token` on each child (new nullable column on `agent_runs`, no migration churn beyond the one this step already adds), or simpler: tie the reservation to the child's own `agentRunId` once the child row is inserted. The mechanic doesn't matter as long as "child terminal → release that child's reservation" is unambiguous; pick whichever feels least invasive to the existing rollup trigger.
+
+- [ ] **Step 3: Reservation release on child terminal**
+
+Wherever `agent_runs.status` transitions to a terminal state (`completed`, `failed`, `cancelled`), the same transaction must:
+
+```sql
+UPDATE agent_runs
+SET cost_usd_reserved_micros = cost_usd_reserved_micros - :released
+WHERE id = :rootRunId AND cost_usd_reserved_micros >= :released
+```
+
+Where `released` is the child's originally-reserved `budgetUsdMicros`. The `>=` guard makes the operation idempotent against duplicate terminal-state writes (Workflow SDK can replay terminal transitions after kill-9 resume).
+
+If the child's `costUsdActualMicros` ends up less than its reservation (the typical case — workers usually under-spend their cap), the excess is freed at release time. If it exceeds the reservation, the rollup trigger already handles that (the child's actual spend rolls up to root regardless of reservation; the per-call budget gate inside the child's tool loop is the cap, not the reservation).
+
+- [ ] **Step 4: Rewrite `dispatchSpecialistsParallel`**
 
 ```ts
 export async function dispatchSpecialistsParallel(
@@ -69,31 +111,56 @@ export async function dispatchSpecialistsParallel(
   if (inputs.length === 0) return [];
   // Atomic pre-flight: reserve N child slots + sum-of-budgets in one
   // transaction. Either all dispatches are authorized or none.
-  await reserveChildSlots({
+  const reservations = await reserveChildSlotsAndBudget({
     parentRunId: inputs[0].parentRunId,
     rootRunId: inputs[0].rootRunId,
     requestedBudgetsMicros: inputs.map((i) => i.budgetUsdMicros ?? 0),
     requestedSlots: inputs.length,
   });
-  // dispatchSpecialist itself must skip its own child-slot + budget
+  // dispatchSpecialist itself must skip its own slot + budget
   // pre-flight when invoked through this path. Plumb an internal
-  // `skipReservation: true` flag.
-  return Promise.all(
-    inputs.map((i) => dispatchSpecialist({ ...i, skipReservation: true })),
+  // `skipReservation: true` flag (and the reservation token, so the
+  // child run row is tagged with the right release amount on terminal).
+  const settled = await Promise.allSettled(
+    inputs.map((input, i) =>
+      dispatchSpecialist({
+        ...input,
+        skipReservation: true,
+        reservation: reservations[i],
+      }),
+    ),
+  );
+  return settled.map((s, i) =>
+    s.status === "fulfilled"
+      ? s.value
+      : {
+          specialistName: inputs[i].specialistName,
+          output: "",
+          error: s.reason instanceof Error ? s.reason.message : String(s.reason),
+        },
   );
 }
 ```
 
-- [ ] **Step 3: Add the `skipReservation` private flag to `dispatchSpecialist`**
+Two correctness points:
 
-Internal-only. The single-dispatch path (planner does `dispatch_specialist` for one child) still does its own reservation. The parallel path does the reservation once for the whole array.
+- **`Promise.allSettled`, not `Promise.all`.** A single child rejection (e.g., a sandbox provision failure or an LLM error mid-loop) does NOT abort siblings — this is the "one child failure does not abort siblings" guarantee from Task 2. `Promise.all` would reject the whole batch on any rejection.
+- **Reservation release is the child's responsibility, not this caller's.** If `dispatchSpecialist` is called with a `reservation` argument, the child run row gets tagged with the reservation amount, and the terminal transition (`completed` / `failed` / `cancelled`) releases it (Step 3). If `dispatchSpecialist` itself rejects *before* the child run row is even inserted (a pre-spawn failure), the caller's `try/catch` here must release that slot's reservation immediately — capture this case with an additional `releaseReservation(reservation)` call in the rejected branch of the `.map`.
 
-- [ ] **Step 4: Tests**
+- [ ] **Step 5: Add the `skipReservation` + `reservation` private fields to `dispatchSpecialist`**
+
+Internal-only. The single-dispatch path (planner does `dispatch_specialist` for one child) still does its own reservation. The parallel path does the reservation once for the whole array and tags each child with the per-slot reservation. The single-dispatch reservation uses the same `reserveChildSlotsAndBudget` primitive with `requestedSlots: 1`.
+
+- [ ] **Step 6: Tests**
 
 In `dispatch.test.ts`, add:
-- Atomic batch rejection on `max_children`: a parent with `max_children = 3` and `child_count = 2` receiving a parallel-of-2 — entire batch rejected with `max_children_exceeded` (`2 + 2 = 4 > 3`), `child_count` still 2 after, no children spawn. The non-atomic / TOCTOU implementation would have let one of the two through; the atomic implementation does not.
-- Concurrent single-dispatch race: two single `dispatchSpecialist` calls fired concurrently against a parent with `max_children = 3` and `child_count = 2` — exactly one succeeds, the other returns `max_children_exceeded`. This is the case where the atomic reservation in `dispatchSpecialist` itself (serialized via `SELECT ... FOR UPDATE`) prevents the TOCTOU race that exists in the unfixed code.
-- Budget race: parent with `root_budget_remaining = $5` receiving a parallel-of-3 each requesting `$2` — entire batch is rejected `budget_exhausted_at_reservation`, no children spawn.
+- Atomic batch rejection on `max_children`: a parent with `max_children = 3` and `child_count = 2` receiving a parallel-of-2 — entire batch rejected with `max_children_exceeded` (`2 + 2 = 4 > 3`), `child_count` still 2 after, root `costUsdReservedMicros` unchanged, no children spawn.
+- Concurrent single-dispatch race: two single `dispatchSpecialist` calls fired concurrently against a parent with `max_children = 3` and `child_count = 2` — exactly one succeeds, the other returns `max_children_exceeded`. This is the case where the atomic reservation in `dispatchSpecialist` itself (serialized via the same `SELECT ... FOR UPDATE` primitive) prevents the TOCTOU race.
+- Budget race: parent with `cap = $10`, `actual = $5`, `reserved = $0` receiving a parallel-of-3 each requesting `$2` — entire batch rejected `budget_exhausted_at_reservation` (sum=$6, remaining=$5), no children spawn, root `costUsdReservedMicros` still 0.
+- **Concurrent budget reservation race**: two parallel-of-2 calls fired concurrently against a root with `cap = $10`, `actual = $4`, `reserved = $0`, each requesting `$3` per child. Exactly one succeeds and reserves $6; the other sees `remaining = $0` (10 - 4 - 6) and is rejected `budget_exhausted_at_reservation`. This is the case the original Step 1 design did NOT close — it only locked `child_count`, leaving the budget read-then-write race wide open.
+- Reservation release on child terminal: dispatch one child with `budget = $2`, mark it `completed`, verify root `costUsdReservedMicros` decremented by $2.
+- Reservation release on pre-spawn failure: simulate `dispatchSpecialist` rejecting before child row insertion (e.g., sandbox provision failure); verify root `costUsdReservedMicros` is restored (caller's catch released it).
+- `Promise.allSettled` semantics: parallel-of-3 where the second child's `dispatchSpecialist` rejects; the other two complete normally; the returned array has `error` set on index 1 and `output` set on indices 0 + 2.
 - Zero-input case: `dispatchSpecialistsParallel([])` returns `[]` without touching the DB.
 - Happy path: parallel-of-3 under cap, all three spawn, all three return their child output.
 
