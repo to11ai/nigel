@@ -242,7 +242,7 @@ The existing chat path becomes `Run.create({trigger_source: 'chat', specialist_i
 
 | Name | Default model | Sandbox | Recurse? | needs_local_stack | Tools (allowlist) |
 |---|---|---|---|---|---|
-| `planner` | sonnet-4.6 | inherit | yes | false | `file_read`, `search`, `dispatch_specialist`, `dispatch_specialists_parallel`, `web`, `linear` |
+| `planner` | openai/gpt-5.5 (`reasoningEffort: high`) | inherit | yes | false | `file_read`, `search`, `dispatch_specialist`, `dispatch_specialists_parallel`, `web`, `linear` |
 | `coder` | sonnet-4.6 | inherit | no | false | `file`, `search`, `shell`, `git` |
 | `linter` | haiku-4.5 | fresh | no | false | `file`, `search`, `shell` |
 | `formatter` | (scripted, no LLM) | fresh | no | false | `shell` |

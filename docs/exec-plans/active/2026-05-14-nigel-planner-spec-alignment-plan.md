@@ -91,7 +91,8 @@ Internal-only. The single-dispatch path (planner does `dispatch_specialist` for 
 - [ ] **Step 4: Tests**
 
 In `dispatch.test.ts`, add:
-- Concurrent dispatch race: a parent with `max_children = 3` and `child_count = 2` receiving a parallel-of-2 — exactly one of the two dispatches succeeds, the other returns `max_children_exceeded`. Without the atomic reservation, the current code would let both through.
+- Atomic batch rejection on `max_children`: a parent with `max_children = 3` and `child_count = 2` receiving a parallel-of-2 — entire batch rejected with `max_children_exceeded` (`2 + 2 = 4 > 3`), `child_count` still 2 after, no children spawn. The non-atomic / TOCTOU implementation would have let one of the two through; the atomic implementation does not.
+- Concurrent single-dispatch race: two single `dispatchSpecialist` calls fired concurrently against a parent with `max_children = 3` and `child_count = 2` — exactly one succeeds, the other returns `max_children_exceeded`. This is the case where the atomic reservation in `dispatchSpecialist` itself (serialized via `SELECT ... FOR UPDATE`) prevents the TOCTOU race that exists in the unfixed code.
 - Budget race: parent with `root_budget_remaining = $5` receiving a parallel-of-3 each requesting `$2` — entire batch is rejected `budget_exhausted_at_reservation`, no children spawn.
 - Zero-input case: `dispatchSpecialistsParallel([])` returns `[]` without touching the DB.
 - Happy path: parallel-of-3 under cap, all three spawn, all three return their child output.
@@ -182,9 +183,11 @@ export type LinearAgentToolCallback = {
 };
 ```
 
-- [ ] **Step 2: Token resolution**
+- [ ] **Step 2: Token resolution (deferred to call time)**
 
-Use `resolveLinearWorkspace()` from `apps/web/lib/linear/workspace-repository.ts` (singleton — one workspace per Nigel deployment). The resolver already handles short-lived access tokens with refresh-token renewal; reuse it as-is. Cache the resolved token per Run for the duration of the run (no cross-Run caching — keep the surface narrow).
+`buildForRun({ runId, orgId })` is a synchronous constructor: it captures the run identifiers and returns the callback shape. It does NOT call `resolveLinearWorkspace()` at construction time. The first actual tool invocation (`getIssue` / `comment` / `attach`) calls `resolveLinearWorkspace()` lazily, caches the resolved token + workspace row on the closure for the rest of the Run, and proceeds. This matters because `specialist-execution.ts` constructs callbacks for every Run regardless of specialist; if construction threw on a missing `linear_workspace` row, *every* Run (`coder`, `linter`, etc.) would fail to start on a deployment that hadn't set up Linear yet — but `specialist-execution.ts` already gates the construction on the allowlist (Task 6 Step 2), so in practice this only matters for the planner.
+
+Reuse `resolveLinearWorkspace()` as-is — the resolver already handles short-lived access tokens with refresh-token renewal. Cache the resolved row per Run for the duration of the run (no cross-Run caching — keep the surface narrow). When `resolveLinearWorkspace()` returns "no workspace row exists," the callbacks return `{ kind: 'not_configured' }` to the agent rather than throwing.
 
 - [ ] **Step 3: GraphQL client**
 
@@ -316,16 +319,23 @@ const dispatchSpecialistsParallelFn: DispatchSpecialistsParallelCallback =
   });
 ```
 
-- [ ] **Step 2: Build the Linear callback**
+- [ ] **Step 2: Build the Linear callback (gated on allowlist)**
 
 ```ts
-const linearFn: LinearAgentToolCallback =
-  deps?.linear ??
-  (await import("@/lib/linear/agent-tool-impl")).buildForRun({
-    runId: run.id,
-    orgId: run.orgId,  // confirm the field name once in schema.ts
-  });
+const linearFn: LinearAgentToolCallback | undefined =
+  specialist.toolAllowlist.includes("linear")
+    ? (deps?.linear ??
+        (await import("@/lib/linear/agent-tool-impl")).buildForRun({
+          runId: run.id,
+          orgId: run.orgId,  // confirm the field name once in schema.ts
+        }))
+    : undefined;
 ```
+
+Two constraints:
+
+1. **Gate the init on the allowlist.** Only specialists whose resolved `toolAllowlist` includes `"linear"` (today: just `planner`) get a Linear callback. If a `coder` or `linter` Run hits this code path with no `linear` in its allowlist, no callback is built. The corresponding tool wrapper in `packages/agent/tools/linear.ts` already returns a typed failure when its callback is missing from `experimental_context`, so a misconfigured allowlist degrades to "the agent can't call the tool" rather than "the Run can't start."
+2. **`buildForRun` must not throw at init time on a missing workspace.** The adapter has to defer the `resolveLinearWorkspace()` call to the first actual tool invocation. At construction time it stores the `runId` / `orgId` and returns the callback shape; only when `getIssue` / `comment` / `attach` is called does it resolve the workspace. If no row exists, the call returns `{ kind: 'not_configured' }` for the agent to handle gracefully. This keeps the wiring step at `specialist-execution.ts` purely synchronous-construction, so a deployment without Linear configured still runs every non-Linear specialist normally.
 
 The Linear adapter is built per-Run rather than per-step so the resolved-token cache lives for the Run lifetime, not the tool call.
 
@@ -335,9 +345,11 @@ The Linear adapter is built per-Run rather than per-step so the resolved-token c
 experimental_context: {
   dispatchSpecialist: dispatchSpecialistFn,
   dispatchSpecialistsParallel: dispatchSpecialistsParallelFn,
-  linear: linearFn,
+  ...(linearFn !== undefined ? { linear: linearFn } : {}),
 }
 ```
+
+The `linear` key is omitted entirely (not set to `undefined`) when the specialist's allowlist doesn't include it. This matches the "callbacks should be absent when the allowlist doesn't include the category" rule from Step 4 below.
 
 - [ ] **Step 4: Tests**
 
