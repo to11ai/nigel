@@ -275,6 +275,15 @@ This is the runtime impl for the three Linear operations the planner gets. The a
 
 ```ts
 export type LinearAgentToolCallback = {
+  // `issueId` accepts EITHER:
+  //   - Linear's team-prefixed shorthand: `"LIN-123"`, `"ENG-7"`, etc.
+  //     (case-insensitive on the prefix; the digits part is required).
+  //   - A Linear GraphQL ID (UUID-shaped, e.g. `"9cfb482e-...-..."`).
+  // The implementation normalizes shorthand → GraphQL ID via Linear's
+  // `issueByIdentifier(team, number)` query (or a regex split + that
+  // query) before issuing the main `issue(id:)` request. Both forms
+  // are valid for `comment` and `attach` as well — same normalization
+  // rule applies to every method on this callback.
   getIssue: (input: { issueId: string }) => Promise<{
     id: string;
     identifier: string;        // e.g. "LIN-123"
@@ -298,6 +307,8 @@ export type LinearAgentToolCallback = {
 };
 ```
 
+**Identifier normalization is part of the contract.** The shorthand `LIN-123` is how Linear renders issues in tickets, comments, commit messages, and the URL bar — the LLM will see and write these constantly. Forcing the agent to know the GraphQL ID up front would mean every Linear-touching prompt has to start with a separate lookup step. The normalization happens inside the callback (server-side, no extra round-trip exposed to the LLM) so all three methods accept either form transparently.
+
 - [ ] **Step 2: Token resolution (deferred to call time)**
 
 `buildForRun({ runId, orgId })` is a synchronous constructor: it captures the run identifiers and returns the callback shape. It does NOT call `resolveLinearWorkspace()` at construction time. The first actual tool invocation (`getIssue` / `comment` / `attach`) calls `resolveLinearWorkspace()` lazily, caches the resolved token + workspace row on the closure for the rest of the Run, and proceeds. This matters because `specialist-execution.ts` constructs callbacks for every Run regardless of specialist; if construction threw on a missing `linear_workspace` row, *every* Run (`coder`, `linter`, etc.) would fail to start on a deployment that hadn't set up Linear yet — but `specialist-execution.ts` already gates the construction on the allowlist (Task 6 Step 2), so in practice this only matters for the planner.
@@ -308,9 +319,10 @@ Reuse `resolveLinearWorkspace()` as-is — the resolver already handles short-li
 
 The codebase likely already has Linear GraphQL helpers (the existing webhook-handler + lifecycle code at `apps/web/lib/linear/` posts comments today as part of the agent-session wiring). Audit `apps/web/lib/linear/*.ts` before writing new GraphQL — reuse the existing `commentCreate` mutation if present, and only add `attachmentCreate` + `issue` query if missing.
 
-Three operations needed:
+Operations needed:
+- `issueByIdentifier(team: String!, number: Int!)` query — used by the normalization layer to resolve shorthand (`LIN-123`) → GraphQL ID. Cache resolutions on the per-Run callback closure so a planner that touches the same issue multiple times in one Run only pays the resolver once.
 - `issue(id: ID!)` query — read title, description, state, assignee, team key, URL.
-- `commentCreate(input: { issueId, body })` mutation — body is markdown. Linear renders it as their internal markdown flavor; the existing Linear comment code probably already handles the dialect quirks.
+- `commentCreate(input: { issueId, body })` mutation — body is markdown. Linear renders it as their internal markdown flavor; the existing Linear comment code probably already handles the dialect quirks. The `issueId` field on this and `attachmentCreate` is always a GraphQL ID — the normalization layer in Step 1 takes care of shorthand inputs.
 - `attachmentCreate(input: { issueId, url, title, subtitle? })` mutation — used for PR links and visual-proof gallery links.
 
 - [ ] **Step 4: Idempotency for `comment`**
@@ -325,6 +337,9 @@ Pick (b) for v1 — the planner is single-threaded against a given issue and wil
 
 In `agent-tool-impl.test.ts`, against a mocked `fetch` returning canned Linear GraphQL responses:
 - `getIssue` returns the expected shape; missing issue surfaces a typed error.
+- **Identifier normalization** — `getIssue({ issueId: "LIN-123" })` calls `issueByIdentifier(team: "LIN", number: 123)` first to resolve the GraphQL ID, then `issue(id: <resolved>)`. Same shorthand-acceptance test for `comment` and `attach`: `comment({ issueId: "ENG-7", body: "..." })` resolves the ID before posting, and the mutation body contains the resolved GraphQL ID, not the shorthand.
+- **Already-normalized identifier passthrough** — `getIssue({ issueId: "<uuid>" })` skips the `issueByIdentifier` lookup and goes straight to `issue(id:)`. Detect "already a GraphQL ID" via the UUID shape (or whatever Linear's GraphQL IDs look like in practice — confirm by inspecting one from the live API before settling on the regex).
+- **Malformed identifier** — `getIssue({ issueId: "not-an-id" })`, `getIssue({ issueId: "" })`, and `getIssue({ issueId: "LIN-" })` all surface a typed `invalid_issue_identifier` error before any network call. The agent can read this and report it back to the user.
 - `comment` posts with the expected mutation body; rate-limit error (HTTP 429) surfaces a typed error the agent can read.
 - `attach` posts with the expected mutation body.
 - Token resolution failure (no `linear_workspace` row) returns `{ kind: 'not_configured' }` rather than a raw stack trace — the planner needs to be able to report "Linear not configured on this org" to the user gracefully.
