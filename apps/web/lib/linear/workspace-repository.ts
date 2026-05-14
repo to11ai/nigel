@@ -37,6 +37,15 @@ export type LinearWorkspaceSecrets = {
   // webhook secret because both are tied to the same workspace
   // install.
   accessToken: string;
+  // Linear migrated to short-lived (~24h) access tokens in April
+  // 2026 with refresh-token renewal. Both fields are optional so
+  // older workspace rows (from the manual-token L5 path, pre-OAuth)
+  // keep working — when both are null/unset, we assume a long-lived
+  // token and skip refresh.
+  refreshToken?: string | null;
+  // Wall-clock instant the access token expires. Stored as ISO
+  // string in the encrypted blob and parsed back to Date here.
+  accessTokenExpiresAt?: string | null;
 };
 
 export type LinearTeamRepoMap = Readonly<Record<string, string>>;
@@ -192,10 +201,113 @@ export async function getLinearWorkspaceByWorkspaceId(
 // secrets must never leak to a client component. Used by:
 //   - the webhook handler (needs `webhookSecret` for HMAC verify)
 //   - lifecycle hooks posting to Linear (needs `accessToken`)
+//
+// Eagerly refreshes the access token when within the expiry buffer
+// (5 min) and a refresh_token is on file. Linear migrated to ~24h
+// access tokens in April 2026; without proactive refresh, a workspace
+// stops being usable a day after install. The refresh is best-effort
+// — if it fails we still return the (possibly soon-to-expire) token
+// and the caller deals with a downstream 401.
 export async function resolveLinearWorkspace(): Promise<ResolvedLinearWorkspace | null> {
   const row = await getLinearWorkspace();
   if (!row) return null;
-  return rowToResolved(row);
+  let resolved = rowToResolved(row);
+  resolved = await maybeRefreshAccessToken(resolved);
+  return resolved;
+}
+
+const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+async function maybeRefreshAccessToken(
+  workspace: ResolvedLinearWorkspace,
+): Promise<ResolvedLinearWorkspace> {
+  const { refreshToken, accessTokenExpiresAt } = workspace.secrets;
+  if (!(refreshToken && accessTokenExpiresAt)) return workspace;
+  const expiresAt = Date.parse(accessTokenExpiresAt);
+  if (!Number.isFinite(expiresAt)) return workspace;
+  if (expiresAt - Date.now() > REFRESH_BUFFER_MS) return workspace;
+
+  const clientId = process.env.LINEAR_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.LINEAR_OAUTH_CLIENT_SECRET;
+  if (!(clientId && clientSecret)) {
+    // OAuth not configured in this stack — can't refresh. Return
+    // the expired token; caller will get a 401 and the admin will
+    // need to re-install.
+    return workspace;
+  }
+
+  // Dynamic import keeps the OAuth client out of the cold-path
+  // resolve for installs that don't use OAuth.
+  const { refreshAccessToken } = await import("./oauth-client");
+  let refreshed: Awaited<ReturnType<typeof refreshAccessToken>>;
+  try {
+    refreshed = await refreshAccessToken({
+      refreshToken,
+      clientId,
+      clientSecret,
+    });
+  } catch (err) {
+    // biome-ignore lint/suspicious/noConsole: refresh failures surface in ops triage
+    console.error("[linear-workspace] refresh failed", {
+      workspaceId: workspace.workspaceId,
+      err,
+    });
+    return workspace;
+  }
+
+  // When Linear omits expires_in on a refresh response (allowed by
+  // RFC 6749 §6), we don't know when the new token expires. Persist
+  // the PREVIOUS expiresAt rather than null: null would short-circuit
+  // the refresh guard on the next call (`if (!(refreshToken &&
+  // accessTokenExpiresAt))`) and the workspace would never refresh
+  // again, silently dying once the new token actually expired. The
+  // worst case with this fallback is refreshing more often than
+  // needed — still preferable to never refreshing.
+  let nextExpiresAt: string | null;
+  if (refreshed.expiresIn !== null) {
+    nextExpiresAt = new Date(
+      Date.now() + refreshed.expiresIn * 1000,
+    ).toISOString();
+  } else {
+    // biome-ignore lint/suspicious/noConsole: ops signal — Linear omitted expires_in
+    console.warn(
+      "[linear-workspace] refresh response omitted expires_in; preserving previous expiry",
+      { workspaceId: workspace.workspaceId },
+    );
+    nextExpiresAt = workspace.secrets.accessTokenExpiresAt ?? null;
+  }
+  // Persist the new tokens. Last-write-wins under concurrent refresh —
+  // acceptable trade-off vs introducing a single-flight lock.
+  try {
+    const updated = await updateLinearWorkspace({
+      id: workspace.id,
+      secrets: {
+        accessToken: refreshed.accessToken,
+        webhookSecret: workspace.secrets.webhookSecret,
+        refreshToken: refreshed.refreshToken,
+        accessTokenExpiresAt: nextExpiresAt,
+      },
+    });
+    return rowToResolved(updated);
+  } catch (err) {
+    // biome-ignore lint/suspicious/noConsole: persist failures matter for next call
+    console.error("[linear-workspace] refresh persist failed", {
+      workspaceId: workspace.workspaceId,
+      err,
+    });
+    // We have the fresh token in memory — return it without
+    // persisting so this request still works. Next call will refresh
+    // again.
+    return {
+      ...workspace,
+      secrets: {
+        ...workspace.secrets,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        accessTokenExpiresAt: nextExpiresAt,
+      },
+    };
+  }
 }
 
 export async function deleteLinearWorkspace(id: string): Promise<void> {
@@ -220,12 +332,24 @@ export function rowToListItem(row: LinearWorkspace): LinearWorkspaceListItem {
 }
 
 function rowToResolved(row: LinearWorkspace): ResolvedLinearWorkspace {
-  const secrets = decryptSecrets<LinearWorkspaceSecrets>({
+  const decrypted = decryptSecrets<LinearWorkspaceSecrets>({
     ciphertext: row.secretsCiphertext,
     nonce: row.secretsNonce,
     authTag: row.secretsAuthTag,
     keyVersion: row.keyVersion as 1,
   });
+  // Prefer LINEAR_WEBHOOK_SECRET from env when set. There's one
+  // Linear app per Nigel install, so the webhook secret is a deploy-
+  // level config (provisioned via Pulumi alongside the OAuth
+  // credentials) rather than per-workspace data. The DB-stored value
+  // is the L5 fallback for installs that pre-date the env-var path.
+  const envWebhookSecret = process.env.LINEAR_WEBHOOK_SECRET?.trim();
+  const secrets: LinearWorkspaceSecrets = {
+    accessToken: decrypted.accessToken,
+    webhookSecret: envWebhookSecret || decrypted.webhookSecret,
+    refreshToken: decrypted.refreshToken ?? null,
+    accessTokenExpiresAt: decrypted.accessTokenExpiresAt ?? null,
+  };
   return {
     id: row.id,
     workspaceId: row.workspaceId,
