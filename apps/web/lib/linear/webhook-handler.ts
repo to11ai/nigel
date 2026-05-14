@@ -341,10 +341,37 @@ async function runHandler(
   // Linear deliveries with different externalIds (so they pass the
   // webhook_events claim) would each spawn a planner run for the
   // same intent.
+  //
+  // The dedupe is intentionally broader than just AgentSession: any
+  // non-terminal Linear run for this issue blocks a new delegation,
+  // because two concurrent planners racing on the same ticket is
+  // never useful regardless of how the first run was triggered
+  // (`/run` slash-command, assignment, or a prior delegation). The
+  // dropped delegation gets a one-time comment so the user isn't
+  // left wondering — the existing run id is surfaced so they can
+  // observe / cancel it from the admin UI before re-delegating.
   if (delegation) {
     const existing = await getActiveRunByLinearIssue(delegation.issueId);
     if (existing) {
       await markWebhookEventProcessed({ id: claim.id, runId: existing.id });
+      const body = [
+        "Nigel already has an active run on this ticket.",
+        "",
+        `- Run id: \`${existing.id}\``,
+        `- Status: \`${existing.status}\``,
+        "",
+        "If you want a fresh run, cancel the active one via /admin/runs first, then re-delegate.",
+      ].join("\n");
+      await commentOnIssue({
+        accessToken: workspace.secrets.accessToken,
+        issueId: delegation.issueId,
+        body,
+      }).catch((err) => {
+        console.error(
+          "[linear-webhook] commentOnIssue failed (delegation dedup)",
+          { issueId: delegation.issueId, err },
+        );
+      });
       return {
         kind: "ignored",
         reason: `delegation for issue with active run ${existing.id}`,
