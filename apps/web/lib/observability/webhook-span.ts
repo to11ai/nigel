@@ -77,14 +77,14 @@ export function startWebhookSpan(
     .startSpan(`webhook.${attrs.source}.intake`, {
       attributes: spanAttributes,
     });
-  // Pre-build the active-span context once; runInContext can be
-  // called multiple times in principle, though the handler only
-  // calls it once per intake.
-  const ctxWithSpan = trace.setSpan(context.active(), span);
 
   return {
     runInContext(fn) {
-      return context.with(ctxWithSpan, fn);
+      // Read context.active() at call time, not span-creation time —
+      // any baggage / parent context added between startWebhookSpan
+      // and runInContext (e.g. by future middleware) needs to be
+      // preserved alongside the intake span, not silently dropped.
+      return context.with(trace.setSpan(context.active(), span), fn);
     },
     finish(outcome) {
       span.setAttribute("nigel.webhook.outcome", outcome.outcomeKind);
