@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "agent_runs_active_linear_issue_unique" ON "agent_runs" USING btree ("trigger_ref") WHERE "agent_runs"."trigger_source" = 'linear' AND "agent_runs"."status" IN ('pending', 'running', 'blocked', 'awaiting_approval');

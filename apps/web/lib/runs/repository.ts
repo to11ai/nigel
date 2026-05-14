@@ -38,6 +38,7 @@ export type InsertRunInput = {
   workflowRunId?: string | null;
   chatId?: string | null;
   budgetUsdCapMicros: number;
+  linearAgentSessionId?: string | null;
 };
 
 export async function insertRun(input: InsertRunInput): Promise<void> {
@@ -55,9 +56,26 @@ export async function insertRun(input: InsertRunInput): Promise<void> {
     workflowRunId: input.workflowRunId ?? null,
     chatId: input.chatId ?? null,
     budgetUsdCapMicros: input.budgetUsdCapMicros,
+    linearAgentSessionId: input.linearAgentSessionId ?? null,
     costUsdActualMicros: 0,
     status: "pending",
   });
+}
+
+// Attach a Linear AgentSession id to an existing run. Used by the
+// webhook handler when an AgentSessionEvent arrives AFTER an
+// AppUserNotification has already created the run for the same
+// issue — we don't want to start a second planner, so we just
+// stamp the session id so subsequent AgentActivity events route
+// to the right session.
+export async function setRunLinearAgentSessionId(
+  runId: string,
+  agentSessionId: string,
+): Promise<void> {
+  await db
+    .update(agentRuns)
+    .set({ linearAgentSessionId: agentSessionId })
+    .where(eq(agentRuns.id, runId));
 }
 
 export async function getRun(id: string): Promise<AgentRun | null> {

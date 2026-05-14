@@ -172,7 +172,7 @@ export async function updateLinearWorkspace(
 // string field. 23505 is the SQLSTATE for `unique_violation`. We
 // check defensively rather than instanceof-matching a vendor type
 // so the helper survives a future driver swap.
-function isUniqueViolation(err: unknown): boolean {
+export function isUniqueViolation(err: unknown): boolean {
   return (
     err !== null &&
     typeof err === "object" &&

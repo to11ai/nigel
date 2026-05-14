@@ -1,6 +1,6 @@
 {
-  "id": "35a023eb-2046-4bd1-8036-b8b4a6c31b27",
-  "prevId": "a58afee5-b875-4a6f-b8fc-6add2a9aba1c",
+  "id": "c3356732-9ee5-446c-b37a-8a9f5b15014a",
+  "prevId": "0c5b9fc3-ad09-470b-8602-29c58960b237",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -237,6 +237,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "linear_agent_session_id": {
+          "name": "linear_agent_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -359,6 +365,37 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_runs_linear_agent_session_idx": {
+          "name": "agent_runs_linear_agent_session_idx",
+          "columns": [
+            {
+              "expression": "linear_agent_session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_runs_active_linear_issue_unique": {
+          "name": "agent_runs_active_linear_issue_unique",
+          "columns": [
+            {
+              "expression": "trigger_ref",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_runs\".\"trigger_source\" = 'linear' AND \"agent_runs\".\"status\" IN ('pending', 'running', 'blocked', 'awaiting_approval')",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -645,7 +682,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false,
-          "default": "'openai/gpt-5.4'"
+          "default": "'anthropic/claude-haiku-4.5'"
         },
         "active_stream_id": {
           "name": "active_stream_id",
@@ -2120,7 +2157,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false,
-          "default": "'openai/gpt-5.4'"
+          "default": "'anthropic/claude-haiku-4.5'"
         },
         "default_subagent_model_id": {
           "name": "default_subagent_model_id",
