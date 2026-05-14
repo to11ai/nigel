@@ -11,15 +11,23 @@
 
 const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 
+export type LinearClientErrorCode =
+  | "http_error"
+  | "graphql_error"
+  | "missing_data"
+  | "rate_limited"
+  // Raised by the agent-tool adapter when an `issueId` input is
+  // neither a recognized Linear GraphQL ID (UUID shape) nor a
+  // team-prefixed shorthand like `LIN-123`. Surfaced before any
+  // network round-trip so the agent can react without burning
+  // tokens on an invalid request.
+  | "invalid_issue_identifier";
+
 export class LinearClientError extends Error {
-  readonly code:
-    | "http_error"
-    | "graphql_error"
-    | "missing_data"
-    | "rate_limited";
+  readonly code: LinearClientErrorCode;
   readonly status?: number;
   constructor(
-    code: "http_error" | "graphql_error" | "missing_data" | "rate_limited",
+    code: LinearClientErrorCode,
     message: string,
     status?: number,
   ) {
@@ -35,7 +43,7 @@ export class LinearClientError extends Error {
 // Linear plenty of headroom for healthy responses.
 const REQUEST_TIMEOUT_MS = 15_000;
 
-async function linearGraphql<TData>(input: {
+export async function linearGraphql<TData>(input: {
   accessToken: string;
   query: string;
   variables: Record<string, unknown>;
@@ -105,22 +113,30 @@ async function linearGraphql<TData>(input: {
 }
 
 // Posts a comment on a Linear issue. Returns the new comment's id
-// for caller-side audit / dedup. Body is Markdown — Linear renders
-// it in-app.
+// and its public Linear URL for caller-side audit / dedup. Body is
+// Markdown — Linear renders it in-app.
+//
+// Linear has historically populated `Comment.url` directly on the
+// `commentCreate` payload. We treat it as nullable defensively;
+// callers that need a guaranteed URL synthesize one from the
+// issue's identifier upstream.
 export async function commentOnIssue(input: {
   accessToken: string;
   issueId: string;
   body: string;
-}): Promise<{ commentId: string }> {
+}): Promise<{ commentId: string; url: string | null }> {
   const data = await linearGraphql<{
-    commentCreate: { success: boolean; comment?: { id: string } };
+    commentCreate: {
+      success: boolean;
+      comment?: { id: string; url: string | null };
+    };
   }>({
     accessToken: input.accessToken,
     query: `
       mutation CreateComment($issueId: String!, $body: String!) {
         commentCreate(input: { issueId: $issueId, body: $body }) {
           success
-          comment { id }
+          comment { id url }
         }
       }
     `,
@@ -132,7 +148,10 @@ export async function commentOnIssue(input: {
       `commentCreate returned success=false for issue ${input.issueId}`,
     );
   }
-  return { commentId: data.commentCreate.comment.id };
+  return {
+    commentId: data.commentCreate.comment.id,
+    url: data.commentCreate.comment.url ?? null,
+  };
 }
 
 // Fetches the minimal issue fields the trigger pipeline needs.
@@ -322,4 +341,161 @@ export async function reassignIssue(input: {
       `issueUpdate(reassign) returned success=false for issue ${input.issueId}`,
     );
   }
+}
+
+// Resolves a Linear team-prefixed shorthand (e.g. `LIN-123`) to the
+// underlying GraphQL ID. The agent-tool adapter feeds the resolved
+// id into the canonical `issue(id:)` / `commentCreate` /
+// `attachmentCreate` calls — Linear's mutations require the GraphQL
+// ID, not the shorthand. Returns `null` on a 404-equivalent (Linear
+// returns `issue: null` rather than an HTTP 404 for unknown
+// identifiers).
+export async function fetchIssueByIdentifier(input: {
+  accessToken: string;
+  teamKey: string;
+  issueNumber: number;
+}): Promise<{ id: string } | null> {
+  const data = await linearGraphql<{
+    // Linear's GraphQL schema names this `issueVcsBranchSearch`-style
+    // identifier lookup `issueByIdentifier(team, number)`. The
+    // returned field is the same `Issue` type as `issue(id:)`, but
+    // we only need the id here — the agent-tool adapter calls
+    // `fetchIssueForAgent` separately when it needs the full row.
+    issueByIdentifier: { id: string } | null;
+  }>({
+    accessToken: input.accessToken,
+    query: `
+      query IssueByIdentifier($team: String!, $number: Float!) {
+        issueByIdentifier(team: $team, number: $number) {
+          id
+        }
+      }
+    `,
+    variables: { team: input.teamKey, number: input.issueNumber },
+  });
+  return data.issueByIdentifier;
+}
+
+// Agent-shaped issue read. Distinct from `fetchIssue` (which the
+// webhook handler uses) because the agent-facing shape demands
+// flattened status / assignee / team-key fields that `fetchIssue`
+// does not return — and because `fetchIssue`'s return type is wired
+// into `linearIssueSchema` parsing elsewhere; extending it to add
+// fields the webhook intake doesn't need would force a schema
+// migration there for no reason.
+export async function fetchIssueForAgent(input: {
+  accessToken: string;
+  issueId: string;
+}): Promise<{
+  id: string;
+  identifier: string;
+  title: string;
+  description: string | null;
+  statusName: string;
+  assigneeName: string | null;
+  teamKey: string;
+  url: string;
+} | null> {
+  const data = await linearGraphql<{
+    issue: {
+      id: string;
+      identifier: string;
+      title: string;
+      description: string | null;
+      url: string | null;
+      state: { name: string };
+      assignee: { name: string } | null;
+      team: { key: string };
+    } | null;
+  }>({
+    accessToken: input.accessToken,
+    query: `
+      query IssueForAgent($id: String!) {
+        issue(id: $id) {
+          id
+          identifier
+          title
+          description
+          url
+          state { name }
+          assignee { name }
+          team { key }
+        }
+      }
+    `,
+    variables: { id: input.issueId },
+  });
+  if (!data.issue) return null;
+  return {
+    id: data.issue.id,
+    identifier: data.issue.identifier,
+    title: data.issue.title,
+    description: data.issue.description,
+    statusName: data.issue.state.name,
+    assigneeName: data.issue.assignee?.name ?? null,
+    teamKey: data.issue.team.key,
+    // Linear has consistently returned a non-null `url` on every
+    // issue we've observed, but the GraphQL schema marks it
+    // nullable — synthesize the canonical permalink on the off
+    // chance Linear returns null, using the `identifier` (e.g.
+    // `LIN-123`) which Linear's web app routes by directly.
+    url: data.issue.url ?? `https://linear.app/issue/${data.issue.identifier}`,
+  };
+}
+
+// Creates a Linear attachment on an issue. Attachments are how PR
+// links and visual-proof gallery URLs surface inline on a Linear
+// ticket — separate from comments, which carry narrative. `subtitle`
+// is optional; Linear renders it as a secondary line under `title`.
+export async function attachToIssue(input: {
+  accessToken: string;
+  issueId: string;
+  url: string;
+  title: string;
+  subtitle?: string;
+}): Promise<{ attachmentId: string }> {
+  const data = await linearGraphql<{
+    attachmentCreate: {
+      success: boolean;
+      attachment?: { id: string };
+    };
+  }>({
+    accessToken: input.accessToken,
+    query: `
+      mutation CreateAttachment(
+        $issueId: String!
+        $url: String!
+        $title: String!
+        $subtitle: String
+      ) {
+        attachmentCreate(input: {
+          issueId: $issueId
+          url: $url
+          title: $title
+          subtitle: $subtitle
+        }) {
+          success
+          attachment { id }
+        }
+      }
+    `,
+    variables: {
+      issueId: input.issueId,
+      url: input.url,
+      title: input.title,
+      // GraphQL accepts a missing variable for an `$subtitle: String`
+      // (nullable) just fine; explicitly passing `undefined` would
+      // serialize to `null` which Linear interprets as "clear the
+      // subtitle". Use `null` only when the caller wants that, which
+      // they currently never do — so default to omitted.
+      subtitle: input.subtitle ?? null,
+    },
+  });
+  if (!data.attachmentCreate.success || !data.attachmentCreate.attachment) {
+    throw new LinearClientError(
+      "graphql_error",
+      `attachmentCreate returned success=false for issue ${input.issueId}`,
+    );
+  }
+  return { attachmentId: data.attachmentCreate.attachment.id };
 }
