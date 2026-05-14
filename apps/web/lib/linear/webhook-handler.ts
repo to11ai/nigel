@@ -1,6 +1,6 @@
 import { startWebhookSpan } from "@/lib/observability/webhook-span";
 import { Run } from "@/lib/runs/create";
-import { commentOnIssue, reassignIssue } from "./client";
+import { commentOnIssue, fetchIssue, reassignIssue } from "./client";
 import {
   type CommandHandlerDeps,
   type CommandHandlerOutcome,
@@ -8,10 +8,13 @@ import {
 } from "./command-handler";
 import {
   deriveExternalId,
+  extractAppUserNotificationDelegation,
   extractAssignmentToBot,
   extractCommandComment,
+  type LinearIssue,
   type LinearWebhookEnvelope,
   linearWebhookEnvelopeSchema,
+  parseLinearIssue,
 } from "./event-schema";
 import { resolveHumanOwnerId } from "./owner-resolver";
 import { resolveRepo } from "./repo-resolver";
@@ -262,10 +265,57 @@ async function runHandler(
     return { kind: "command", outcome: commandOutcome };
   }
 
-  const match = extractAssignmentToBot({
+  // AppUserNotification delegation events fire when an issue is
+  // assigned to the app via Linear's new agent-delegation flow
+  // (requires the `app:assignable` OAuth scope). The notification
+  // payload only carries { issueId, actorId } — we fetch the full
+  // issue ourselves to get teamId / attachments / labels for repo
+  // resolution.
+  const delegation = extractAppUserNotificationDelegation({
     envelope,
     botUserId: workspace.botUserId,
   });
+  let match = extractAssignmentToBot({
+    envelope,
+    botUserId: workspace.botUserId,
+  });
+  if (delegation && !match) {
+    const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
+    let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
+    try {
+      rawIssue = await fetchFn({
+        accessToken: workspace.secrets.accessToken,
+        issueId: delegation.issueId,
+      });
+    } catch (err) {
+      await markWebhookEventProcessed({ id: claim.id });
+      console.error("[linear-webhook] fetchIssue failed for delegation", {
+        issueId: delegation.issueId,
+        err,
+      });
+      return {
+        kind: "invalid_payload",
+        reason: `delegation issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (!rawIssue) {
+      await markWebhookEventProcessed({ id: claim.id });
+      return {
+        kind: "invalid_payload",
+        reason: `delegation issue not found: ${delegation.issueId}`,
+      };
+    }
+    const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
+    if (!enriched) {
+      await markWebhookEventProcessed({ id: claim.id });
+      return {
+        kind: "invalid_payload",
+        reason: `delegation issue payload did not parse: ${delegation.issueId}`,
+      };
+    }
+    match = { issue: enriched, actorId: delegation.actorId };
+  }
+
   if (!match) {
     await markWebhookEventProcessed({ id: claim.id });
     return {

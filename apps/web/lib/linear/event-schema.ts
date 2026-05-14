@@ -165,6 +165,89 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object";
 }
 
+// AppUserNotification: delegation events.
+//
+// Linear migrated app-assignment from `Issue.assignee_changed`
+// (which used `assigneeId`) to `AppUserNotification` (which fires
+// `notification.type === "issueAssignedToYou"`). The user no longer
+// becomes the "assignee" — they become the "delegate". Per Linear's
+// agent docs and the linear-agent-demo sample, the on-the-wire
+// event for delegation is:
+//
+//   {
+//     type: "AppUserNotification",
+//     appUserId: "<app's actor uuid>",
+//     notification: {
+//       type: "issueAssignedToYou",
+//       issueId: "...",
+//       issue: { id, title, description },
+//       actor: { id: <human who delegated> },  // optional
+//     }
+//   }
+//
+// Required for this to fire: the OAuth token must have been issued
+// with the `app:assignable` scope AND the workspace's Linear app
+// must subscribe to "Inbox notifications" webhook events.
+//
+// This extractor returns the same shape as extractAssignmentToBot
+// so the webhook handler can feed both routes into the same
+// run-creation pipeline.
+
+export type ExtractedDelegation = {
+  // Linear's AppUserNotification.issueAssignedToYou payload includes
+  // only { id, title, description } per their NotificationIssue type
+  // — the fields the repo resolver / planner prompt need (teamId,
+  // attachments, labels) AREN'T present. The handler must call
+  // fetchIssue to enrich. Returning just the id keeps this extractor
+  // honest about what Linear actually delivers.
+  issueId: string;
+  actorId: string | null;
+};
+
+export function extractAppUserNotificationDelegation(input: {
+  envelope: LinearWebhookEnvelope;
+  botUserId: string;
+}): ExtractedDelegation | null {
+  const env = input.envelope;
+  if (env.type !== "AppUserNotification") return null;
+  if (!isObject(env.data)) return null;
+
+  // The envelope's `data` carries the inner notification object plus
+  // `appUserId`. Verify the appUserId matches our bot so a stray
+  // notification for a different app installed in the same workspace
+  // doesn't trigger our runs.
+  if (env.data.appUserId !== input.botUserId) return null;
+
+  const notification = env.data.notification;
+  if (!isObject(notification)) return null;
+  if (notification.type !== "issueAssignedToYou") return null;
+
+  // issueId is the canonical pointer; the nested `issue` object is a
+  // truncated view. Prefer the id even when both are present.
+  const issueId =
+    typeof notification.issueId === "string"
+      ? notification.issueId
+      : isObject(notification.issue) &&
+          typeof (notification.issue as { id?: unknown }).id === "string"
+        ? (notification.issue as { id: string }).id
+        : null;
+  if (!issueId) return null;
+
+  // The actor on a delegation is the human who set the app as the
+  // delegate. Prefer envelope.actor; fall back to notification.actor
+  // for older payload shapes.
+  const envelopeActor = env.actor?.id ?? null;
+  const notificationActor =
+    isObject(notification.actor) &&
+    typeof (notification.actor as { id?: unknown }).id === "string"
+      ? (notification.actor as { id: string }).id
+      : null;
+  return {
+    issueId,
+    actorId: envelopeActor ?? notificationActor,
+  };
+}
+
 // Phase 6 L4: command-comment intake.
 //
 // Linear delivers a `Comment.create` event when anyone comments on
