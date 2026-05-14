@@ -88,24 +88,31 @@ export async function persistRunStep(input: {
   // safety net for unexpected throws — but that outer catch is
   // single-shot, so it can't recover the other branches once one
   // throws. Hence the inner isolation here.
-  await persistAssistantMessage(input).catch((err) => {
-    console.error(
-      `[run-persistence] runMessages insert failed for run ${input.runId}`,
-      err,
-    );
-  });
-  await persistToolCalls(input).catch((err) => {
-    console.error(
-      `[run-persistence] runToolCalls insert failed for run ${input.runId}`,
-      err,
-    );
-  });
-  await persistUsageEvent(input).catch((err) => {
-    console.error(
-      `[run-persistence] usageEvents insert failed for run ${input.runId}`,
-      err,
-    );
-  });
+  // Run the three independent inserts in parallel. Each already
+  // has its own .catch — Promise.all preserves the same per-write
+  // isolation while collapsing three sequential round-trips into
+  // one. This callback blocks the agent loop's step boundary so
+  // the latency win compounds across the run (MAX_STEPS=50).
+  await Promise.all([
+    persistAssistantMessage(input).catch((err) => {
+      console.error(
+        `[run-persistence] runMessages insert failed for run ${input.runId}`,
+        err,
+      );
+    }),
+    persistToolCalls(input).catch((err) => {
+      console.error(
+        `[run-persistence] runToolCalls insert failed for run ${input.runId}`,
+        err,
+      );
+    }),
+    persistUsageEvent(input).catch((err) => {
+      console.error(
+        `[run-persistence] usageEvents insert failed for run ${input.runId}`,
+        err,
+      );
+    }),
+  ]);
 }
 
 async function persistAssistantMessage(input: {
