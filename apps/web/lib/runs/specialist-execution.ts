@@ -334,48 +334,66 @@ export async function executeSpecialistViaLLM(
             // For each tool call, emit a separate "action" with the
             // tool name (past tense for now since we have no
             // pre-tool-call hook) and the JSON-stringified input
-            // truncated. Fire-and-forget for each post — Linear API
-            // hiccups must not abort the agent loop.
+            // truncated. Fire-and-forget at the loop level — Linear
+            // API hiccups must not abort the agent loop — but chain
+            // the posts in order so a step's thought always arrives
+            // before its actions and actions arrive in tool-call
+            // order. agentActivityCreate calls would otherwise race
+            // and Linear orders the session panel by arrival.
             if (agentSessionContext) {
               const thoughtBody = extractStepText(step);
-              if (thoughtBody) {
-                agentActivityCreate({
-                  accessToken: agentSessionContext.accessToken,
-                  agentSessionId: agentSessionContext.agentSessionId,
-                  content: { type: "thought", body: thoughtBody },
-                }).catch((err) => {
-                  console.error(
-                    `[specialist-execution] thought agentActivityCreate failed for run ${run.id}`,
-                    err,
-                  );
-                });
-              }
               const resultsByCallId = new Map<string, unknown>();
               for (const tr of step.toolResults ?? []) {
                 if (tr.toolCallId) {
                   resultsByCallId.set(tr.toolCallId, tr.output);
                 }
               }
-              for (const tc of step.toolCalls ?? []) {
-                const result = resultsByCallId.get(tc.toolCallId ?? "");
-                agentActivityCreate({
-                  accessToken: agentSessionContext.accessToken,
-                  agentSessionId: agentSessionContext.agentSessionId,
-                  content: {
-                    type: "action",
-                    action: tc.toolName,
-                    parameter: truncateForPanel(stringifyForPanel(tc.input)),
-                    ...(result !== undefined
-                      ? { result: truncateForPanel(stringifyForPanel(result)) }
-                      : {}),
-                  },
-                }).catch((err) => {
-                  console.error(
-                    `[specialist-execution] action agentActivityCreate failed for run ${run.id}`,
-                    err,
-                  );
-                });
-              }
+              const toolCalls = step.toolCalls ?? [];
+              const sessionContext = agentSessionContext;
+              void (async () => {
+                if (thoughtBody) {
+                  try {
+                    await agentActivityCreate({
+                      accessToken: sessionContext.accessToken,
+                      agentSessionId: sessionContext.agentSessionId,
+                      content: { type: "thought", body: thoughtBody },
+                    });
+                  } catch (err) {
+                    console.error(
+                      `[specialist-execution] thought agentActivityCreate failed for run ${run.id}`,
+                      err,
+                    );
+                  }
+                }
+                for (const tc of toolCalls) {
+                  const result = resultsByCallId.get(tc.toolCallId ?? "");
+                  try {
+                    await agentActivityCreate({
+                      accessToken: sessionContext.accessToken,
+                      agentSessionId: sessionContext.agentSessionId,
+                      content: {
+                        type: "action",
+                        action: tc.toolName,
+                        parameter: truncateForPanel(
+                          stringifyForPanel(tc.input),
+                        ),
+                        ...(result !== undefined
+                          ? {
+                              result: truncateForPanel(
+                                stringifyForPanel(result),
+                              ),
+                            }
+                          : {}),
+                      },
+                    });
+                  } catch (err) {
+                    console.error(
+                      `[specialist-execution] action agentActivityCreate failed for run ${run.id}`,
+                      err,
+                    );
+                  }
+                }
+              })();
             }
           },
         });
@@ -494,7 +512,9 @@ function extractStepText(step: { content?: unknown }): string | null {
 function stringifyForPanel(value: unknown): string {
   if (typeof value === "string") return value;
   try {
-    return JSON.stringify(value);
+    // JSON.stringify(undefined) returns undefined (not a string),
+    // so fall back to "" to honor the `string` return contract.
+    return JSON.stringify(value) ?? "";
   } catch {
     return String(value);
   }
