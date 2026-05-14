@@ -1,5 +1,9 @@
 import { startWebhookSpan } from "@/lib/observability/webhook-span";
 import { Run } from "@/lib/runs/create";
+import {
+  getActiveRunByLinearIssue,
+  setRunLinearAgentSessionId,
+} from "@/lib/runs/repository";
 import { commentOnIssue, fetchIssue, reassignIssue } from "./client";
 import {
   type CommandHandlerDeps,
@@ -8,6 +12,7 @@ import {
 } from "./command-handler";
 import {
   deriveExternalId,
+  extractAgentSessionCreated,
   extractAppUserNotificationDelegation,
   extractAssignmentToBot,
   extractCommandComment,
@@ -70,6 +75,18 @@ export type WebhookHandlerOutcome =
       issueId: string;
       repoRef: string;
       humanOwnerId: string;
+    }
+  // AgentSessionEvent attached to an already-existing run for the
+  // same issue. Linear fires AppUserNotification AND
+  // AgentSessionEvent for the same intent (the assignee-picker → app
+  // flow), so one wins the run-creation race and the other stamps
+  // the session id onto the survivor. Without this branch we'd
+  // either spawn two planner runs or lose the session id entirely.
+  | {
+      kind: "agent_session_attached";
+      runId: string;
+      agentSessionId: string;
+      issueId: string;
     }
   // Phase 6 L4: command-comment outcomes. The wrapped
   // `CommandHandlerOutcome` carries the detail; the webhook handler
@@ -149,6 +166,7 @@ export async function handleLinearWebhook(
 
 function extractRunId(outcome: WebhookHandlerOutcome): string | null {
   if (outcome.kind === "run_created") return outcome.runId;
+  if (outcome.kind === "agent_session_attached") return outcome.runId;
   if (outcome.kind === "command") {
     const inner = outcome.outcome;
     if (inner.kind === "transitioned" || inner.kind === "run_started") {
@@ -222,6 +240,40 @@ async function runHandler(
     return { kind: "duplicate", externalId };
   }
 
+  // AgentSessionEvent branches FIRST — Linear may fire it alongside
+  // an AppUserNotification for the same intent (assignee-picker
+  // flow). If a run for this issue already exists (the
+  // AppUserNotification path got there first), we just stamp the
+  // session id on it; otherwise we proceed as the canonical run
+  // creator below — `pendingAgentSessionId` carries the id through
+  // to Run.create so the new row gets it on insert (no follow-up
+  // update needed). Localizing the carry to a `let` keeps the
+  // AppUserNotification → assignment extractor surface untouched.
+  const sessionMatch = extractAgentSessionCreated({ envelope });
+  let pendingAgentSessionId: string | null = null;
+  if (sessionMatch) {
+    const existing = await getActiveRunByLinearIssue(sessionMatch.issueId);
+    if (existing) {
+      // Idempotent: re-receiving the same AgentSessionEvent (or a
+      // later one for the same in-flight run) keeps the stamp
+      // accurate. If a fresh delegation arrives AFTER a session,
+      // the session id wins because the session is the canonical
+      // routing key for AgentActivity events.
+      await setRunLinearAgentSessionId(
+        existing.id,
+        sessionMatch.agentSessionId,
+      );
+      await markWebhookEventProcessed({ id: claim.id, runId: existing.id });
+      return {
+        kind: "agent_session_attached",
+        runId: existing.id,
+        agentSessionId: sessionMatch.agentSessionId,
+        issueId: sessionMatch.issueId,
+      };
+    }
+    pendingAgentSessionId = sessionMatch.agentSessionId;
+  }
+
   // L4: comment-command events branch here. Comment.create from a
   // non-bot actor with a recognized slash-command body becomes a
   // command intake. Anything else falls through to the assignment
@@ -275,10 +327,68 @@ async function runHandler(
     envelope,
     botUserId: workspace.botUserId,
   });
+
+  // Dedupe AppUserNotification against an AgentSessionEvent that
+  // arrived first for the same issue. Without this, two distinct
+  // Linear deliveries with different externalIds (so they pass the
+  // webhook_events claim) would each spawn a planner run for the
+  // same intent.
+  if (delegation) {
+    const existing = await getActiveRunByLinearIssue(delegation.issueId);
+    if (existing) {
+      await markWebhookEventProcessed({ id: claim.id, runId: existing.id });
+      return {
+        kind: "ignored",
+        reason: `delegation for issue with active run ${existing.id}`,
+      };
+    }
+  }
+
   let match = extractAssignmentToBot({
     envelope,
     botUserId: workspace.botUserId,
   });
+
+  // Synthesize a match from AgentSessionEvent when no delegation /
+  // assignment was extracted: AgentSessionEvent doesn't deliver a
+  // full LinearIssue (only id + title + description), so we fetch
+  // the rest the same way the delegation branch does.
+  if (sessionMatch && !match && !delegation) {
+    const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
+    let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
+    try {
+      rawIssue = await fetchFn({
+        accessToken: workspace.secrets.accessToken,
+        issueId: sessionMatch.issueId,
+      });
+    } catch (err) {
+      await markWebhookEventProcessed({ id: claim.id });
+      console.error("[linear-webhook] fetchIssue failed for agent session", {
+        issueId: sessionMatch.issueId,
+        err,
+      });
+      return {
+        kind: "invalid_payload",
+        reason: `agent session issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (!rawIssue) {
+      await markWebhookEventProcessed({ id: claim.id });
+      return {
+        kind: "invalid_payload",
+        reason: `agent session issue not found: ${sessionMatch.issueId}`,
+      };
+    }
+    const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
+    if (!enriched) {
+      await markWebhookEventProcessed({ id: claim.id });
+      return {
+        kind: "invalid_payload",
+        reason: `agent session issue payload did not parse: ${sessionMatch.issueId}`,
+      };
+    }
+    match = { issue: enriched, actorId: sessionMatch.actorId };
+  }
   // Track which intake path produced `match` so the failure paths
   // below can pick the right cleanup. Assignments need
   // `reassignIssue` (mutates `assigneeId`); delegations need NO
@@ -411,6 +521,7 @@ async function runHandler(
     sandboxPolicy: "fresh",
     repoRef,
     budgetUsdCapMicros: input.defaultBudgetUsdMicros,
+    linearAgentSessionId: pendingAgentSessionId,
   });
 
   await markWebhookEventProcessed({ id: claim.id, runId: run.id });

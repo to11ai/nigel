@@ -109,6 +109,36 @@ export const linearWebhookEnvelopeSchema = z
       })
       .passthrough()
       .optional(),
+    // AgentSessionEvent: top-level `agentSession` carries the
+    // session id and a `prompt` (initial user-typed text) plus an
+    // `issue` ref. Linear delivers this when a user spawns a
+    // session via the agent UI (assignee picker → app → optional
+    // prompt). Keep permissive: passthrough so future fields don't
+    // fail parse, and treat every nested field as optional except
+    // the ones the matcher reads.
+    agentSession: z
+      .object({
+        id: z.string().min(1),
+        issue: z
+          .object({
+            id: z.string().min(1),
+            title: z.string().optional(),
+            description: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .optional(),
+        creator: linearActorSchema.optional(),
+        // The first user-typed prompt that opened the session. The
+        // shape on the wire isn't 100% pinned across Linear API
+        // revisions, so we accept either a plain string or an object
+        // with a body field and let the extractor pick what's there.
+        comment: z
+          .union([z.string(), z.object({ body: z.string() }).passthrough()])
+          .optional(),
+        prompt: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
@@ -286,6 +316,62 @@ const linearCommentSchema = z
   .passthrough();
 
 export type LinearComment = z.infer<typeof linearCommentSchema>;
+
+// AgentSessionEvent: Linear's first-class agent-session bootstrap.
+//
+// Fires when a user spawns a session against the app (assignee
+// picker → app → optional prompt) OR when Linear's session UI is
+// otherwise opened on an issue. Carries a session id we persist on
+// the run so subsequent AgentActivity events route back to the
+// same Linear-side UI surface.
+//
+// We do not require an `appUserId` match here the way
+// AppUserNotification does, because the AgentSessionEvent envelope
+// (per Linear's docs as of April 2026) doesn't include one — the
+// session itself is the routing key, and Linear only delivers the
+// event to the app the session was opened against.
+//
+// `prompt` is the user-typed initial message. We accept either a
+// top-level `prompt` field OR a nested `comment.body` (current
+// shape on Linear's wire). Both are optional — a session created
+// without a prompt is normal (the user assigned the app and
+// didn't type anything before hitting send).
+export type ExtractedAgentSession = {
+  agentSessionId: string;
+  issueId: string;
+  actorId: string | null;
+  prompt: string | null;
+};
+
+export function extractAgentSessionCreated(input: {
+  envelope: LinearWebhookEnvelope;
+}): ExtractedAgentSession | null {
+  const env = input.envelope;
+  if (env.type !== "AgentSessionEvent") return null;
+  if (env.action !== "created") return null;
+
+  const session = env.agentSession;
+  if (!session) return null;
+
+  const issueId = session.issue?.id;
+  if (!issueId) return null;
+
+  // prompt may live at session.prompt or session.comment.body — try
+  // both and pick the first non-empty.
+  const promptFromTop = session.prompt;
+  const promptFromComment =
+    typeof session.comment === "string"
+      ? session.comment
+      : (session.comment?.body ?? null);
+  const prompt = promptFromTop || promptFromComment || null;
+
+  return {
+    agentSessionId: session.id,
+    issueId,
+    actorId: session.creator?.id ?? env.actor?.id ?? null,
+    prompt,
+  };
+}
 
 export function extractCommandComment(input: {
   envelope: LinearWebhookEnvelope;

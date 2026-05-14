@@ -330,6 +330,13 @@
       "when": 1778695562497,
       "tag": "0046_same_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1778763251042,
+      "tag": "0047_marvelous_demogoblin",
+      "breakpoints": true
     }
   ]
 }

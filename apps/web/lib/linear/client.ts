@@ -228,6 +228,69 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object";
 }
 
+// AgentActivity: posts a streamed status / step event to a
+// Linear AgentSession's panel UI. This is the API Linear's
+// session-panel uses to render "the agent is working" content —
+// without it, the panel shows "did not respond" even when the
+// agent posts comments on the underlying issue.
+//
+// Linear's docs describe four `kind` values:
+//   - "thought"  — internal reasoning / planning steps
+//   - "action"   — tool calls, side-effects
+//   - "response" — user-visible reply text
+//   - "error"    — failure / blocked status
+//
+// `body` is Markdown rendered in the session panel. The Linear
+// session UI surfaces these chronologically, so callers should
+// emit them in step order.
+//
+// We do NOT throw on a "false" `success` field here — the session
+// might have been closed by the user, in which case Linear returns
+// success=false. Callers treat AgentActivity as fire-and-forget
+// telemetry (see specialist-execution.ts), so a transient failure
+// shouldn't crash the agent loop.
+export type AgentActivityKind = "thought" | "action" | "response" | "error";
+
+export async function agentActivityCreate(input: {
+  accessToken: string;
+  agentSessionId: string;
+  kind: AgentActivityKind;
+  body: string;
+}): Promise<{ activityId: string | null }> {
+  const data = await linearGraphql<{
+    agentActivityCreate: {
+      success: boolean;
+      agentActivity?: { id: string };
+    };
+  }>({
+    accessToken: input.accessToken,
+    query: `
+      mutation CreateAgentActivity(
+        $agentSessionId: String!
+        $body: String!
+        $kind: AgentActivityType!
+      ) {
+        agentActivityCreate(input: {
+          agentSessionId: $agentSessionId
+          body: $body
+          type: $kind
+        }) {
+          success
+          agentActivity { id }
+        }
+      }
+    `,
+    variables: {
+      agentSessionId: input.agentSessionId,
+      body: input.body,
+      kind: input.kind,
+    },
+  });
+  return {
+    activityId: data.agentActivityCreate.agentActivity?.id ?? null,
+  };
+}
+
 // Reassigns a Linear issue to a different user. Pass `null` for
 // `assigneeId` to un-assign (Linear's API accepts that as a valid
 // transition).

@@ -420,6 +420,15 @@ export const agentRuns = pgTable(
     }),
     approvedAt: timestamp("approved_at"),
 
+    // Linear AgentSession id (from AgentSessionEvent.created), set
+    // when the run was started by Linear's session-panel UI (or
+    // backfilled when an AppUserNotification.issueAssignedToYou
+    // event resolves to a session that arrived first). Used to
+    // route AgentActivity events back to the same Linear session,
+    // and to de-dupe between the two webhook event types so we
+    // don't start two runs for the same issue.
+    linearAgentSessionId: text("linear_agent_session_id"),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     startedAt: timestamp("started_at"),
     endedAt: timestamp("ended_at"),
@@ -432,6 +441,10 @@ export const agentRuns = pgTable(
     index("agent_runs_workflow_idx").on(table.workflowRunId),
     index("agent_runs_status_idx").on(table.status),
     index("agent_runs_trigger_idx").on(table.triggerSource),
+    // Lookup by Linear AgentSession id when an AgentActivity needs
+    // to find its run, or to dedupe an incoming AppUserNotification
+    // against an AgentSessionEvent that arrived first.
+    index("agent_runs_linear_agent_session_idx").on(table.linearAgentSessionId),
   ],
 );
 
