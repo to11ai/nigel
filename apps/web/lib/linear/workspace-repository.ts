@@ -220,12 +220,22 @@ export function rowToListItem(row: LinearWorkspace): LinearWorkspaceListItem {
 }
 
 function rowToResolved(row: LinearWorkspace): ResolvedLinearWorkspace {
-  const secrets = decryptSecrets<LinearWorkspaceSecrets>({
+  const decrypted = decryptSecrets<LinearWorkspaceSecrets>({
     ciphertext: row.secretsCiphertext,
     nonce: row.secretsNonce,
     authTag: row.secretsAuthTag,
     keyVersion: row.keyVersion as 1,
   });
+  // Prefer LINEAR_WEBHOOK_SECRET from env when set. There's one
+  // Linear app per Nigel install, so the webhook secret is a deploy-
+  // level config (provisioned via Pulumi alongside the OAuth
+  // credentials) rather than per-workspace data. The DB-stored value
+  // is the L5 fallback for installs that pre-date the env-var path.
+  const envWebhookSecret = process.env.LINEAR_WEBHOOK_SECRET?.trim();
+  const secrets: LinearWorkspaceSecrets = {
+    accessToken: decrypted.accessToken,
+    webhookSecret: envWebhookSecret || decrypted.webhookSecret,
+  };
   return {
     id: row.id,
     workspaceId: row.workspaceId,
