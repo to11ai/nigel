@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agentRuns } from "@/lib/db/schema";
+import { recordRunStatusChange } from "@/lib/observability/lifecycle-span";
 import { onRunStatusChange } from "./lifecycle";
 import {
   assertValidTransition,
@@ -138,6 +139,39 @@ export async function updateRunStatus(
   }
 
   await db.update(agentRuns).set(patch).where(eq(agentRuns.id, id));
+
+  // Emit the telemetry span AFTER the DB write succeeds — recording
+  // transitions that never persisted would skew the dashboards.
+  // Duration is only meaningful on terminal transitions where
+  // `endedAt` is set in this same patch; for non-terminal the start
+  // was set on a previous transition (pending → running). Read the
+  // best-effort duration from current.startedAt + patch.endedAt.
+  //
+  // Wrapped in try/catch so a telemetry failure (OTel SDK regression,
+  // misbehaving test fake) never preempts the lifecycle dispatch
+  // below. Same isolation principle the lifecycle hook itself uses.
+  const startedAt = patch.startedAt ?? current.startedAt;
+  const endedAt = patch.endedAt ?? null;
+  const durationMs =
+    startedAt && endedAt ? endedAt.getTime() - startedAt.getTime() : null;
+  try {
+    recordRunStatusChange({
+      runId: id,
+      rootRunId: current.rootRunId,
+      parentRunId: current.parentRunId,
+      depth: current.depth,
+      triggerSource: current.triggerSource,
+      specialistId: current.specialistId,
+      from: current.status,
+      to: next,
+      durationMs,
+      costUsdMicros: current.costUsdActualMicros,
+      budgetUsdMicros: current.budgetUsdCapMicros,
+    });
+  } catch (err) {
+    // biome-ignore lint/suspicious/noConsole: telemetry failures must surface
+    console.error("recordRunStatusChange failed", { runId: id, err });
+  }
 
   // Fire-and-forget; never let a handler failure roll back the transition.
   void onRunStatusChange({
