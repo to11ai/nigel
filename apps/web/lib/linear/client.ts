@@ -249,19 +249,44 @@ function isObject(v: unknown): v is Record<string, unknown> {
 // success=false. Callers treat AgentActivity as fire-and-forget
 // telemetry (see specialist-execution.ts), so a transient failure
 // shouldn't crash the agent loop.
-export type AgentActivityKind = "thought" | "action" | "response" | "error";
+// The shape of `content` varies by activity type. Linear validates
+// the inner shape — sending a body-only payload for an "action"
+// type (or vice versa) returns a GraphQL error that the
+// fire-and-forget caller swallows, so the session panel goes
+// silent for every malformed post. Model the shapes here as a
+// discriminated union so callers can't construct invalid content.
+export type AgentActivityContent =
+  | { type: "thought"; body: string }
+  | { type: "response"; body: string }
+  | { type: "error"; body: string }
+  | { type: "elicitation"; body: string }
+  | {
+      type: "action";
+      // Human-readable label for the tool invocation. Linear's
+      // sample values are gerund-form like "Searching" /
+      // "Searched" — pre-result vs post-result. We don't currently
+      // model the in-flight transition; emit the past-tense form
+      // alongside `result` in a single post.
+      action: string;
+      // Stringified input — Linear's docs say plain string, not
+      // JSON. Callers serialize.
+      parameter: string;
+      // Optional completion details, supports Markdown.
+      result?: string;
+    };
 
 export async function agentActivityCreate(input: {
   accessToken: string;
   agentSessionId: string;
-  kind: AgentActivityKind;
-  body: string;
+  content: AgentActivityContent;
 }): Promise<{ activityId: string | null }> {
-  // Linear's AgentActivityCreateInput accepts ONLY
-  //   { agentSessionId: String!, content: JSONObject! }
-  // at the top level — `body` and `type` go INSIDE the `content`
-  // object. Sending them as siblings of `agentSessionId` triggers
-  // a GraphQL error that the fire-and-forget caller in
+  // Linear's AgentActivityCreateInput is { agentSessionId, content }
+  // where `content` is a JSONObject whose shape varies by `type`.
+  // See https://linear.app/developers/agent-interaction —
+  // "Shape of content varies by activity type".
+  //
+  // Sending `body` and `type` as siblings of `agentSessionId`
+  // triggers a GraphQL error that the fire-and-forget caller in
   // specialist-execution.ts swallows, so every activity post would
   // silently disappear and the session panel would stay stuck on
   // "did not respond" — exactly the failure mode this PR exists
@@ -289,7 +314,7 @@ export async function agentActivityCreate(input: {
     `,
     variables: {
       agentSessionId: input.agentSessionId,
-      content: { type: input.kind, body: input.body },
+      content: input.content,
     },
   });
   return {

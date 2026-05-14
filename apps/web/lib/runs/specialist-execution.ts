@@ -321,31 +321,79 @@ export async function executeSpecialistViaLLM(
                 );
               }
             }
-            // Stream a short AgentActivity to the Linear session
-            // panel so the user sees that work is happening. Kind:
-            //   - "action" if the step issued any tool call
-            //   - "thought" if it was reasoning-only
-            // The final response goes out via a separate call after
-            // agent.generate resolves. Fire-and-forget: a Linear
-            // API hiccup must NOT abort the agent loop or fail
-            // an otherwise-successful step.
+            // Stream AgentActivity to the Linear session panel so
+            // the user sees that work is happening. Per Linear's
+            // docs (https://linear.app/developers/agent-interaction),
+            // the content shape varies by activity type:
+            //   - "thought" / "response" / "error" / "elicitation"
+            //     take { type, body }
+            //   - "action" takes { type, action, parameter, result? }
+            //     — body is NOT valid here, Linear rejects it
+            //
+            // For text content from the model, emit a "thought".
+            // For each tool call, emit a separate "action" with the
+            // tool name (past tense for now since we have no
+            // pre-tool-call hook) and the JSON-stringified input
+            // truncated. Fire-and-forget at the loop level — Linear
+            // API hiccups must not abort the agent loop — but chain
+            // the posts in order so a step's thought always arrives
+            // before its actions and actions arrive in tool-call
+            // order. agentActivityCreate calls would otherwise race
+            // and Linear orders the session panel by arrival.
             if (agentSessionContext) {
-              const body = buildStepActivityBody(step);
-              if (body) {
-                const kind: "action" | "thought" =
-                  (step.toolCalls?.length ?? 0) > 0 ? "action" : "thought";
-                agentActivityCreate({
-                  accessToken: agentSessionContext.accessToken,
-                  agentSessionId: agentSessionContext.agentSessionId,
-                  kind,
-                  body,
-                }).catch((err) => {
-                  console.error(
-                    `[specialist-execution] agentActivityCreate failed for run ${run.id}`,
-                    err,
-                  );
-                });
+              const thoughtBody = extractStepText(step);
+              const resultsByCallId = new Map<string, unknown>();
+              for (const tr of step.toolResults ?? []) {
+                if (tr.toolCallId) {
+                  resultsByCallId.set(tr.toolCallId, tr.output);
+                }
               }
+              const toolCalls = step.toolCalls ?? [];
+              const sessionContext = agentSessionContext;
+              void (async () => {
+                if (thoughtBody) {
+                  try {
+                    await agentActivityCreate({
+                      accessToken: sessionContext.accessToken,
+                      agentSessionId: sessionContext.agentSessionId,
+                      content: { type: "thought", body: thoughtBody },
+                    });
+                  } catch (err) {
+                    console.error(
+                      `[specialist-execution] thought agentActivityCreate failed for run ${run.id}`,
+                      err,
+                    );
+                  }
+                }
+                for (const tc of toolCalls) {
+                  const result = resultsByCallId.get(tc.toolCallId ?? "");
+                  try {
+                    await agentActivityCreate({
+                      accessToken: sessionContext.accessToken,
+                      agentSessionId: sessionContext.agentSessionId,
+                      content: {
+                        type: "action",
+                        action: tc.toolName,
+                        parameter: truncateForPanel(
+                          stringifyForPanel(tc.input),
+                        ),
+                        ...(result !== undefined
+                          ? {
+                              result: truncateForPanel(
+                                stringifyForPanel(result),
+                              ),
+                            }
+                          : {}),
+                      },
+                    });
+                  } catch (err) {
+                    console.error(
+                      `[specialist-execution] action agentActivityCreate failed for run ${run.id}`,
+                      err,
+                    );
+                  }
+                }
+              })();
             }
           },
         });
@@ -376,8 +424,7 @@ export async function executeSpecialistViaLLM(
           agentActivityCreate({
             accessToken: agentSessionContext.accessToken,
             agentSessionId: agentSessionContext.agentSessionId,
-            kind: "response",
-            body: result.text,
+            content: { type: "response", body: result.text },
           }).catch((err) => {
             console.error(
               `[specialist-execution] final agentActivityCreate failed for run ${run.id}`,
@@ -406,8 +453,7 @@ export async function executeSpecialistViaLLM(
           agentActivityCreate({
             accessToken: agentSessionContext.accessToken,
             agentSessionId: agentSessionContext.agentSessionId,
-            kind: "error",
-            body: `Run failed: ${message}`,
+            content: { type: "error", body: `Run failed: ${message}` },
           }).catch((postErr) => {
             console.error(
               `[specialist-execution] error agentActivityCreate failed for run ${run.id}`,
@@ -427,55 +473,57 @@ export async function executeSpecialistViaLLM(
   );
 }
 
-// Build a short Markdown body for an AgentActivity step post.
-// Returns null when the step has neither text content nor tool
-// calls — that's a step worth no UI noise.
-//
-// Format:
-//   - Text content (if any) up to 500 chars
-//   - A bulleted list of tool-call names (if any)
+// Pull the plain-text portion of a step's content array, joined
+// and trimmed. Returns null for steps with no text content (e.g.
+// tool-call-only steps emitted by the planner) — caller skips the
+// "thought" AgentActivity post in that case.
 //
 // Long bodies waste session-panel real estate AND Linear's API has
-// payload caps. We keep it tight: snippet + tool-name list. The
-// Datadog Activity log on the run-detail page is the place to see
-// full step content; AgentActivity is the at-a-glance signal.
-type StepShapeForActivity = {
-  content?: unknown;
-  toolCalls?: ReadonlyArray<{ toolName: string }>;
-};
-
+// payload caps, so we truncate. The Activity log on the run-detail
+// page is the place to read full step content; AgentActivity is
+// the at-a-glance signal.
 const ACTIVITY_BODY_SNIPPET_LIMIT = 500;
 
-function buildStepActivityBody(step: StepShapeForActivity): string | null {
-  const parts: string[] = [];
-  // Pull any plain-text part from content[] into a snippet.
-  if (Array.isArray(step.content)) {
-    const text = step.content
-      .filter(
-        (p): p is { type: "text"; text: string } =>
-          typeof p === "object" &&
-          p !== null &&
-          "type" in p &&
-          (p as { type: unknown }).type === "text" &&
-          typeof (p as { text?: unknown }).text === "string",
-      )
-      .map((p) => p.text)
-      .join("\n")
-      .trim();
-    if (text) {
-      parts.push(
-        text.length > ACTIVITY_BODY_SNIPPET_LIMIT
-          ? `${text.slice(0, ACTIVITY_BODY_SNIPPET_LIMIT)}…`
-          : text,
-      );
-    }
+function extractStepText(step: { content?: unknown }): string | null {
+  if (!Array.isArray(step.content)) return null;
+  const text = step.content
+    .filter(
+      (p): p is { type: "text"; text: string } =>
+        typeof p === "object" &&
+        p !== null &&
+        "type" in p &&
+        (p as { type: unknown }).type === "text" &&
+        typeof (p as { text?: unknown }).text === "string",
+    )
+    .map((p) => p.text)
+    .join("\n")
+    .trim();
+  if (!text) return null;
+  return text.length > ACTIVITY_BODY_SNIPPET_LIMIT
+    ? `${text.slice(0, ACTIVITY_BODY_SNIPPET_LIMIT)}…`
+    : text;
+}
+
+// JSON-stringify for the session panel. Linear's docs describe
+// `parameter` and `result` as plain strings (not JSON objects), so
+// we serialize ourselves. Falls back to String() for non-JSON
+// values (functions, BigInts, etc.) which shouldn't occur on the
+// AI SDK's input/output channels but is defensive.
+function stringifyForPanel(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    // JSON.stringify(undefined) returns undefined (not a string),
+    // so fall back to "" to honor the `string` return contract.
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return String(value);
   }
-  const toolCalls = step.toolCalls ?? [];
-  if (toolCalls.length > 0) {
-    parts.push(toolCalls.map((tc) => `- \`${tc.toolName}\``).join("\n"));
-  }
-  if (parts.length === 0) return null;
-  return parts.join("\n\n");
+}
+
+function truncateForPanel(s: string): string {
+  return s.length > ACTIVITY_BODY_SNIPPET_LIMIT
+    ? `${s.slice(0, ACTIVITY_BODY_SNIPPET_LIMIT)}…`
+    : s;
 }
 
 // Resolves per-step cost in micros, preferring gateway-reported cost
