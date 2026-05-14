@@ -384,59 +384,25 @@ async function runHandler(
     botUserId: workspace.botUserId,
   });
 
-  // Synthesize a match from AgentSessionEvent when no delegation /
-  // assignment was extracted: AgentSessionEvent doesn't deliver a
-  // full LinearIssue (only id + title + description), so we fetch
-  // the rest the same way the delegation branch does.
-  if (sessionMatch && !match && !delegation) {
-    const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
-    let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
-    try {
-      rawIssue = await fetchFn({
-        accessToken: workspace.secrets.accessToken,
-        issueId: sessionMatch.issueId,
-      });
-    } catch (err) {
-      await markWebhookEventProcessed({ id: claim.id });
-      console.error("[linear-webhook] fetchIssue failed for agent session", {
-        issueId: sessionMatch.issueId,
-        err,
-      });
-      return {
-        kind: "invalid_payload",
-        reason: `agent session issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-    if (!rawIssue) {
-      await markWebhookEventProcessed({ id: claim.id });
-      return {
-        kind: "invalid_payload",
-        reason: `agent session issue not found: ${sessionMatch.issueId}`,
-      };
-    }
-    const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
-    if (!enriched) {
-      await markWebhookEventProcessed({ id: claim.id });
-      return {
-        kind: "invalid_payload",
-        reason: `agent session issue payload did not parse: ${sessionMatch.issueId}`,
-      };
-    }
-    match = { issue: enriched, actorId: sessionMatch.actorId };
-  }
   // Track which intake path produced `match` so the failure paths
-  // below can pick the right cleanup. Assignments need
-  // `reassignIssue` (mutates `assigneeId`); delegations need NO
-  // mutation since the bot is the `delegate`, not the `assignee` —
-  // `reassignIssue` would silently no-op AND would also stamp the
-  // actor as assignee, which they weren't before. The right
-  // delegation-cleanup mutation (issueUpdate clearing delegate)
-  // isn't wired yet; deferred to the agent-session follow-up. For
-  // now delegation failures post a comment only and let the user
-  // un-delegate manually.
-  const matchKind: "assignment" | "delegation" =
-    match || !delegation ? "assignment" : "delegation";
-  if (delegation && !match) {
+  // below can pick the right cleanup:
+  //   - "assignment" → bot is the issue assignee. Failure path
+  //     calls reassignIssue(actor) so the bot doesn't stay
+  //     stuck as assignee.
+  //   - "delegation" → bot is the `delegate`, NOT the `assignee`.
+  //     reassignIssue would silently no-op AND would incorrectly
+  //     stamp the actor as the new assignee. Skip the reassign;
+  //     post a comment asking the user to un-delegate manually
+  //     (proper delegate-clearing mutation isn't wired yet).
+  //   - "session" → AgentSessionEvent — bot is the session target,
+  //     not the assignee. Same skip-reassign treatment as
+  //     delegation: a reassignIssue call would stamp the actor as
+  //     assignee, which they weren't, and the bot has no `assigneeId`
+  //     to clear in the first place.
+  let matchKind: "assignment" | "delegation" | "session" = "assignment";
+  if (match) {
+    matchKind = "assignment";
+  } else if (delegation) {
     const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
     let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
     try {
@@ -471,6 +437,43 @@ async function runHandler(
       };
     }
     match = { issue: enriched, actorId: delegation.actorId };
+    matchKind = "delegation";
+  } else if (sessionMatch) {
+    const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
+    let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
+    try {
+      rawIssue = await fetchFn({
+        accessToken: workspace.secrets.accessToken,
+        issueId: sessionMatch.issueId,
+      });
+    } catch (err) {
+      await markWebhookEventProcessed({ id: claim.id });
+      console.error("[linear-webhook] fetchIssue failed for agent session", {
+        issueId: sessionMatch.issueId,
+        err,
+      });
+      return {
+        kind: "invalid_payload",
+        reason: `agent session issue fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (!rawIssue) {
+      await markWebhookEventProcessed({ id: claim.id });
+      return {
+        kind: "invalid_payload",
+        reason: `agent session issue not found: ${sessionMatch.issueId}`,
+      };
+    }
+    const enriched: LinearIssue | null = parseLinearIssue(rawIssue);
+    if (!enriched) {
+      await markWebhookEventProcessed({ id: claim.id });
+      return {
+        kind: "invalid_payload",
+        reason: `agent session issue payload did not parse: ${sessionMatch.issueId}`,
+      };
+    }
+    match = { issue: enriched, actorId: sessionMatch.actorId };
+    matchKind = "session";
   }
 
   if (!match) {
@@ -499,7 +502,11 @@ async function runHandler(
       issueId: match.issue.id,
       teamId: match.issue.teamId,
       reassignTo: matchKind === "assignment" ? match.actorId : null,
-      skipReassign: matchKind === "delegation",
+      // Skip the reassign for both delegation AND session matches:
+      // in both cases the bot was never the issue assignee, so
+      // reassignIssue would no-op on the clear AND incorrectly stamp
+      // the actor as the new assignee.
+      skipReassign: matchKind !== "assignment",
     }).catch((err) => {
       console.error("[linear-webhook] failed to post unresolved_repo comment", {
         issueId: match.issue.id,
@@ -526,7 +533,11 @@ async function runHandler(
       issueId: match.issue.id,
       actorId: match.actorId,
       reassignTo: matchKind === "assignment" ? match.actorId : null,
-      skipReassign: matchKind === "delegation",
+      // Skip the reassign for both delegation AND session matches:
+      // in both cases the bot was never the issue assignee, so
+      // reassignIssue would no-op on the clear AND incorrectly stamp
+      // the actor as the new assignee.
+      skipReassign: matchKind !== "assignment",
     }).catch((err) => {
       console.error(
         "[linear-webhook] failed to post unresolved_owner comment",
@@ -602,11 +613,14 @@ async function postRepoUnresolvedComment(input: {
   issueId: string;
   teamId: string;
   reassignTo: string | null;
-  // True for delegation events: the bot occupies `delegate`, not
-  // `assignee`, so reassignIssue (which sets assigneeId) is a no-op
-  // on the bot AND incorrectly stamps the would-be actor as
-  // assignee. The proper delegate-clearing mutation isn't wired
-  // yet — admin removes the delegate manually for now.
+  // True for delegation AND session events: the bot occupies
+  // `delegate` (delegations) or is the session target
+  // (AgentSessionEvent), NOT the issue assignee. reassignIssue
+  // sets assigneeId — calling it would silently no-op on the
+  // bot-clear AND would incorrectly stamp the actor as the new
+  // assignee, which they weren't before. The proper
+  // delegate-clearing / session-cancel mutations aren't wired
+  // yet — admin removes the state manually for now.
   skipReassign: boolean;
 }): Promise<void> {
   const body = [
@@ -617,7 +631,7 @@ async function postRepoUnresolvedComment(input: {
     "- Add a `repo:owner/name` label to this issue.",
     "",
     input.skipReassign
-      ? "Please un-delegate Nigel manually — the bot doesn't auto-clear delegate yet."
+      ? "Please clear Nigel's delegate / session manually — the bot doesn't auto-clear those states yet."
       : "Reassigning back so the bot doesn't stay on the ticket.",
   ].join("\n");
   // Comment and reassign are independent best-effort calls. A failed
@@ -662,7 +676,7 @@ async function postOwnerUnresolvedComment(input: {
     "To fix: sign in to Nigel and link your Linear account in /settings, then re-assign the issue to the bot.",
     "",
     input.skipReassign
-      ? "Please un-delegate Nigel manually — the bot doesn't auto-clear delegate yet."
+      ? "Please clear Nigel's delegate / session manually — the bot doesn't auto-clear those states yet."
       : "Reassigning back so the bot doesn't stay on the ticket.",
   ].join("\n");
   // Independent best-effort: see comment in postRepoUnresolvedComment.
