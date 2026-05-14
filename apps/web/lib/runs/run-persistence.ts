@@ -76,6 +76,42 @@ export async function persistRunStep(input: {
   step: StepLikeForPersistence;
   triggerSource: string;
 }): Promise<void> {
+  // Each insert is isolated: a transient failure on one (e.g. a
+  // large tool-call batch hitting a postgres parameter limit) must
+  // NOT cause the other two — which are independent rows — to be
+  // silently dropped. Without per-write isolation, one bad tool
+  // call would forfeit the per-step usage_events row this PR
+  // exists to record.
+  //
+  // The CALLER also wraps persistRunStep in try/catch (see
+  // specialist-execution.ts onStepFinish) as a defense-in-depth
+  // safety net for unexpected throws — but that outer catch is
+  // single-shot, so it can't recover the other branches once one
+  // throws. Hence the inner isolation here.
+  await persistAssistantMessage(input).catch((err) => {
+    console.error(
+      `[run-persistence] runMessages insert failed for run ${input.runId}`,
+      err,
+    );
+  });
+  await persistToolCalls(input).catch((err) => {
+    console.error(
+      `[run-persistence] runToolCalls insert failed for run ${input.runId}`,
+      err,
+    );
+  });
+  await persistUsageEvent(input).catch((err) => {
+    console.error(
+      `[run-persistence] usageEvents insert failed for run ${input.runId}`,
+      err,
+    );
+  });
+}
+
+async function persistAssistantMessage(input: {
+  runId: string;
+  step: StepLikeForPersistence;
+}): Promise<void> {
   // One assistant row per step, carrying the rich `content` array
   // (text + reasoning + tool-call parts) verbatim. Downstream UI can
   // walk `parts` to render whichever part types it knows about.
@@ -85,7 +121,12 @@ export async function persistRunStep(input: {
     role: "assistant",
     parts: input.step.content ?? [],
   });
+}
 
+async function persistToolCalls(input: {
+  runId: string;
+  step: StepLikeForPersistence;
+}): Promise<void> {
   // Tool results from `step.toolResults` are matched to the
   // corresponding tool call by id and stored directly on the
   // `run_tool_calls` row's `output` column — no separate
@@ -118,25 +159,31 @@ export async function persistRunStep(input: {
   if (toolCallRows.length > 0) {
     await db.insert(runToolCalls).values(toolCallRows);
   }
+}
 
+async function persistUsageEvent(input: {
+  runId: string;
+  userId: string | null;
+  step: StepLikeForPersistence;
+  triggerSource: string;
+}): Promise<void> {
   // Usage event ties to the human owner so per-user cost rollups
   // work. Linear-triggered runs always have a humanOwnerId by the
   // time the planner runs (resolved in the webhook handler); skip
   // the row entirely if it's somehow null rather than synthesize a
   // fake user_id that would violate the FK.
-  if (input.userId) {
-    await db.insert(usageEvents).values({
-      id: nanoid(),
-      userId: input.userId,
-      source: input.triggerSource,
-      agentType: "specialist",
-      provider: input.step.model?.provider ?? null,
-      modelId: input.step.model?.modelId ?? null,
-      inputTokens: input.step.usage?.inputTokens ?? 0,
-      cachedInputTokens:
-        input.step.usage?.inputTokenDetails?.cacheReadTokens ?? 0,
-      outputTokens: input.step.usage?.outputTokens ?? 0,
-      toolCallCount: input.step.toolCalls?.length ?? 0,
-    });
-  }
+  if (!input.userId) return;
+  await db.insert(usageEvents).values({
+    id: nanoid(),
+    userId: input.userId,
+    source: input.triggerSource,
+    agentType: "specialist",
+    provider: input.step.model?.provider ?? null,
+    modelId: input.step.model?.modelId ?? null,
+    inputTokens: input.step.usage?.inputTokens ?? 0,
+    cachedInputTokens:
+      input.step.usage?.inputTokenDetails?.cacheReadTokens ?? 0,
+    outputTokens: input.step.usage?.outputTokens ?? 0,
+    toolCallCount: input.step.toolCalls?.length ?? 0,
+  });
 }
