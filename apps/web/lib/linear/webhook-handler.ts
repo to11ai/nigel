@@ -279,6 +279,18 @@ async function runHandler(
     envelope,
     botUserId: workspace.botUserId,
   });
+  // Track which intake path produced `match` so the failure paths
+  // below can pick the right cleanup. Assignments need
+  // `reassignIssue` (mutates `assigneeId`); delegations need NO
+  // mutation since the bot is the `delegate`, not the `assignee` —
+  // `reassignIssue` would silently no-op AND would also stamp the
+  // actor as assignee, which they weren't before. The right
+  // delegation-cleanup mutation (issueUpdate clearing delegate)
+  // isn't wired yet; deferred to the agent-session follow-up. For
+  // now delegation failures post a comment only and let the user
+  // un-delegate manually.
+  const matchKind: "assignment" | "delegation" =
+    match || !delegation ? "assignment" : "delegation";
   if (delegation && !match) {
     const fetchFn = input.deps?.fetchIssue ?? fetchIssue;
     let rawIssue: Awaited<ReturnType<typeof fetchIssue>>;
@@ -330,16 +342,19 @@ async function runHandler(
   });
   if (!repoRef) {
     await markWebhookEventProcessed({ id: claim.id });
-    // Surface the rejection back to the Linear actor: comment +
-    // reassign so the issue isn't stuck assigned to the bot
-    // indefinitely. Failures here are best-effort — if the Linear
-    // API is unhealthy, the outcome is still logged and the run
-    // simply isn't created.
+    // Surface the rejection back to the Linear actor with a comment.
+    // For assignments we ALSO call reassignIssue so the bot stops
+    // appearing as assignee; for delegations we skip the reassign
+    // (it would set `assigneeId`, not clear `delegate`, and the
+    // actor was never the assignee in the first place). Failures
+    // here are best-effort — if the Linear API is unhealthy, the
+    // outcome is still logged and the run simply isn't created.
     await postRepoUnresolvedComment({
       workspace,
       issueId: match.issue.id,
       teamId: match.issue.teamId,
-      reassignTo: match.actorId,
+      reassignTo: matchKind === "assignment" ? match.actorId : null,
+      skipReassign: matchKind === "delegation",
     }).catch((err) => {
       console.error("[linear-webhook] failed to post unresolved_repo comment", {
         issueId: match.issue.id,
@@ -365,7 +380,8 @@ async function runHandler(
       workspace,
       issueId: match.issue.id,
       actorId: match.actorId,
-      reassignTo: match.actorId,
+      reassignTo: matchKind === "assignment" ? match.actorId : null,
+      skipReassign: matchKind === "delegation",
     }).catch((err) => {
       console.error(
         "[linear-webhook] failed to post unresolved_owner comment",
@@ -440,6 +456,12 @@ async function postRepoUnresolvedComment(input: {
   issueId: string;
   teamId: string;
   reassignTo: string | null;
+  // True for delegation events: the bot occupies `delegate`, not
+  // `assignee`, so reassignIssue (which sets assigneeId) is a no-op
+  // on the bot AND incorrectly stamps the would-be actor as
+  // assignee. The proper delegate-clearing mutation isn't wired
+  // yet — admin removes the delegate manually for now.
+  skipReassign: boolean;
 }): Promise<void> {
   const body = [
     "Nigel rejected this assignment: no repo is mapped for this team.",
@@ -448,7 +470,9 @@ async function postRepoUnresolvedComment(input: {
     `- Add team \`${input.teamId}\` to the team→repo map in /admin/linear, OR`,
     "- Add a `repo:owner/name` label to this issue.",
     "",
-    "Reassigning back so the bot doesn't stay on the ticket.",
+    input.skipReassign
+      ? "Please un-delegate Nigel manually — the bot doesn't auto-clear delegate yet."
+      : "Reassigning back so the bot doesn't stay on the ticket.",
   ].join("\n");
   // Comment and reassign are independent best-effort calls. A failed
   // comment must NOT skip the reassign — otherwise the bot stays
@@ -464,16 +488,18 @@ async function postRepoUnresolvedComment(input: {
       err,
     });
   });
-  await reassignIssue({
-    accessToken: input.workspace.secrets.accessToken,
-    issueId: input.issueId,
-    assigneeId: input.reassignTo,
-  }).catch((err) => {
-    console.error("[linear-webhook] reassignIssue failed (unresolved_repo)", {
+  if (!input.skipReassign) {
+    await reassignIssue({
+      accessToken: input.workspace.secrets.accessToken,
       issueId: input.issueId,
-      err,
+      assigneeId: input.reassignTo,
+    }).catch((err) => {
+      console.error("[linear-webhook] reassignIssue failed (unresolved_repo)", {
+        issueId: input.issueId,
+        err,
+      });
     });
-  });
+  }
 }
 
 async function postOwnerUnresolvedComment(input: {
@@ -481,13 +507,17 @@ async function postOwnerUnresolvedComment(input: {
   issueId: string;
   actorId: string | null;
   reassignTo: string | null;
+  // See postRepoUnresolvedComment.skipReassign.
+  skipReassign: boolean;
 }): Promise<void> {
   const body = [
     "Nigel rejected this assignment: the actor isn't linked to a Nigel user.",
     "",
     "To fix: sign in to Nigel and link your Linear account in /settings, then re-assign the issue to the bot.",
     "",
-    "Reassigning back so the bot doesn't stay on the ticket.",
+    input.skipReassign
+      ? "Please un-delegate Nigel manually — the bot doesn't auto-clear delegate yet."
+      : "Reassigning back so the bot doesn't stay on the ticket.",
   ].join("\n");
   // Independent best-effort: see comment in postRepoUnresolvedComment.
   await commentOnIssue({
@@ -500,14 +530,19 @@ async function postOwnerUnresolvedComment(input: {
       err,
     });
   });
-  await reassignIssue({
-    accessToken: input.workspace.secrets.accessToken,
-    issueId: input.issueId,
-    assigneeId: input.reassignTo,
-  }).catch((err) => {
-    console.error("[linear-webhook] reassignIssue failed (unresolved_owner)", {
+  if (!input.skipReassign) {
+    await reassignIssue({
+      accessToken: input.workspace.secrets.accessToken,
       issueId: input.issueId,
-      err,
+      assigneeId: input.reassignTo,
+    }).catch((err) => {
+      console.error(
+        "[linear-webhook] reassignIssue failed (unresolved_owner)",
+        {
+          issueId: input.issueId,
+          err,
+        },
+      );
     });
-  });
+  }
 }
