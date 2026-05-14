@@ -5,7 +5,9 @@ import {
   eq,
   gte,
   type InferSelectModel,
+  inArray,
   isNull,
+  isNotNull,
   lt,
   notInArray,
   sql,
@@ -329,6 +331,49 @@ export async function listRootRunsForUser(
     .where(and(...conditions))
     .orderBy(desc(agentRuns.createdAt))
     .limit(limit);
+}
+
+// Compact summary of one child run, returned by
+// `listChildSummariesForRoots`. We don't ship the full AgentRun row
+// to the /runs index because the index renders dozens of these per
+// row and only needs enough to draw a status badge + tooltip.
+export type ChildRunSummary = {
+  rootRunId: string;
+  id: string;
+  specialistId: string | null;
+  status: RunStatus;
+};
+
+// Returns every non-root run (parentRunId IS NOT NULL) whose
+// rootRunId is in the provided list, scoped to the calling user.
+// Caller groups by rootRunId. One round-trip avoids the N+1 the
+// /runs index would otherwise hit while annotating each root with
+// its dispatched specialists.
+//
+// Returns rows ordered by createdAt ASC so callers can render
+// dispatch order without resorting.
+export async function listChildSummariesForRoots(input: {
+  rootRunIds: ReadonlyArray<string>;
+  userId: string;
+}): Promise<ChildRunSummary[]> {
+  if (input.rootRunIds.length === 0) return [];
+  const rows = await db
+    .select({
+      rootRunId: agentRuns.rootRunId,
+      id: agentRuns.id,
+      specialistId: agentRuns.specialistId,
+      status: agentRuns.status,
+    })
+    .from(agentRuns)
+    .where(
+      and(
+        inArray(agentRuns.rootRunId, [...input.rootRunIds]),
+        isNotNull(agentRuns.parentRunId),
+        eq(agentRuns.humanOwnerId, input.userId),
+      ),
+    )
+    .orderBy(asc(agentRuns.createdAt));
+  return rows;
 }
 
 // Returns every run (root + descendants) sharing the given rootRunId,

@@ -312,6 +312,110 @@ describe("shouldForwardInheritedSandbox", () => {
   });
 });
 
+describe("Linear AgentActivity phase markers", () => {
+  type Posted = { type: string; body: string };
+
+  function callWithLinear(opts: {
+    linearAgentSessionId?: string;
+    depth?: number;
+    specialistName?: string;
+    task?: string;
+    generateText?: string;
+  }) {
+    const posted: Posted[] = [];
+    const agentActivityStub = mock(
+      async (input: {
+        content:
+          | {
+              type: "thought" | "response" | "error" | "elicitation";
+              body: string;
+            }
+          | {
+              type: "action";
+              action: string;
+              parameter: string;
+              result?: string;
+            };
+      }) => {
+        const c = input.content;
+        // Phase-marker posts are only ever thought/response/error — the
+        // action shape (no body) is exercised by the per-step posts the
+        // onStepFinish hook owns, which other tests cover.
+        const body = "body" in c ? c.body : "";
+        posted.push({ type: c.type, body });
+        return { activityId: "act_stub" };
+      },
+    );
+    const resolveLinearWorkspaceStub = mock(async () => ({
+      id: "lw_stub",
+      workspaceId: "ws_1",
+      botUserId: "user_1",
+      teamRepoMap: {},
+      secrets: {
+        webhookSecret: "whsec_stub",
+        accessToken: "tok_1",
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    if (opts.generateText !== undefined) {
+      generateMock.mockImplementationOnce(async () => ({
+        text: opts.generateText ?? "",
+        usage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
+        finishReason: "stop" as const,
+      }));
+    }
+    return executeSpecialistViaLLM({
+      run: fakeRun({
+        linearAgentSessionId: opts.linearAgentSessionId ?? "sess_1",
+        depth: opts.depth ?? 0,
+      }),
+      sandbox: fakeSandbox(),
+      specialist: fakeSpecialist({ name: opts.specialistName ?? "coder" }),
+      task: opts.task ?? "Implement the fix",
+      deps: {
+        checkRootBudget: checkRootBudgetStub,
+        addCostMicros: addCostMicrosStub,
+        resolveLinearWorkspace: resolveLinearWorkspaceStub,
+        agentActivityCreate: agentActivityStub,
+      },
+    }).then(() => posted);
+  }
+
+  test("emits a 'starting' thought before agent.generate when AgentSession is bound", async () => {
+    const posted = await callWithLinear({ specialistName: "planner" });
+    const start = posted.find((p) => p.body.includes("**planner** starting"));
+    expect(start).toBeDefined();
+    expect(start?.type).toBe("thought");
+  });
+
+  test("'starting' thought is prefixed with ↳ when the run is a dispatched child (depth > 0)", async () => {
+    const posted = await callWithLinear({
+      depth: 2,
+      specialistName: "coder",
+      task: "rewrite the OIDC trust policy",
+    });
+    const start = posted.find((p) => p.body.includes("**coder** starting"));
+    expect(start?.body.startsWith("↳ ")).toBe(true);
+  });
+
+  test("always emits a final response activity so the Linear panel exits the 'still working' state — even when the agent generated no final text", async () => {
+    const posted = await callWithLinear({ generateText: "" });
+    const responses = posted.filter((p) => p.type === "response");
+    expect(responses).toHaveLength(1);
+    const response = posted.find((p) => p.type === "response");
+    expect(response?.body).toMatch(/finished without a final response/);
+  });
+
+  test("final response uses the agent's text when present", async () => {
+    const posted = await callWithLinear({
+      generateText: "Done — opened PR #99.",
+    });
+    const response = posted.find((p) => p.type === "response");
+    expect(response?.body).toBe("Done — opened PR #99.");
+  });
+});
+
 describe("dispatchSpecialist callback wiring", () => {
   test("injected dispatchSpecialist callback is used when provided in deps", async () => {
     const dispatchStub = mock(async (input: { task: string }) => ({

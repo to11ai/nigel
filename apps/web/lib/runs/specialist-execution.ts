@@ -412,19 +412,60 @@ export async function executeSpecialistViaLLM(
           );
         }
 
-        const result = await agent.generate({
-          messages: [{ role: "user", content: task }],
-        });
-        // Final user-visible reply. Linear's session panel renders
-        // this as the "response" body so the user sees something
-        // concrete instead of the default "did not respond"
-        // placeholder. Same fire-and-forget rationale as the
-        // per-step posts above.
-        if (agentSessionContext && result.text) {
+        // Phase-marker thought: the user is watching the Linear
+        // session panel and the first agent step (especially a
+        // reasoning-heavy planner step) can take 30+s. Emit a
+        // "starting" thought immediately so the panel shows
+        // which specialist took the dispatch and what task it
+        // received, instead of going silent until the first step
+        // finishes. Same fire-and-forget rationale as the per-step
+        // posts. Dispatched children inherit `linearAgentSessionId`
+        // from the parent (see dispatch.ts), so a planner that
+        // hands work to a coder will produce two start markers in
+        // the session panel.
+        if (agentSessionContext) {
           agentActivityCreate({
             accessToken: agentSessionContext.accessToken,
             agentSessionId: agentSessionContext.agentSessionId,
-            content: { type: "response", body: result.text },
+            content: {
+              type: "thought",
+              body: buildSpecialistStartBody({
+                specialistName: specialist.name,
+                depth: run.depth,
+                task,
+              }),
+            },
+          }).catch((err) => {
+            console.error(
+              `[specialist-execution] start agentActivityCreate failed for run ${run.id}`,
+              err,
+            );
+          });
+        }
+
+        const result = await agent.generate({
+          messages: [{ role: "user", content: task }],
+        });
+        // Final user-visible reply. Linear's session panel uses the
+        // arrival of a `response` (or `error`) activity to mark the
+        // session as no-longer-active; without one, the panel stays
+        // in the "still working" indicator even after the run has
+        // been marked completed and the "Nigel finished the task"
+        // comment has posted. So always emit a response — fall back
+        // to a stub body when the agent loop ended without text
+        // (typical: planner exited via stepCountIs cap, or last step
+        // was a tool call with no accompanying assistant text).
+        // Same fire-and-forget rationale as the per-step posts above.
+        if (agentSessionContext) {
+          agentActivityCreate({
+            accessToken: agentSessionContext.accessToken,
+            agentSessionId: agentSessionContext.agentSessionId,
+            content: {
+              type: "response",
+              body:
+                result.text ||
+                `**${specialist.name}** finished without a final response. See the Nigel run for tool activity.`,
+            },
           }).catch((err) => {
             console.error(
               `[specialist-execution] final agentActivityCreate failed for run ${run.id}`,
@@ -471,6 +512,29 @@ export async function executeSpecialistViaLLM(
       }
     },
   );
+}
+
+// Build the body for the per-specialist "starting" AgentActivity
+// thought posted before agent.generate kicks off. Depth-prefix
+// makes it obvious in the session panel that work was handed off
+// from a parent specialist (depth>0) vs. is the top-level run
+// just starting up (depth=0).
+const SPECIALIST_START_TASK_PREVIEW_LIMIT = 200;
+function buildSpecialistStartBody(input: {
+  specialistName: string;
+  depth: number;
+  task: string;
+}): string {
+  const prefix = input.depth > 0 ? "↳ " : "";
+  const trimmed = input.task.trim();
+  if (trimmed.length === 0) {
+    return `${prefix}**${input.specialistName}** starting`;
+  }
+  const preview =
+    trimmed.length > SPECIALIST_START_TASK_PREVIEW_LIMIT
+      ? `${trimmed.slice(0, SPECIALIST_START_TASK_PREVIEW_LIMIT)}…`
+      : trimmed;
+  return `${prefix}**${input.specialistName}** starting — ${preview}`;
 }
 
 // Pull the plain-text portion of a step's content array, joined
