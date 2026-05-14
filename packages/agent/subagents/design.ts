@@ -89,7 +89,7 @@ const callOptionsSchema = z.object({
 export type DesignCallOptions = z.infer<typeof callOptionsSchema>;
 
 export const designSubagent = new ToolLoopAgent({
-  model: gateway("anthropic/claude-opus-4.6"),
+  model: gateway("openai/gpt-5-codex"),
   instructions: DESIGN_SYSTEM_PROMPT,
   tools: {
     read: readFileTool(),

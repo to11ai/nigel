@@ -169,14 +169,6 @@ export const BUILT_IN_VARIANTS: ModelVariant[] = [
       reasoningSummary: "auto",
     },
   },
-  {
-    id: `${BUILT_IN_VARIANT_ID_PREFIX}claude-opus-4.6-high`,
-    name: "Claude Opus 4.6 (High)",
-    baseModelId: "anthropic/claude-opus-4.6",
-    providerOptions: {
-      effort: "high",
-    },
-  },
 ];
 
 /**

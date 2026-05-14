@@ -18,7 +18,7 @@ export async function generateSessionTitle(
 
   try {
     const result = await generateText({
-      model: gateway("anthropic/claude-haiku-4.5"),
+      model: gateway("openai/gpt-5-codex"),
       prompt: `You are a developer tool that names coding sessions. Generate a concise title (max 5 words) for a coding session based on the user's first message below. The title should help the user quickly identify what this session is about at a glance. Do NOT use quotes or punctuation around the title. Respond with ONLY the title, nothing else.
 
 User message:
