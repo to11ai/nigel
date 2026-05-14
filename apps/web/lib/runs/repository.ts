@@ -146,23 +146,32 @@ export async function updateRunStatus(
   // `endedAt` is set in this same patch; for non-terminal the start
   // was set on a previous transition (pending → running). Read the
   // best-effort duration from current.startedAt + patch.endedAt.
+  //
+  // Wrapped in try/catch so a telemetry failure (OTel SDK regression,
+  // misbehaving test fake) never preempts the lifecycle dispatch
+  // below. Same isolation principle the lifecycle hook itself uses.
   const startedAt = patch.startedAt ?? current.startedAt;
   const endedAt = patch.endedAt ?? null;
   const durationMs =
     startedAt && endedAt ? endedAt.getTime() - startedAt.getTime() : null;
-  recordRunStatusChange({
-    runId: id,
-    rootRunId: current.rootRunId,
-    parentRunId: current.parentRunId,
-    depth: current.depth,
-    triggerSource: current.triggerSource,
-    specialistId: current.specialistId,
-    from: current.status,
-    to: next,
-    durationMs,
-    costUsdMicros: current.costUsdActualMicros,
-    budgetUsdMicros: current.budgetUsdCapMicros,
-  });
+  try {
+    recordRunStatusChange({
+      runId: id,
+      rootRunId: current.rootRunId,
+      parentRunId: current.parentRunId,
+      depth: current.depth,
+      triggerSource: current.triggerSource,
+      specialistId: current.specialistId,
+      from: current.status,
+      to: next,
+      durationMs,
+      costUsdMicros: current.costUsdActualMicros,
+      budgetUsdMicros: current.budgetUsdCapMicros,
+    });
+  } catch (err) {
+    // biome-ignore lint/suspicious/noConsole: telemetry failures must surface
+    console.error("recordRunStatusChange failed", { runId: id, err });
+  }
 
   // Fire-and-forget; never let a handler failure roll back the transition.
   void onRunStatusChange({
