@@ -120,6 +120,39 @@ if (allowedGithubOrg) {
   envVar("NIGEL_ALLOWED_GITHUB_ORG", allowedGithubOrg);
 }
 
+// Linear OAuth app credentials (Phase 6 deferred → OAuth-wiring PR).
+// Production-only: Linear callback URLs are fixed at app registration
+// time and point at the prod domain (preview deploys get ephemeral
+// *.vercel.app hostnames Linear can't reach back to). The webhook
+// signing secret stays here rather than per-workspace in the DB
+// because there's one Linear app per Nigel install — keeping it in
+// env aligns with the GitHub webhook secret pattern above and avoids
+// the encrypted-secrets-bag round-trip on the hot webhook path.
+//
+// All three are optional per-stack — stacks without Linear configured
+// simply don't emit them, and the OAuth start/callback routes will
+// 503 with a clear "Linear not configured" error rather than crash.
+const linearOauthClientId = config.get("linearOauthClientId");
+if (linearOauthClientId) {
+  envVar("LINEAR_OAUTH_CLIENT_ID", linearOauthClientId, {
+    targets: ["production"],
+  });
+}
+const linearOauthClientSecret = config.getSecret("linearOauthClientSecret");
+if (linearOauthClientSecret) {
+  envVar("LINEAR_OAUTH_CLIENT_SECRET", linearOauthClientSecret, {
+    targets: ["production"],
+    sensitive: true,
+  });
+}
+const linearWebhookSecret = config.getSecret("linearWebhookSecret");
+if (linearWebhookSecret) {
+  envVar("LINEAR_WEBHOOK_SECRET", linearWebhookSecret, {
+    targets: ["production"],
+    sensitive: true,
+  });
+}
+
 // OpenTelemetry export (Phase 7a). All three are optional per-stack —
 // when the endpoint is unset, `@vercel/otel` still installs the
 // auto-instrumentation but drops exports, so the app keeps working in
