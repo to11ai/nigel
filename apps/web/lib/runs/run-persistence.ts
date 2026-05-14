@@ -86,32 +86,37 @@ export async function persistRunStep(input: {
     parts: input.step.content ?? [],
   });
 
-  // Tool-result rows are pulled out of `step.toolResults` (if
-  // present) and matched to the corresponding tool_call by id. The
-  // result lands as an additional `role=tool` run_message so the UI
-  // can interleave it next to the call that produced it.
+  // Tool results from `step.toolResults` are matched to the
+  // corresponding tool call by id and stored directly on the
+  // `run_tool_calls` row's `output` column — no separate
+  // role=tool message row. The UI joins input + output in one
+  // entry without a second query.
   const resultsByCallId = new Map<string, unknown>();
   for (const tr of input.step.toolResults ?? []) {
     if (tr.toolCallId) resultsByCallId.set(tr.toolCallId, tr.output);
   }
 
-  for (const tc of input.step.toolCalls ?? []) {
-    await db.insert(runToolCalls).values({
-      id: nanoid(),
-      runId: input.runId,
-      toolKind: classifyTool(tc.toolName),
-      toolName: tc.toolName,
-      input: (tc.input as object | null) ?? null,
-      output:
-        (resultsByCallId.get(tc.toolCallId ?? "") as object | null) ?? null,
-      // `success` is left null until tool execution is bound to a
-      // result; the `ai` SDK doesn't expose success/failure on the
-      // step shape directly. The presence/absence of `output` is the
-      // signal callers use today.
-      success: null,
-      costUsdMicros: 0,
-      latencyMs: null,
-    });
+  // Batch into a single INSERT — sequential awaits inside a for
+  // loop would issue one round-trip per tool call and add
+  // noticeable latency on busy steps. Drizzle's multi-row values()
+  // overload sends everything in one statement.
+  const toolCallRows = (input.step.toolCalls ?? []).map((tc) => ({
+    id: nanoid(),
+    runId: input.runId,
+    toolKind: classifyTool(tc.toolName),
+    toolName: tc.toolName,
+    input: (tc.input as object | null) ?? null,
+    output: (resultsByCallId.get(tc.toolCallId ?? "") as object | null) ?? null,
+    // `success` left null until tool execution is bound to a
+    // result; the `ai` SDK doesn't expose success/failure on the
+    // step shape directly. The presence/absence of `output` is
+    // the signal callers use today.
+    success: null,
+    costUsdMicros: 0,
+    latencyMs: null,
+  }));
+  if (toolCallRows.length > 0) {
+    await db.insert(runToolCalls).values(toolCallRows);
   }
 
   // Usage event ties to the human owner so per-user cost rollups

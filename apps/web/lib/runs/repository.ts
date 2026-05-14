@@ -78,12 +78,20 @@ export async function listChildren(parentId: string): Promise<AgentRun[]> {
 // the order it actually happened. Linear-triggered and chat-triggered
 // runs alike are populated by `executeSpecialistViaLLM`'s
 // onStepFinish hook (see lib/runs/run-persistence.ts).
+//
+// Limited to 2000 rows per query — the planner's MAX_STEPS=50 with
+// many tool calls per step can produce hundreds of rows on a busy
+// run, but two thousand is a safe ceiling for a single-page render.
+// Pagination is a known follow-up if agent runs grow past this.
+const ACTIVITY_PAGE_LIMIT = 2000;
+
 export async function listRunMessages(runId: string): Promise<RunMessage[]> {
   return db
     .select()
     .from(runMessages)
     .where(eq(runMessages.runId, runId))
-    .orderBy(asc(runMessages.createdAt));
+    .orderBy(asc(runMessages.createdAt))
+    .limit(ACTIVITY_PAGE_LIMIT);
 }
 
 export async function listRunToolCalls(runId: string): Promise<RunToolCall[]> {
@@ -91,7 +99,8 @@ export async function listRunToolCalls(runId: string): Promise<RunToolCall[]> {
     .select()
     .from(runToolCalls)
     .where(eq(runToolCalls.runId, runId))
-    .orderBy(asc(runToolCalls.createdAt));
+    .orderBy(asc(runToolCalls.createdAt))
+    .limit(ACTIVITY_PAGE_LIMIT);
 }
 
 // Phase 6 L4: find the run associated with a Linear issue.
