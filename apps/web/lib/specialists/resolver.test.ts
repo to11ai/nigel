@@ -214,19 +214,22 @@ describe("getSpecialist", () => {
     expect(p?.name).toBe("planner");
     expect(p?.kind).toBe("preset");
     expect(p?.systemPrompt).toContain("planner");
-    expect(p?.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(p?.model).toBe("openai/gpt-5.5");
+    // Coordinator-only surface per the spec amendment: no `file` /
+    // `shell` / `git`. All code changes route through dispatched
+    // worker specialists.
     expect(p?.toolAllowlist).toEqual([
-      "file",
+      "file_read",
       "search",
-      "shell",
-      "git",
       "web",
       "dispatch_specialist",
+      "dispatch_specialists_parallel",
+      "linear",
     ]);
     expect(p?.sandboxPolicy).toBe("inherit");
     expect(p?.mayRecurse).toBe(true);
     expect(p?.maxChildren).toBe(10);
-    expect(p?.budgetUsdDefaultMicros).toBe(10_000_000);
+    expect(p?.budgetUsdDefaultMicros).toBe(3_000_000);
     expect(p?.needsLocalStack).toBe(false);
   });
 
@@ -294,6 +297,95 @@ describe("getSpecialist", () => {
     expect(l?.maxChildren).toBe(0);
     expect(l?.budgetUsdDefaultMicros).toBe(5_000_000);
     expect(l?.needsLocalStack).toBe(false);
+  });
+
+  test("refuses planner override that re-adds 'file' to the allowlist", async () => {
+    await db.insert(specialists).values({
+      id: nanoid(),
+      name: "planner",
+      kind: "override",
+      toolAllowlist: ["file_read", "search", "file"],
+    });
+
+    await expect(getSpecialist("planner")).rejects.toThrow(
+      /planner_override_forbidden_tools/,
+    );
+  });
+
+  test("refuses planner override that re-adds 'shell' to the allowlist", async () => {
+    await db.insert(specialists).values({
+      id: nanoid(),
+      name: "planner",
+      kind: "override",
+      toolAllowlist: ["file_read", "search", "shell"],
+    });
+
+    await expect(getSpecialist("planner")).rejects.toThrow(
+      /planner_override_forbidden_tools/,
+    );
+  });
+
+  test("refuses planner override that re-adds 'git' to the allowlist", async () => {
+    await db.insert(specialists).values({
+      id: nanoid(),
+      name: "planner",
+      kind: "override",
+      toolAllowlist: ["file_read", "search", "git"],
+    });
+
+    await expect(getSpecialist("planner")).rejects.toThrow(
+      /planner_override_forbidden_tools/,
+    );
+  });
+
+  test("planner override changing only budget (no toolAllowlist) succeeds", async () => {
+    await db.insert(specialists).values({
+      id: nanoid(),
+      name: "planner",
+      kind: "override",
+      budgetUsdDefaultMicros: 1_500_000,
+    });
+
+    const p = await getSpecialist("planner");
+    expect(p).not.toBeNull();
+    expect(p?.name).toBe("planner");
+    expect(p?.budgetUsdDefaultMicros).toBe(1_500_000);
+    // Allowlist falls back to the preset's coordinator-only surface.
+    expect(p?.toolAllowlist).toEqual([
+      "file_read",
+      "search",
+      "web",
+      "dispatch_specialist",
+      "dispatch_specialists_parallel",
+      "linear",
+    ]);
+  });
+
+  test("planner override with only allowed allowlist entries succeeds", async () => {
+    await db.insert(specialists).values({
+      id: nanoid(),
+      name: "planner",
+      kind: "override",
+      toolAllowlist: ["file_read", "search"],
+    });
+
+    const p = await getSpecialist("planner");
+    expect(p).not.toBeNull();
+    expect(p?.toolAllowlist).toEqual(["file_read", "search"]);
+  });
+
+  test("non-planner override adding 'file' to allowlist succeeds (guard is planner-specific)", async () => {
+    await db.insert(specialists).values({
+      id: nanoid(),
+      name: "coder",
+      kind: "override",
+      toolAllowlist: ["file", "search", "shell", "git"],
+    });
+
+    const c = await getSpecialist("coder");
+    expect(c).not.toBeNull();
+    expect(c?.name).toBe("coder");
+    expect(c?.toolAllowlist).toEqual(["file", "search", "shell", "git"]);
   });
 
   test("rejects a custom row missing required fields", async () => {

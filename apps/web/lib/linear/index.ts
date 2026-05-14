@@ -1,7 +1,13 @@
+export { type BuildForRunInput, buildForRun } from "./agent-tool-impl";
 export {
+  attachToIssue,
   commentOnIssue,
   fetchIssue,
+  fetchIssueByIdentifier,
+  fetchIssueForAgent,
+  linearGraphql,
   LinearClientError,
+  type LinearClientErrorCode,
   reassignIssue,
 } from "./client";
 export {

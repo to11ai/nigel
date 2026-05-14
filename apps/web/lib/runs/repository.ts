@@ -200,7 +200,37 @@ export async function updateRunStatus(
     patch.blockedReason = null;
   }
 
-  await db.update(agentRuns).set(patch).where(eq(agentRuns.id, id));
+  // Transactional pair: status update + reservation release on a
+  // terminal transition. The release decrements the root's
+  // `cost_usd_reserved_micros` by this child's `budget_usd_cap_micros`
+  // (which was the amount reserved at dispatch time). Only fires when:
+  //   1. the new status is in the canonical terminal set (completed |
+  //      failed | cancelled), AND
+  //   2. this row has a non-null parent (root rows hold the reservation
+  //      pool, not draw from it).
+  //
+  // The state machine's empty terminal-outgoing transitions are the
+  // primary single-execution guarantee — `assertValidTransition` above
+  // already threw on a duplicate terminal call. The `>=` guard inside
+  // `releaseTerminalReservation` is defense-in-depth for any future
+  // path that bypasses this function.
+  await db.transaction(async (tx) => {
+    await tx.update(agentRuns).set(patch).where(eq(agentRuns.id, id));
+    if (
+      terminalStates.has(next) &&
+      current.parentRunId !== null &&
+      current.budgetUsdCapMicros > 0
+    ) {
+      await tx
+        .update(agentRuns)
+        .set({
+          costUsdReservedMicros: sql`${agentRuns.costUsdReservedMicros} - ${current.budgetUsdCapMicros}`,
+        })
+        .where(
+          sql`${agentRuns.id} = ${current.rootRunId} AND ${agentRuns.costUsdReservedMicros} >= ${current.budgetUsdCapMicros}`,
+        );
+    }
+  });
 
   // Emit the telemetry span AFTER the DB write succeeds — recording
   // transitions that never persisted would skew the dashboards.

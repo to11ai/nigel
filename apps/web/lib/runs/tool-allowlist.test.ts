@@ -16,6 +16,10 @@ describe("filterAgentTools", () => {
     todo_write: { _kind: "tool" },
     ask_user_question: { _kind: "tool" },
     dispatch_specialist: { _kind: "tool" },
+    dispatch_specialists_parallel: { _kind: "tool" },
+    linear_get_issue: { _kind: "tool" },
+    linear_comment: { _kind: "tool" },
+    linear_attach: { _kind: "tool" },
     database_query: { _kind: "tool" },
     clickhouse_query: { _kind: "tool" },
     redis_command: { _kind: "tool" },
@@ -66,6 +70,23 @@ describe("filterAgentTools", () => {
       allTools as unknown as ToolSet,
     );
     expect(Object.keys(out).sort()).toEqual(["dispatch_specialist"]);
+  });
+
+  test("dispatch_specialists_parallel expands to dispatch_specialists_parallel tool", () => {
+    const out = filterAgentTools(
+      ["dispatch_specialists_parallel"],
+      allTools as unknown as ToolSet,
+    );
+    expect(Object.keys(out).sort()).toEqual(["dispatch_specialists_parallel"]);
+  });
+
+  test("linear expands to all three linear_* tools", () => {
+    const out = filterAgentTools(["linear"], allTools as unknown as ToolSet);
+    expect(Object.keys(out).sort()).toEqual([
+      "linear_attach",
+      "linear_comment",
+      "linear_get_issue",
+    ]);
   });
 
   test("database_query expands to database_query tool", () => {

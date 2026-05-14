@@ -47,6 +47,22 @@ function mergePreset(
   if (!row) {
     return { ...preset };
   }
+  // Planner is coordinator-only per the spec amendment. An admin must
+  // not be able to paper over that by adding `file`, `shell`, or `git`
+  // back via a `kind='override'` row. Refuse the override outright
+  // rather than silently stripping the disallowed entries — silent
+  // stripping would make the override look applied when it isn't.
+  if (preset.name === "planner" && row && row.toolAllowlist) {
+    const forbidden = ["file", "shell", "git"];
+    const violations = row.toolAllowlist.filter((c) =>
+      forbidden.includes(c),
+    );
+    if (violations.length > 0) {
+      throw new Error(
+        `planner_override_forbidden_tools: cannot apply override to 'planner' that re-adds coordinator-prohibited tools: ${violations.join(", ")}`,
+      );
+    }
+  }
   return {
     name: preset.name,
     kind: preset.kind,

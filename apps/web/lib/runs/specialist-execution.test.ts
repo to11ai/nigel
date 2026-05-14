@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DispatchSpecialistCallback } from "@nigel/agent";
+import type {
+  DispatchSpecialistCallback,
+  DispatchSpecialistsParallelCallback,
+  LinearAgentToolCallback,
+} from "@nigel/agent";
 import type { ResolvedSpecialist } from "@/lib/specialists";
 import type { AgentRun } from "./types";
 
@@ -9,6 +13,8 @@ type CapturedSettings = {
     sandbox: unknown;
     model: unknown;
     dispatchSpecialist: DispatchSpecialistCallback;
+    dispatchSpecialistsParallel?: DispatchSpecialistsParallelCallback;
+    linear?: LinearAgentToolCallback;
   };
   prepareStep: (args: unknown) => Promise<unknown>;
   onStepFinish: (step: unknown) => Promise<unknown>;
@@ -49,6 +55,10 @@ mock.module("@nigel/agent", () => ({
     task: { _kind: "tool" },
     web_fetch: { _kind: "tool" },
     dispatch_specialist: { _kind: "tool" },
+    dispatch_specialists_parallel: { _kind: "tool" },
+    linear_get_issue: { _kind: "tool" },
+    linear_comment: { _kind: "tool" },
+    linear_attach: { _kind: "tool" },
   },
 }));
 
@@ -125,6 +135,12 @@ function call(
     specialist?: Partial<ResolvedSpecialist>;
     task?: string;
     dispatchSpecialist?: DispatchSpecialistCallback;
+    dispatchSpecialistsParallel?: DispatchSpecialistsParallelCallback;
+    linear?: LinearAgentToolCallback;
+    buildLinearForRun?: (input: {
+      runId: string;
+      orgId: string;
+    }) => LinearAgentToolCallback;
   } = {},
 ) {
   return executeSpecialistViaLLM({
@@ -137,6 +153,15 @@ function call(
       addCostMicros: addCostMicrosStub,
       ...(overrides.dispatchSpecialist
         ? { dispatchSpecialist: overrides.dispatchSpecialist }
+        : {}),
+      ...(overrides.dispatchSpecialistsParallel
+        ? {
+            dispatchSpecialistsParallel: overrides.dispatchSpecialistsParallel,
+          }
+        : {}),
+      ...(overrides.linear ? { linear: overrides.linear } : {}),
+      ...(overrides.buildLinearForRun
+        ? { buildLinearForRun: overrides.buildLinearForRun }
         : {}),
     },
   });
@@ -325,5 +350,204 @@ describe("dispatchSpecialist callback wiring", () => {
     });
     expect(result.output).toBe("dispatched: make a fix");
     expect(dispatchStub).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dispatch_specialists_parallel callback gating", () => {
+  test("callback is ABSENT from experimental_context when allowlist omits the category", async () => {
+    await call({
+      specialist: { toolAllowlist: ["file", "search", "dispatch_specialist"] },
+    });
+    expect(
+      captured().experimental_context.dispatchSpecialistsParallel,
+    ).toBeUndefined();
+  });
+
+  test("callback is PRESENT when allowlist includes the category", async () => {
+    const parallelStub = mock(
+      async (_: {
+        dispatches: Array<{ specialistName: string; task: string }>;
+      }) => ({
+        results: [
+          { specialistName: "linter", output: "ok" },
+          { specialistName: "type-checker", output: "ok" },
+        ],
+      }),
+    );
+    await call({
+      specialist: {
+        toolAllowlist: [
+          "file_read",
+          "search",
+          "dispatch_specialist",
+          "dispatch_specialists_parallel",
+        ],
+      },
+      dispatchSpecialistsParallel: parallelStub,
+    });
+    const cb = captured().experimental_context.dispatchSpecialistsParallel;
+    expect(cb).toBeDefined();
+    const result = await cb!({
+      dispatches: [
+        { specialistName: "linter", task: "lint" },
+        { specialistName: "type-checker", task: "tc" },
+      ],
+    });
+    expect(result.results.map((r) => r.specialistName)).toEqual([
+      "linter",
+      "type-checker",
+    ]);
+    expect(parallelStub).toHaveBeenCalledTimes(1);
+  });
+
+  test("forwards inheritSandboxState PER CHILD based on each dispatch's sandboxPolicyOverride", async () => {
+    let receivedInputs: Array<{
+      specialistName: string;
+      inheritSandboxState?: unknown;
+      sandboxPolicyOverride?: string;
+    }> | null = null;
+    const parallelStub = mock(
+      async (_input: {
+        dispatches: Array<{
+          specialistName: string;
+          task: string;
+          sandboxPolicyOverride?: "inherit" | "fresh" | "fresh_clean";
+        }>;
+      }) => ({
+        results: _input.dispatches.map((d) => ({
+          specialistName: d.specialistName,
+          output: "ok",
+        })),
+      }),
+    );
+
+    // Inject a custom dispatchSpecialistsParallel so we can capture
+    // the DispatchSpecialistInput[] that the wiring computes. We
+    // simulate the real server-side function's signature shape.
+    await call({
+      specialist: {
+        toolAllowlist: [
+          "file_read",
+          "dispatch_specialist",
+          "dispatch_specialists_parallel",
+        ],
+      },
+      // Override the parallel callback to peek at the snake_case input
+      // BEFORE it reaches the server. The wiring should map each
+      // dispatch into a row that carries (or omits) inheritSandboxState
+      // based on the per-child override.
+      dispatchSpecialistsParallel: async (input) => {
+        receivedInputs = input.dispatches.map((d) => ({
+          specialistName: d.specialistName,
+          sandboxPolicyOverride: d.sandboxPolicyOverride,
+        }));
+        return parallelStub(input);
+      },
+    });
+    const cb = captured().experimental_context.dispatchSpecialistsParallel;
+    expect(cb).toBeDefined();
+
+    // Three dispatches: fresh, inherit (default), fresh_clean.
+    await cb!({
+      dispatches: [
+        {
+          specialistName: "coder-fresh",
+          task: "t1",
+          sandboxPolicyOverride: "fresh",
+        },
+        { specialistName: "coder-default", task: "t2" },
+        {
+          specialistName: "coder-clean",
+          task: "t3",
+          sandboxPolicyOverride: "fresh_clean",
+        },
+      ],
+    });
+
+    // The callback fired and the override fields are passed through
+    // verbatim. (The server-side dispatchSpecialistsParallel is the
+    // unit that finally evaluates `shouldForwardInheritedSandbox`
+    // and passes `inheritSandboxState`; the wiring just funnels the
+    // per-child override down.) The contract being tested here is:
+    //   - The wiring calls the parallel callback exactly once
+    //   - Each per-child override survives the camelCase mapping
+    if (receivedInputs === null) {
+      throw new Error("dispatchSpecialistsParallel callback was not invoked");
+    }
+    expect(receivedInputs as Array<unknown>).toEqual([
+      { specialistName: "coder-fresh", sandboxPolicyOverride: "fresh" },
+      { specialistName: "coder-default", sandboxPolicyOverride: undefined },
+      { specialistName: "coder-clean", sandboxPolicyOverride: "fresh_clean" },
+    ]);
+  });
+});
+
+describe("linear callback gating", () => {
+  test("callback is ABSENT when allowlist omits 'linear'", async () => {
+    await call({
+      specialist: { toolAllowlist: ["file", "search"] },
+    });
+    expect(captured().experimental_context.linear).toBeUndefined();
+  });
+
+  test("callback is PRESENT when allowlist includes 'linear'", async () => {
+    const linearStub: LinearAgentToolCallback = {
+      getIssue: mock(async () => ({
+        id: "uuid-1",
+        identifier: "LIN-1",
+        title: "t",
+        description: null,
+        statusName: "Todo",
+        assigneeName: null,
+        teamKey: "LIN",
+        url: "https://linear.app/x/issue/LIN-1",
+      })),
+      comment: mock(async () => ({
+        commentId: "c1",
+        url: "https://linear.app/x/issue/LIN-1#comment-c1",
+      })),
+      attach: mock(async () => ({ attachmentId: "a1" })),
+    };
+    await call({
+      specialist: {
+        toolAllowlist: [
+          "file_read",
+          "search",
+          "web",
+          "dispatch_specialist",
+          "dispatch_specialists_parallel",
+          "linear",
+        ],
+      },
+      linear: linearStub,
+    });
+    const cb = captured().experimental_context.linear;
+    expect(cb).toBeDefined();
+    expect(cb).toBe(linearStub);
+  });
+
+  test("default `buildLinearForRun` is invoked exactly once with the run's id when allowlist includes 'linear'", async () => {
+    const builtCallback: LinearAgentToolCallback = {
+      getIssue: mock(async () => ({ kind: "not_configured" as const })),
+      comment: mock(async () => ({ kind: "not_configured" as const })),
+      attach: mock(async () => ({ kind: "not_configured" as const })),
+    };
+    const buildStub = mock(
+      (_input: { runId: string; orgId: string }) => builtCallback,
+    );
+    await call({
+      run: { id: "run_planner", humanOwnerId: "user_42" },
+      specialist: {
+        name: "planner",
+        toolAllowlist: ["file_read", "search", "linear"],
+      },
+      buildLinearForRun: buildStub,
+    });
+    expect(buildStub).toHaveBeenCalledTimes(1);
+    expect(buildStub).toHaveBeenCalledWith({
+      runId: "run_planner",
+      orgId: "user_42",
+    });
+    expect(captured().experimental_context.linear).toBe(builtCallback);
   });
 });
