@@ -180,11 +180,29 @@ async function persistUsageEvent(input: {
   // the row entirely if it's somehow null rather than synthesize a
   // fake user_id that would violate the FK.
   if (!input.userId) return;
+  // `triggerSource` is a TriggerSource ("chat" | "linear" | ...) but
+  // `usage_events.source` is a UsageSource ("web" | "linear" | ...).
+  // The two domains diverge on the chat path — TriggerSource calls
+  // it "chat", UsageSource (and the legacy chat-post-finish writer)
+  // call it "web". Map at the persistence boundary so chat-triggered
+  // specialist runs (if/when they flow through here) land in the
+  // same bucket as the chat-post-finish rows instead of fragmenting
+  // reporting across two labels for the same concept.
+  const source = input.triggerSource === "chat" ? "web" : input.triggerSource;
   await db.insert(usageEvents).values({
     id: nanoid(),
     userId: input.userId,
-    source: input.triggerSource,
-    agentType: "specialist",
+    source,
+    // Specialist runs ARE the main agent for their own run tree —
+    // the planner that drives the Linear-triggered execution loop
+    // is functionally the same role as the chat-side main agent.
+    // The distinction between "linear-triggered planner" and
+    // "chat main" is already encoded in `source`, so collapsing
+    // agentType to "main" preserves the analytics signal and keeps
+    // the usage pie chart's main/subagent split summing to the
+    // visible total. A separate "specialist" agentType would be
+    // silently excluded from the Main/Subagents pie segments.
+    agentType: "main",
     provider: input.step.model?.provider ?? null,
     modelId: input.step.model?.modelId ?? null,
     inputTokens: input.step.usage?.inputTokens ?? 0,

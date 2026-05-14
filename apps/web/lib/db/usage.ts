@@ -13,9 +13,11 @@ import { usageEvents } from "./schema";
 // audit — silent acceptance via plain `string` would let unrecognized
 // values slip into reporting queries.
 export type UsageSource = "web" | "linear" | "chained" | "cron";
-// "specialist" added for Linear-triggered planner + child runs that
-// flow through `executeSpecialistViaLLM`.
-export type UsageAgentType = "main" | "subagent" | "specialist";
+// Linear-triggered planner runs persist as "main" since they ARE the
+// main agent of their own run tree — see persistUsageEvent in
+// lib/runs/run-persistence.ts for the rationale (keeping the pie
+// chart's main/subagent split summing to the visible total).
+export type UsageAgentType = "main" | "subagent";
 
 export async function recordUsage(
   userId: string,
