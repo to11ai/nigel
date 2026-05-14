@@ -2,6 +2,8 @@ import type {
   ClickhouseQueryCallback,
   DatabaseQueryCallback,
   DispatchSpecialistCallback,
+  DispatchSpecialistsParallelCallback,
+  LinearAgentToolCallback,
   McpCallCallback,
   RedisCommandCallback,
   SlackPostCallback,
@@ -11,6 +13,10 @@ import { type Attributes, SpanStatusCode, trace } from "@opentelemetry/api";
 import type { SandboxState } from "@nigel/sandbox";
 import { stepCountIs, ToolLoopAgent } from "ai";
 import { extractGatewayCost } from "@/app/workflows/gateway-metadata";
+import {
+  buildForRun as defaultBuildLinearForRun,
+  type BuildForRunInput,
+} from "@/lib/linear/agent-tool-impl";
 import { agentActivityCreate as defaultAgentActivityCreate } from "@/lib/linear/client";
 import {
   resolveLinearWorkspace as defaultResolveLinearWorkspace,
@@ -99,6 +105,25 @@ export type ExecuteSpecialistInput = {
     // around the real dispatch function (set up at call time so we
     // avoid an import cycle).
     dispatchSpecialist?: DispatchSpecialistCallback;
+    // Same shape for the parallel-dispatch tool. The wrapper maps the
+    // LLM-supplied array into N DispatchSpecialistInput rows, evaluates
+    // `shouldForwardInheritedSandbox` PER CHILD (so a `fresh` override
+    // on one child doesn't poison the inherit-state of its siblings),
+    // and delegates to the server-side `dispatchSpecialistsParallel`
+    // which holds the atomic reservation.
+    dispatchSpecialistsParallel?: DispatchSpecialistsParallelCallback;
+    // Curried Linear adapter for the planner's coordinator-only
+    // callback surface (`linear_get_issue` / `linear_comment` /
+    // `linear_attach`). Production callers leave this unset; the
+    // wrapper constructs the adapter via `buildForRun` (below) the
+    // first time the specialist's allowlist includes `linear`. The
+    // adapter itself resolves the workspace token lazily on first
+    // tool call.
+    linear?: LinearAgentToolCallback;
+    // DI seam for the `buildForRun` constructor so tests can stub
+    // the whole adapter without monkey-patching modules. Production
+    // callers use the default (the real adapter).
+    buildLinearForRun?: (input: BuildForRunInput) => LinearAgentToolCallback;
     // Same DI seam for the database_query tool callback. Production
     // callers leave this unset and the wrapper builds a callback
     // bound to the current specialist's name (used by the scope
@@ -223,6 +248,85 @@ export async function executeSpecialistViaLLM(
             return { output: result.output };
           });
 
+        // dispatch_specialists_parallel callback. Built only when the
+        // specialist's resolved allowlist includes the category —
+        // mirrors the linear callback's allowlist gate below. Defense
+        // in depth: filterAgentTools already drops the tool from the
+        // agent's toolset when the allowlist doesn't include it, but
+        // matching the absence of the callback to the absence of the
+        // tool keeps the experimental_context contract clean.
+        const dispatchSpecialistsParallelFn:
+          | DispatchSpecialistsParallelCallback
+          | undefined = specialist.toolAllowlist.includes(
+          "dispatch_specialists_parallel",
+        )
+          ? (deps?.dispatchSpecialistsParallel ??
+            (async (callInput) => {
+              const { dispatchSpecialistsParallel } = await import(
+                "./dispatch"
+              );
+              const results = await dispatchSpecialistsParallel(
+                callInput.dispatches.map((d) => ({
+                  parentRunId: run.id,
+                  rootRunId: run.rootRunId,
+                  specialistName: d.specialistName,
+                  task: d.task,
+                  ...(d.budgetUsdMicros !== undefined
+                    ? { budgetUsdMicros: d.budgetUsdMicros }
+                    : {}),
+                  ...(d.sandboxPolicyOverride !== undefined
+                    ? { sandboxPolicyOverride: d.sandboxPolicyOverride }
+                    : {}),
+                  // Per-child gate — each dispatched child has its own
+                  // sandboxPolicyOverride, so the evaluation differs
+                  // across the array. Without this, every LLM child
+                  // dispatched via the parallel path would receive
+                  // `inheritFrom: null` and fail at sandbox
+                  // provisioning with `SandboxCoordinatorError`.
+                  ...(shouldForwardInheritedSandbox(
+                    sandbox.state,
+                    d.sandboxPolicyOverride,
+                  )
+                    ? { inheritSandboxState: sandbox.state }
+                    : {}),
+                })),
+              );
+              return {
+                results: results.map((r) => ({
+                  specialistName: r.specialistName,
+                  output: r.output,
+                  ...(r.error !== undefined ? { error: r.error } : {}),
+                })),
+              };
+            }))
+          : undefined;
+
+        // linear callback. Built only when the specialist's resolved
+        // allowlist includes `linear` (today: just `planner`). The
+        // underlying adapter resolves the workspace token lazily on
+        // first tool call so a deployment without Linear configured
+        // still runs every non-Linear specialist normally — and even
+        // a `planner` Run on such a deployment proceeds, with the
+        // adapter returning `{ kind: 'not_configured' }` to the tool
+        // wrapper.
+        //
+        // `orgId` on AgentRun does not exist as a column today; the
+        // Linear workspace is a singleton per Nigel deployment so the
+        // adapter doesn't actually scope by org. Pass the
+        // `humanOwnerId` as a stand-in identifier for logging /
+        // correlation only — empty string when the run has no owner
+        // (top-level cron / system runs).
+        const buildLinearForRun =
+          deps?.buildLinearForRun ?? defaultBuildLinearForRun;
+        const linearFn: LinearAgentToolCallback | undefined =
+          specialist.toolAllowlist.includes("linear")
+            ? (deps?.linear ??
+              buildLinearForRun({
+                runId: run.id,
+                orgId: run.humanOwnerId ?? "",
+              }))
+            : undefined;
+
         // Each tool callback closures-in the current specialist's
         // name so the scope check inside the callback can refuse a
         // connection scoped to a different specialist.
@@ -261,10 +365,19 @@ export async function executeSpecialistViaLLM(
           tools: filteredTools as unknown as typeof nigelTools,
           stopWhen: stepCountIs(MAX_STEPS),
           // isAgentContext requires both `sandbox` and `model` keys.
+          // dispatchSpecialistsParallel + linear keys are OMITTED
+          // entirely (not set to undefined) when the specialist's
+          // allowlist doesn't include them — matches the rule that
+          // "callbacks should be absent when the allowlist doesn't
+          // include the category."
           experimental_context: {
             sandbox,
             model: callModel,
             dispatchSpecialist: dispatchSpecialistFn,
+            ...(dispatchSpecialistsParallelFn !== undefined
+              ? { dispatchSpecialistsParallel: dispatchSpecialistsParallelFn }
+              : {}),
+            ...(linearFn !== undefined ? { linear: linearFn } : {}),
             databaseQuery: databaseQueryFn,
             clickhouseQuery: clickhouseQueryFn,
             redisCommand: redisCommandFn,
