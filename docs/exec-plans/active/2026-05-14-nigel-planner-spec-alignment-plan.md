@@ -288,36 +288,41 @@ Add cases asserting that a specialist with `["dispatch_specialists_parallel"]` i
 
 Today's flow at `specialist-execution.ts:202-267` curries `dispatchSpecialist` into `experimental_context`. Add the parallel-dispatch + Linear callbacks alongside.
 
-- [ ] **Step 1: Build the parallel-dispatch callback**
+- [ ] **Step 1: Build the parallel-dispatch callback (gated on allowlist)**
 
 ```ts
-const dispatchSpecialistsParallelFn: DispatchSpecialistsParallelCallback =
-  deps?.dispatchSpecialistsParallel ??
-  (async (input) => {
-    const { dispatchSpecialistsParallel } = await import("./dispatch");
-    const results = await dispatchSpecialistsParallel(
-      input.dispatches.map((d) => ({
-        parentRunId: run.id,
-        rootRunId: run.rootRunId ?? run.id,
-        specialistName: d.specialistName,
-        task: d.task,
-        ...(d.budgetUsdMicros !== undefined
-          ? { budgetUsdMicros: d.budgetUsdMicros }
-          : {}),
-        ...(d.sandboxPolicyOverride !== undefined
-          ? { sandboxPolicyOverride: d.sandboxPolicyOverride }
-          : {}),
-      })),
-    );
-    return {
-      results: results.map((r) => ({
-        specialistName: r.specialistName,
-        output: r.output ?? "",
-        ...(r.error !== undefined ? { error: r.error } : {}),
-      })),
-    };
-  });
+const dispatchSpecialistsParallelFn:
+  DispatchSpecialistsParallelCallback | undefined =
+  specialist.toolAllowlist.includes("dispatch_specialists_parallel")
+    ? (deps?.dispatchSpecialistsParallel ??
+        (async (input) => {
+          const { dispatchSpecialistsParallel } = await import("./dispatch");
+          const results = await dispatchSpecialistsParallel(
+            input.dispatches.map((d) => ({
+              parentRunId: run.id,
+              rootRunId: run.rootRunId ?? run.id,
+              specialistName: d.specialistName,
+              task: d.task,
+              ...(d.budgetUsdMicros !== undefined
+                ? { budgetUsdMicros: d.budgetUsdMicros }
+                : {}),
+              ...(d.sandboxPolicyOverride !== undefined
+                ? { sandboxPolicyOverride: d.sandboxPolicyOverride }
+                : {}),
+            })),
+          );
+          return {
+            results: results.map((r) => ({
+              specialistName: r.specialistName,
+              output: r.output ?? "",
+              ...(r.error !== undefined ? { error: r.error } : {}),
+            })),
+          };
+        }))
+    : undefined;
 ```
+
+Gate the init on `specialist.toolAllowlist.includes("dispatch_specialists_parallel")`, mirroring the `linearFn` treatment in Step 2 below. Specialists whose resolved allowlist doesn't include parallel dispatch (today: every specialist except `planner`) don't get the callback at all, and Step 3 omits the key from `experimental_context`. This is defense-in-depth — `filterAgentTools` already drops the tool from the agent's toolset when the allowlist doesn't include it, but matching the absence of the callback to the absence of the tool keeps "callbacks should be absent when the allowlist doesn't include the category" (Step 4) true by construction.
 
 - [ ] **Step 2: Build the Linear callback (gated on allowlist)**
 
@@ -344,12 +349,14 @@ The Linear adapter is built per-Run rather than per-step so the resolved-token c
 ```ts
 experimental_context: {
   dispatchSpecialist: dispatchSpecialistFn,
-  dispatchSpecialistsParallel: dispatchSpecialistsParallelFn,
+  ...(dispatchSpecialistsParallelFn !== undefined
+    ? { dispatchSpecialistsParallel: dispatchSpecialistsParallelFn }
+    : {}),
   ...(linearFn !== undefined ? { linear: linearFn } : {}),
 }
 ```
 
-The `linear` key is omitted entirely (not set to `undefined`) when the specialist's allowlist doesn't include it. This matches the "callbacks should be absent when the allowlist doesn't include the category" rule from Step 4 below.
+The `dispatchSpecialistsParallel` and `linear` keys are each omitted entirely (not set to `undefined`) when the specialist's allowlist doesn't include them. This matches the "callbacks should be absent when the allowlist doesn't include the category" rule from Step 4 below. `dispatchSpecialist` itself is unconditionally present because the planner is not the only recursive specialist — `researcher` also dispatches, gated by `mayRecurse` + `dispatchTargetAllowlist` at the server side rather than by allowlist absence.
 
 - [ ] **Step 4: Tests**
 
