@@ -16,9 +16,14 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export type TokenExchangeResult = {
   accessToken: string;
   tokenType: string;
-  // Linear's actor=app tokens are long-lived (10 years per current
-  // policy); user tokens have shorter expiries. We pass it through
-  // unchanged so future logic can act on it without re-parsing.
+  // Linear migrated to short-lived (~24h) access tokens with
+  // refresh-token renewal in April 2026. Older installs may still
+  // see long-lived tokens; we treat refresh_token as optional and
+  // skip renewal when absent.
+  refreshToken: string | null;
+  // Seconds until access token expires. Translated to a wall-clock
+  // Date when persisted via `accessTokenExpiresAt` on
+  // LinearWorkspaceSecrets.
   expiresIn: number | null;
   scope: string;
 };
@@ -77,6 +82,7 @@ export async function exchangeCodeForToken(input: {
     const json = (await res.json().catch(() => null)) as {
       access_token?: string;
       token_type?: string;
+      refresh_token?: string;
       expires_in?: number;
       scope?: string;
     } | null;
@@ -89,6 +95,69 @@ export async function exchangeCodeForToken(input: {
     return {
       accessToken: json.access_token,
       tokenType: json.token_type,
+      refreshToken: json.refresh_token ?? null,
+      expiresIn: json.expires_in ?? null,
+      scope: json.scope,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Exchange a refresh_token for a fresh access_token. Linear's refresh
+// endpoint is the same /oauth/token URL, just with grant_type=
+// refresh_token. The response may include a NEW refresh_token (Linear
+// rotates them) — callers MUST persist whatever value comes back, not
+// the previous one.
+export async function refreshAccessToken(input: {
+  refreshToken: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<TokenExchangeResult> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: input.refreshToken,
+    client_id: input.clientId,
+    client_secret: input.clientSecret,
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new LinearOAuthError(
+        "token_exchange_failed",
+        `Linear token refresh returned ${res.status}: ${text.slice(0, 200)}`,
+        res.status,
+      );
+    }
+    const json = (await res.json().catch(() => null)) as {
+      access_token?: string;
+      token_type?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      scope?: string;
+    } | null;
+    if (!(json?.access_token && json.token_type && json.scope)) {
+      throw new LinearOAuthError(
+        "malformed_response",
+        "Linear token refresh response missing access_token / token_type / scope",
+      );
+    }
+    return {
+      accessToken: json.access_token,
+      tokenType: json.token_type,
+      // Linear may return a new refresh_token (rotation) or reuse the
+      // old one — either way, persist what came back. If Linear omits
+      // it entirely, fall back to the input so we don't lose renewal
+      // capability.
+      refreshToken: json.refresh_token ?? input.refreshToken,
       expiresIn: json.expires_in ?? null,
       scope: json.scope,
     };

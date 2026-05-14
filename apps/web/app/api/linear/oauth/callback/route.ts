@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   exchangeCodeForToken,
   fetchAppIdentity,
-  LinearOAuthError,
 } from "@/lib/linear/oauth-client";
 import { verifyState } from "@/lib/linear/oauth-state";
 import {
@@ -62,8 +61,13 @@ export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const stateParam = url.searchParams.get("state");
-  if (!(code && stateParam)) {
+  if (!code) {
     return redirectWithError(req, "missing_code");
+  }
+  if (!stateParam) {
+    // Missing state is a CSRF / wiring problem, not a missing code —
+    // surface it distinctly so the admin UI can tell them apart.
+    return redirectWithError(req, "state_invalid");
   }
 
   const stateResult = verifyState({ state: stateParam, secret: authSecret });
@@ -100,17 +104,23 @@ export async function GET(req: Request): Promise<Response> {
     identity = await fetchAppIdentity(token.accessToken);
   } catch (err) {
     console.error("[linear-oauth] identity fetch failed", { err });
-    const code =
-      err instanceof LinearOAuthError && err.code === "malformed_response"
-        ? "identity_fetch_failed"
-        : "identity_fetch_failed";
-    return redirectWithError(req, code);
+    return redirectWithError(req, "identity_fetch_failed");
   }
 
   // The webhook secret stays in env (PR #47 wired it via Pulumi). We
   // store a placeholder in the DB so the encrypted column stays
   // non-null; resolveLinearWorkspace prefers env over DB.
   const envWebhookSecret = process.env.LINEAR_WEBHOOK_SECRET ?? "";
+  const accessTokenExpiresAt =
+    token.expiresIn !== null
+      ? new Date(Date.now() + token.expiresIn * 1000).toISOString()
+      : null;
+  const persistedSecrets = {
+    accessToken: token.accessToken,
+    webhookSecret: envWebhookSecret,
+    refreshToken: token.refreshToken,
+    accessTokenExpiresAt,
+  };
   try {
     const existing = await getLinearWorkspaceByWorkspaceId(
       identity.workspaceId,
@@ -119,19 +129,13 @@ export async function GET(req: Request): Promise<Response> {
       await updateLinearWorkspace({
         id: existing.id,
         botUserId: identity.appActorId,
-        secrets: {
-          accessToken: token.accessToken,
-          webhookSecret: envWebhookSecret,
-        },
+        secrets: persistedSecrets,
       });
     } else {
       await createLinearWorkspace({
         workspaceId: identity.workspaceId,
         botUserId: identity.appActorId,
-        secrets: {
-          accessToken: token.accessToken,
-          webhookSecret: envWebhookSecret,
-        },
+        secrets: persistedSecrets,
       });
     }
   } catch (err) {
