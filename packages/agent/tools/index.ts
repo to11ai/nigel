@@ -40,6 +40,12 @@ export {
   dispatchSpecialistsParallelTool,
 } from "./dispatch-specialists-parallel";
 export {
+  type LinearAgentToolCallback,
+  linearAttachTool,
+  linearCommentTool,
+  linearGetIssueTool,
+} from "./linear";
+export {
   type McpCallCallback,
   type McpCallInput,
   mcpCallTool,
