@@ -87,6 +87,28 @@ export const linearWebhookEnvelopeSchema = z
     // nested in `data`. Capture both forms.
     assigneeId: z.string().nullable().optional(),
     oldAssigneeId: z.string().nullable().optional(),
+    // AppUserNotification puts these at the TOP level, not under
+    // `data` (confirmed against linear/linear-agent-demo's
+    // AgentNotificationWebhook type: { type, appUserId, notification,
+    // webhookId }). Declared here so the matcher can read them
+    // type-safely.
+    appUserId: z.string().min(1).optional(),
+    notification: z
+      .object({
+        type: z.string().min(1),
+        issueId: z.string().min(1).optional(),
+        issue: z
+          .object({
+            id: z.string().min(1),
+            title: z.string().optional(),
+            description: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .optional(),
+        actor: linearActorSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
@@ -176,22 +198,24 @@ function isObject(v: unknown): v is Record<string, unknown> {
 //
 //   {
 //     type: "AppUserNotification",
-//     appUserId: "<app's actor uuid>",
-//     notification: {
+//     appUserId: "<app's actor uuid>",  // TOP-LEVEL, not in data
+//     notification: {                   // TOP-LEVEL, not in data
 //       type: "issueAssignedToYou",
 //       issueId: "...",
 //       issue: { id, title, description },
 //       actor: { id: <human who delegated> },  // optional
-//     }
+//     },
+//     webhookId: "...",
 //   }
+//
+// Important: AppUserNotification does NOT use the `data` wrapper
+// that issue / comment events use. We read `env.appUserId` and
+// `env.notification` directly (both declared on the envelope schema
+// above so access is type-safe).
 //
 // Required for this to fire: the OAuth token must have been issued
 // with the `app:assignable` scope AND the workspace's Linear app
 // must subscribe to "Inbox notifications" webhook events.
-//
-// This extractor returns the same shape as extractAssignmentToBot
-// so the webhook handler can feed both routes into the same
-// run-creation pipeline.
 
 export type ExtractedDelegation = {
   // Linear's AppUserNotification.issueAssignedToYou payload includes
@@ -210,38 +234,29 @@ export function extractAppUserNotificationDelegation(input: {
 }): ExtractedDelegation | null {
   const env = input.envelope;
   if (env.type !== "AppUserNotification") return null;
-  if (!isObject(env.data)) return null;
 
-  // The envelope's `data` carries the inner notification object plus
-  // `appUserId`. Verify the appUserId matches our bot so a stray
-  // notification for a different app installed in the same workspace
-  // doesn't trigger our runs.
-  if (env.data.appUserId !== input.botUserId) return null;
+  // appUserId lives at the envelope TOP LEVEL, not in env.data
+  // (confirmed against linear-agent-demo's AgentNotificationWebhook
+  // type). Verify it matches our bot so a stray notification for a
+  // different app installed in the same workspace doesn't trigger
+  // our runs.
+  if (env.appUserId !== input.botUserId) return null;
 
-  const notification = env.data.notification;
-  if (!isObject(notification)) return null;
+  // notification is also top-level.
+  const notification = env.notification;
+  if (!notification) return null;
   if (notification.type !== "issueAssignedToYou") return null;
 
-  // issueId is the canonical pointer; the nested `issue` object is a
-  // truncated view. Prefer the id even when both are present.
-  const issueId =
-    typeof notification.issueId === "string"
-      ? notification.issueId
-      : isObject(notification.issue) &&
-          typeof (notification.issue as { id?: unknown }).id === "string"
-        ? (notification.issue as { id: string }).id
-        : null;
+  // Prefer the explicit issueId; fall back to the nested issue.id
+  // for payload variants that omit it.
+  const issueId = notification.issueId ?? notification.issue?.id ?? null;
   if (!issueId) return null;
 
   // The actor on a delegation is the human who set the app as the
   // delegate. Prefer envelope.actor; fall back to notification.actor
-  // for older payload shapes.
+  // for shapes that nest it.
   const envelopeActor = env.actor?.id ?? null;
-  const notificationActor =
-    isObject(notification.actor) &&
-    typeof (notification.actor as { id?: unknown }).id === "string"
-      ? (notification.actor as { id: string }).id
-      : null;
+  const notificationActor = notification.actor?.id ?? null;
   return {
     issueId,
     actorId: envelopeActor ?? notificationActor,

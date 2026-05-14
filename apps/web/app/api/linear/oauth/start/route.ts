@@ -35,7 +35,9 @@ const AUTHORIZE_URL = "https://linear.app/oauth/authorize";
 //                       on issues and made a member of projects."
 //                       Assigning an issue to the app sets the
 //                       `delegate` field (not `assignee`), and fires
-//                       an AgentSessionEvent webhook (handled below).
+//                       an AppUserNotification webhook with
+//                       notification.type=issueAssignedToYou (handled
+//                       by extractAppUserNotificationDelegation).
 //   app:mentionable   — REQUIRED for the app to appear in @-mention
 //                       pickers. We'll use this once chat-with-the-
 //                       agent surfaces ship, but Linear lights up the
