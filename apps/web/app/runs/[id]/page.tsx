@@ -1,7 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getRun, listRunTreeForUser } from "@/lib/runs/repository";
+import {
+  getRun,
+  listRunMessages,
+  listRunToolCalls,
+  listRunTreeForUser,
+  type RunMessage,
+  type RunToolCall,
+} from "@/lib/runs/repository";
 import type { AgentRun } from "@/lib/runs/types";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { formatCostUsd, formatDuration, statusBadgeClass } from "../_format";
@@ -29,10 +36,14 @@ export default async function RunDetailPage(props: Props) {
     notFound();
   }
 
-  const tree = await listRunTreeForUser({
-    rootRunId: run.rootRunId,
-    userId: session.user.id,
-  });
+  const [tree, messages, toolCalls] = await Promise.all([
+    listRunTreeForUser({
+      rootRunId: run.rootRunId,
+      userId: session.user.id,
+    }),
+    listRunMessages(run.id),
+    listRunToolCalls(run.id),
+  ]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
@@ -59,10 +70,148 @@ export default async function RunDetailPage(props: Props) {
 
       <div className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Activity
+        </h2>
+        <ActivityLog messages={messages} toolCalls={toolCalls} />
+      </div>
+
+      <div className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Run tree
         </h2>
         <RunTree rows={tree} highlightId={run.id} />
       </div>
+    </div>
+  );
+}
+
+// Renders the run's message + tool-call log as a chronological
+// timeline. Falls back to an empty-state when the run hasn't
+// recorded anything — old Linear-triggered runs from before the
+// persistence hook landed (see lib/runs/run-persistence.ts) have
+// zero rows and need this hint.
+function ActivityLog({
+  messages,
+  toolCalls,
+}: {
+  messages: RunMessage[];
+  toolCalls: RunToolCall[];
+}) {
+  if (messages.length === 0 && toolCalls.length === 0) {
+    return (
+      <div className="rounded-md border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+        No activity recorded. Runs created before the activity-log persistence
+        shipped show empty here even though they actually executed. The
+        lifecycle / cost metadata above is still accurate.
+      </div>
+    );
+  }
+  // Interleave messages and tool calls by createdAt so the viewer
+  // sees them in the order the agent emitted them.
+  type Entry =
+    | { kind: "message"; item: RunMessage }
+    | { kind: "tool"; item: RunToolCall };
+  const entries: Entry[] = [
+    ...messages.map<Entry>((item) => ({ kind: "message", item })),
+    ...toolCalls.map<Entry>((item) => ({ kind: "tool", item })),
+  ].sort(
+    (a, b) =>
+      new Date(a.item.createdAt).getTime() -
+      new Date(b.item.createdAt).getTime(),
+  );
+  return (
+    <div className="space-y-3">
+      {entries.map((entry) =>
+        entry.kind === "message" ? (
+          <MessageEntry key={entry.item.id} message={entry.item} />
+        ) : (
+          <ToolCallEntry key={entry.item.id} toolCall={entry.item} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function MessageEntry({ message }: { message: RunMessage }) {
+  const parts = Array.isArray(message.parts)
+    ? (message.parts as Array<Record<string, unknown>>)
+    : [];
+  return (
+    <div className="rounded-md border bg-muted/10 px-4 py-3">
+      <div className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">
+        {message.role}
+      </div>
+      <div className="space-y-2 text-sm">
+        {parts.length === 0 ? (
+          <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+            {JSON.stringify(message.parts, null, 2)}
+          </pre>
+        ) : (
+          parts.map((part, i) => <MessagePart key={i} part={part} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MessagePart({ part }: { part: Record<string, unknown> }) {
+  const type = part.type;
+  if (type === "text" && typeof part.text === "string") {
+    return <p className="whitespace-pre-wrap">{part.text}</p>;
+  }
+  if (
+    type === "reasoning" &&
+    typeof (part as { text?: unknown }).text === "string"
+  ) {
+    return (
+      <details className="rounded border-l-2 border-muted-foreground/30 pl-3">
+        <summary className="cursor-pointer text-xs text-muted-foreground">
+          Reasoning
+        </summary>
+        <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+          {(part as { text: string }).text}
+        </p>
+      </details>
+    );
+  }
+  // Tool-call parts are rendered separately in the timeline via the
+  // run_tool_calls rows, so skip them here to avoid double-display.
+  if (type === "tool-call" || type === "tool-result") return null;
+  return (
+    <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+      {JSON.stringify(part, null, 2)}
+    </pre>
+  );
+}
+
+function ToolCallEntry({ toolCall }: { toolCall: RunToolCall }) {
+  return (
+    <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-4 py-3">
+      <div className="mb-1 flex items-center gap-2 text-xs text-blue-300">
+        <span className="font-mono">{toolCall.toolName}</span>
+        <span className="text-blue-300/60">({toolCall.toolKind})</span>
+      </div>
+      <details>
+        <summary className="cursor-pointer text-xs text-muted-foreground">
+          Input / output
+        </summary>
+        <div className="mt-2 space-y-2 text-xs">
+          <div>
+            <div className="text-muted-foreground">Input</div>
+            <pre className="whitespace-pre-wrap font-mono">
+              {JSON.stringify(toolCall.input, null, 2)}
+            </pre>
+          </div>
+          {toolCall.output ? (
+            <div>
+              <div className="text-muted-foreground">Output</div>
+              <pre className="whitespace-pre-wrap font-mono">
+                {JSON.stringify(toolCall.output, null, 2)}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      </details>
     </div>
   );
 }

@@ -1,6 +1,17 @@
-import { and, desc, eq, gte, isNull, lt, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  type InferSelectModel,
+  isNull,
+  lt,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agentRuns } from "@/lib/db/schema";
+import { agentRuns, runMessages, runToolCalls } from "@/lib/db/schema";
 import { recordRunStatusChange } from "@/lib/observability/lifecycle-span";
 import { onRunStatusChange } from "./lifecycle";
 import {
@@ -9,6 +20,9 @@ import {
   terminalStates,
 } from "./state-machine";
 import type { AgentRun, SandboxPolicy, TriggerSource } from "./types";
+
+export type RunMessage = InferSelectModel<typeof runMessages>;
+export type RunToolCall = InferSelectModel<typeof runToolCalls>;
 
 export type InsertRunInput = {
   id: string;
@@ -57,6 +71,27 @@ export async function getRun(id: string): Promise<AgentRun | null> {
 
 export async function listChildren(parentId: string): Promise<AgentRun[]> {
   return db.select().from(agentRuns).where(eq(agentRuns.parentRunId, parentId));
+}
+
+// Activity-log queries for the run-detail view. Both order by
+// createdAt ASC so the viewer can render the agent's behavior in
+// the order it actually happened. Linear-triggered and chat-triggered
+// runs alike are populated by `executeSpecialistViaLLM`'s
+// onStepFinish hook (see lib/runs/run-persistence.ts).
+export async function listRunMessages(runId: string): Promise<RunMessage[]> {
+  return db
+    .select()
+    .from(runMessages)
+    .where(eq(runMessages.runId, runId))
+    .orderBy(asc(runMessages.createdAt));
+}
+
+export async function listRunToolCalls(runId: string): Promise<RunToolCall[]> {
+  return db
+    .select()
+    .from(runToolCalls)
+    .where(eq(runToolCalls.runId, runId))
+    .orderBy(asc(runToolCalls.createdAt));
 }
 
 // Phase 6 L4: find the run associated with a Linear issue.

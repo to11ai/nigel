@@ -5,8 +5,14 @@ import type { UsageDateRange } from "@/lib/usage/date-range";
 import { db } from "./client";
 import { usageEvents } from "./schema";
 
-export type UsageSource = "web";
-export type UsageAgentType = "main" | "subagent";
+// `source` mirrors agent_runs.trigger_source (chat="web", plus
+// "linear" / "chained" / "cron" as Phase 6 trigger sources were
+// added). The DB column is plain text — kept as a string here for
+// forward-compat with new trigger sources.
+export type UsageSource = string;
+// "specialist" added when Phase 7-visibility wired Linear-triggered
+// planner + child runs through `executeSpecialistViaLLM`.
+export type UsageAgentType = string;
 
 export async function recordUsage(
   userId: string,

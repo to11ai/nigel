@@ -667,12 +667,16 @@ export const usageEvents = pgTable("usage_events", {
   userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  source: text("source", { enum: ["web"] })
-    .notNull()
-    .default("web"),
-  agentType: text("agent_type", { enum: ["main", "subagent"] })
-    .notNull()
-    .default("main"),
+  // `source` mirrors `agent_runs.trigger_source` so Linear / cron /
+  // chained runs land alongside chat ("web") activity. TypeScript
+  // enum was originally `["web"]` only because the table was
+  // populated solely by the chat path; the DB column is plain text
+  // and accepts any string. The run-persistence layer (added when
+  // Phase 7-visibility shipped) stamps "linear", "chained", etc.
+  source: text("source").notNull().default("web"),
+  // "specialist" added for Linear-triggered planner + child runs
+  // that flow through `executeSpecialistViaLLM`.
+  agentType: text("agent_type").notNull().default("main"),
   provider: text("provider"),
   modelId: text("model_id"),
   inputTokens: integer("input_tokens").notNull().default(0),
