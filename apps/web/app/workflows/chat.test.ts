@@ -586,7 +586,7 @@ describe("runAgentWorkflow", () => {
     await runAgentWorkflow(
       makeOptions({
         selectedModelId: "variant:builtin:gpt-5.5-xhigh",
-        modelId: "openai/gpt-5.4",
+        modelId: "openai/gpt-5.5",
       }),
     );
 
@@ -601,7 +601,7 @@ describe("runAgentWorkflow", () => {
 
     expect(persistedMessage.metadata).toMatchObject({
       selectedModelId: "variant:builtin:gpt-5.5-xhigh",
-      modelId: "openai/gpt-5.4",
+      modelId: "openai/gpt-5.5",
     });
   });
 
@@ -618,7 +618,7 @@ describe("runAgentWorkflow", () => {
     await runAgentWorkflow(
       makeOptions({
         selectedModelId: "variant:builtin:gpt-5.5-xhigh",
-        modelId: "openai/gpt-5.4",
+        modelId: "openai/gpt-5.5",
       }),
     );
 
@@ -636,7 +636,7 @@ describe("runAgentWorkflow", () => {
 
     expect(metadataChunks.at(-1)?.messageMetadata).toMatchObject({
       selectedModelId: "variant:builtin:gpt-5.5-xhigh",
-      modelId: "openai/gpt-5.4",
+      modelId: "openai/gpt-5.5",
     });
 
     const persistCalls = spies.persistAssistantMessage.mock
@@ -650,7 +650,7 @@ describe("runAgentWorkflow", () => {
 
     expect(persistedMessage.metadata).toMatchObject({
       selectedModelId: "variant:builtin:gpt-5.5-xhigh",
-      modelId: "openai/gpt-5.4",
+      modelId: "openai/gpt-5.5",
     });
   });
 
@@ -673,7 +673,7 @@ describe("runAgentWorkflow", () => {
             parts: [{ type: "text", text: "Need your approval" }],
             metadata: {
               selectedModelId: "variant:builtin:gpt-5.5-xhigh",
-              modelId: "openai/gpt-5.4",
+              modelId: "openai/gpt-5.5",
             },
           },
         ],
