@@ -132,10 +132,14 @@ export function getProviderOptionsForModel(
   // Apply OpenAI defaults for all GPT-5 variants to expose encrypted reasoning content.
   // This avoids Responses API failures when `store: false`, e.g.:
   // "Item with id 'rs_...' not found. Items are not persisted when `store` is set to false."
+  // `reasoningEffort: "medium"` is the house default; specific call sites
+  // (linter, formatter, generate-title, etc.) override down to "low" and
+  // adversarial-reviewer / pulumi-engineer / planner override up.
   if (shouldApplyOpenAIReasoningDefaults(modelId)) {
     defaultProviderOptions.openai = mergeRecords(
       defaultProviderOptions.openai ?? {},
       toProviderOptionsRecord({
+        reasoningEffort: "medium",
         reasoningSummary: "detailed",
         include: ["reasoning.encrypted_content"],
       } satisfies OpenAIResponsesProviderOptions),

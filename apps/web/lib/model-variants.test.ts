@@ -55,12 +55,12 @@ describe("model variants", () => {
   });
 
   test("isBuiltInVariant returns true for built-in ids and false for user ids", () => {
-    expect(isBuiltInVariant("variant:builtin:gpt-5.4-xhigh")).toBe(true);
+    expect(isBuiltInVariant("variant:builtin:gpt-5.5-xhigh")).toBe(true);
     expect(isBuiltInVariant("variant:openai-medium")).toBe(false);
   });
 
   test("BUILT_IN_VARIANTS has expected shape and ids", () => {
-    expect(BUILT_IN_VARIANTS).toHaveLength(2);
+    expect(BUILT_IN_VARIANTS).toHaveLength(1);
     for (const variant of BUILT_IN_VARIANTS) {
       expect(variant.id.startsWith(BUILT_IN_VARIANT_ID_PREFIX)).toBe(true);
     }
@@ -80,10 +80,9 @@ describe("model variants", () => {
 
     const result = getAllVariants(userVariants);
 
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(2);
     expect(result[0]).toEqual(BUILT_IN_VARIANTS[0]);
-    expect(result[1]).toEqual(BUILT_IN_VARIANTS[1]);
-    expect(result[2]).toEqual(userVariants[0]);
+    expect(result[1]).toEqual(userVariants[0]);
   });
 
   test("resolveModelSelection returns base model unchanged when id is not a variant", () => {
@@ -124,12 +123,12 @@ describe("model variants", () => {
 
   test("resolveModelSelection resolves built-in variants", () => {
     const result = resolveModelSelection(
-      "variant:builtin:gpt-5.4-xhigh",
+      "variant:builtin:gpt-5.5-xhigh",
       BUILT_IN_VARIANTS,
     );
 
     expect(result).toEqual({
-      resolvedModelId: "openai/gpt-5.4",
+      resolvedModelId: "openai/gpt-5.5",
       providerOptionsByProvider: {
         openai: {
           reasoningEffort: "xhigh",

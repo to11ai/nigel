@@ -284,6 +284,13 @@ export async function agentActivityCreate(input: {
   // where `content` is a JSONObject whose shape varies by `type`.
   // See https://linear.app/developers/agent-interaction —
   // "Shape of content varies by activity type".
+  //
+  // Sending `body` and `type` as siblings of `agentSessionId`
+  // triggers a GraphQL error that the fire-and-forget caller in
+  // specialist-execution.ts swallows, so every activity post would
+  // silently disappear and the session panel would stay stuck on
+  // "did not respond" — exactly the failure mode this PR exists
+  // to fix.
   const data = await linearGraphql<{
     agentActivityCreate: {
       success: boolean;

@@ -123,7 +123,7 @@ describe("/api/settings/model-variants", () => {
     const body = (await response.json()) as { modelVariants: ModelVariant[] };
 
     expect(body.modelVariants.map((variant) => variant.id)).toEqual([
-      "variant:builtin:gpt-5.4-xhigh",
+      "variant:builtin:gpt-5.5-xhigh",
     ]);
   });
 
@@ -161,9 +161,9 @@ describe("/api/settings/model-variants", () => {
     expect(response.ok).toBe(true);
 
     const body = (await response.json()) as { modelVariants: ModelVariant[] };
-    expect(body.modelVariants).toHaveLength(3);
-    expect(body.modelVariants[2]?.id.startsWith("variant:")).toBe(true);
-    expect(body.modelVariants[2]?.name).toBe("OpenAI Medium");
+    expect(body.modelVariants).toHaveLength(2);
+    expect(body.modelVariants[1]?.id.startsWith("variant:")).toBe(true);
+    expect(body.modelVariants[1]?.name).toBe("OpenAI Medium");
   });
 
   test("POST rejects Opus-backed variants for managed trial users", async () => {
@@ -268,7 +268,7 @@ describe("/api/settings/model-variants", () => {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: "variant:builtin:gpt-5.4-xhigh",
+          id: "variant:builtin:gpt-5.5-xhigh",
           name: "Modified",
         }),
       }),
@@ -318,7 +318,7 @@ describe("/api/settings/model-variants", () => {
     expect(response.ok).toBe(true);
 
     const body = (await response.json()) as { modelVariants: ModelVariant[] };
-    expect(body.modelVariants[2]?.providerOptions).toEqual({
+    expect(body.modelVariants[1]?.providerOptions).toEqual({
       reasoningEffort: "high",
     });
   });
@@ -357,7 +357,7 @@ describe("/api/settings/model-variants", () => {
       new Request("http://localhost/api/settings/model-variants", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: "variant:builtin:gpt-5.4-xhigh" }),
+        body: JSON.stringify({ id: "variant:builtin:gpt-5.5-xhigh" }),
       }),
     );
 
@@ -400,6 +400,6 @@ describe("/api/settings/model-variants", () => {
     expect(response.ok).toBe(true);
 
     const body = (await response.json()) as { modelVariants: ModelVariant[] };
-    expect(body.modelVariants).toHaveLength(2);
+    expect(body.modelVariants).toHaveLength(1);
   });
 });

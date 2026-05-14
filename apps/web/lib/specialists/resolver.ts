@@ -61,8 +61,11 @@ function mergePreset(
       row.budgetUsdDefaultMicros ?? preset.budgetUsdDefaultMicros,
     needsLocalStack: row.needsLocalStack ?? preset.needsLocalStack,
     // Inherited from the preset only — the specialists table has no
-    // column for this yet, and a DB override of a preset cannot
-    // loosen the dispatch gate.
+    // column for these yet, and a DB override of a preset cannot
+    // loosen the dispatch gate or strip per-agent reasoning effort.
+    ...(preset.providerOptions !== undefined
+      ? { providerOptions: preset.providerOptions }
+      : {}),
     ...(preset.dispatchTargetAllowlist !== undefined
       ? { dispatchTargetAllowlist: preset.dispatchTargetAllowlist }
       : {}),
