@@ -48,7 +48,7 @@ Finally, the GitHub delivery loop is still chat/session-centered. Chat flows hav
 |---|---|
 | Factory run | A top-level Nigel run whose purpose is to deliver a code change from intake to PR readiness. It may own many child specialist runs. |
 | Factory phase | The product-level progress state inside a factory run: intake, planning, implementation, integration, verification, review, PR draft, CI watch, fix loop, awaiting human, merge ready, terminal. Distinct from the coarse `agent_runs.status`. |
-| Specialist run | A child run executed by a role-specific agent such as `coder`, `linter`, `type-checker`, `unit-tester`, `reviewer`, or `adversarial-reviewer`. |
+| Specialist run | A child run executed by a role-specific agent such as `coder`, `formatter`, `linter`, `type-checker`, `unit-tester`, `e2e-tester`, `reviewer`, or `adversarial-reviewer`. |
 | Integration workspace | The root sandbox/worktree where accepted patch bundles are applied and verified before PR creation. |
 | Patch bundle | A durable artifact produced by a writing specialist. Contains base SHA, diff or commit ref, changed files, summary, risk notes, and local verification evidence. |
 | Verification bundle | The set of checks, logs, pass/fail results, and rerun history that supports a PR. |
@@ -195,6 +195,8 @@ Reviews sensitive changes. Cares about approval gates, audit history, secret red
 
 ### US-9: Address review feedback
 
+> **Phase:** 2
+
 **As a** Developer Reviewer,
 **I want** Nigel to respond to review comments when asked,
 **so that** the factory can keep a PR moving after initial review.
@@ -222,6 +224,8 @@ Reviews sensitive changes. Cares about approval gates, audit history, secret red
 - Unauthorized approval attempts are rejected and logged.
 
 ### US-11: Prove frontend changes visually
+
+> **Phase:** 2
 
 **As a** Developer Reviewer,
 **I want** screenshots attached when Nigel changes UI code,
@@ -462,7 +466,7 @@ MVP success: a well-scoped Linear ticket can become a draft PR with integrated c
 
 1. Should factory phase state live on `agent_runs`, a new `factory_runs` table, or an append-only phase-events table with a materialized current phase?
 2. Should patch bundles use raw diffs, temporary branch refs, or both at launch?
-3. Should MVP require human approval before opening the draft PR, before marking ready-for-review, or both?
+3. Beyond the required MVP approval before marking a PR ready-for-review, should repos be able to configure a second approval gate before opening the initial draft PR?
 4. Which GitHub feedback sources are in v1: required checks only, human reviews, CodeRabbit/Cursor comments, or all check annotations?
 5. Should Linear issue status move automatically, or should Nigel only comment and assign/delegate?
 6. What proof is required for backend-only changes beyond passing checks and reviewer report?
@@ -470,9 +474,8 @@ MVP success: a well-scoped Linear ticket can become a draft PR with integrated c
 
 ## Launch criteria
 
-1. 20 fixture tickets run through the MVP factory with at least 70% reaching draft PR without human intervention.
+1. 20 low-risk, auto-proceeding MVP fixture tickets run through the factory with at least 70% reaching draft PR without unexpected human intervention. Expected policy gates, such as required ready-for-review approval after draft PR creation, are measured separately under human-gate frequency.
 2. Every factory PR includes ticket link, run link, verification bundle, and patch provenance.
 3. No interrupted workflow creates duplicate active PRs for the same factory run.
 4. Every failed run has a Linear-visible reason and a run-visible artifact trail.
 5. Factory PR creation is opt-in per repo and can be disabled immediately by an admin.
-

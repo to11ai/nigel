@@ -1,0 +1,4 @@
+interface:
+  display_name: "to11 Ship"
+  short_description: "End-to-end to11 development process — bug or feature, intake to merged PR"
+  default_prompt: "Use $to11-ship with a classification (bug or feature) plus description and evidence/context. Runs the full process: worktree, make dev, reproduce or brainstorm + spec approval, plan, implement, validate via adversarial-validation subagent and clean-pr, publish PR proof, and babysit the PR to a terminal state."
