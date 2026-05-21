@@ -1,11 +1,11 @@
 ---
 name: to11-ship
-description: "Canonical end-to-end development process for to11ai/platform — for both bug and feature work. Covers intake through merged PR: classify, create/reuse a dedicated worktree, run the shared worktree setup hook, start the local stack with make dev, brainstorm + write a human-approved product spec (features) or reproduce + identify root cause (bugs), decompose into plans, implement (subagent-driven for features), run adversarial-validation in a separate subagent, run clean-pr before push, publish PR proof with verify-pr-proof gating, and babysit the PR until terminal."
+description: "Canonical end-to-end development process for to11ai/nigel — for both bug and feature work. Covers intake through merged PR: classify, create/reuse a dedicated worktree, run the shared worktree setup hook, start the local stack with make dev, brainstorm + write a human-approved product spec (features) or reproduce + identify root cause (bugs), decompose into plans, implement (subagent-driven for features), run adversarial-validation in a separate subagent, run clean-pr before push, publish PR proof with verify-pr-proof gating, and babysit the PR until terminal."
 ---
 
 # to11 Ship
 
-Canonical end-to-end development process for `to11ai/platform`. Covers bug and feature work from intake through merged PR. Classify upfront, then follow the shared spine with the bug or feature middle.
+Canonical end-to-end development process for `to11ai/nigel`. Covers bug and feature work from intake through merged PR. Classify upfront, then follow the shared spine with the bug or feature middle.
 
 ## Hard Rules
 
