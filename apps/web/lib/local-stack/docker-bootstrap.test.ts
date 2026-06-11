@@ -22,15 +22,17 @@ describe("buildDockerStartupSteps", () => {
     const steps = buildDockerStartupSteps({ mount_proxy_ca: true });
     const cmds = steps.map(cmdOf);
 
+    // [0] install docker, [1] compose plugin, [2] dockerd, [3] readiness
     expect(cmds[0]).toBe("sudo dnf install -y docker");
     // install is bounded + retried (transient registry/network failures)
     expect(steps[0]).toMatchObject({ retry: 2, timeout_seconds: 180 });
+    expect(cmds[1]).toContain("cli-plugins/docker-compose");
     // dockerd is backgrounded so the step returns immediately
-    expect(cmds[1]).toContain("nohup dockerd");
-    expect(cmds[1]).toContain("&");
+    expect(cmds[2]).toContain("nohup dockerd");
+    expect(cmds[2]).toContain("&");
     // readiness is a bounded poll, not a fixed sleep
-    expect(cmds[2]).toContain("until sudo docker info");
-    expect(steps[2]).toMatchObject({ timeout_seconds: 60 });
+    expect(cmds[3]).toContain("until sudo docker info");
+    expect(steps[3]).toMatchObject({ timeout_seconds: 60 });
   });
 
   test("honors custom install/ready timeouts", () => {
@@ -40,13 +42,17 @@ describe("buildDockerStartupSteps", () => {
       ready_timeout_seconds: 120,
     });
     expect(steps[0]).toMatchObject({ timeout_seconds: 600 });
-    expect(steps[2]).toMatchObject({ timeout_seconds: 120 });
+    expect(steps[3]).toMatchObject({ timeout_seconds: 120 });
   });
 
-  test("without a compose_file it stops after booting the daemon", () => {
-    const steps = buildDockerStartupSteps({ mount_proxy_ca: true });
-    expect(steps).toHaveLength(3);
-    expect(steps.map(cmdOf).some((c) => c.includes("compose"))).toBe(false);
+  test("without a compose_file it installs docker + compose plugin, boots, and stops (no compose up)", () => {
+    const cmds = buildDockerStartupSteps({ mount_proxy_ca: true }).map(cmdOf);
+    // install, compose-plugin, dockerd, readiness — but no `compose ... up`
+    expect(cmds).toHaveLength(4);
+    expect(cmds.some((c) => c.includes("cli-plugins/docker-compose"))).toBe(
+      true,
+    );
+    expect(cmds.some((c) => c.includes("up -d --wait"))).toBe(false);
   });
 
   test("with a compose_file it installs the compose plugin (absent on AL2023), pinned + checksum-verified", () => {

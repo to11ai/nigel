@@ -555,14 +555,16 @@ local_stack:
 ```
 
 When `docker` is present, the runner — before any `startup_commands` —
-installs Docker, boots `dockerd` detached, polls `docker info` until ready,
-and (with `compose_file`) installs the Compose CLI plugin (AL2023's repo
-ships `docker` but not `docker compose`, so the runner fetches a
-pinned-version, SHA-256-verified plugin binary from Docker's releases) and
-brings the stack up with `docker compose ... up -d --wait`. On Run end it runs `docker compose ... down -v`. Without
-`compose_file`, it stops after booting the daemon so `startup_commands` can
-drive Docker directly. The command-list model is unchanged — `docker` is
-sugar over it.
+installs Docker, installs the Compose CLI plugin (AL2023's repo ships
+`docker` but not `docker compose`, so the runner fetches a pinned-version,
+SHA-256-verified plugin binary from Docker's releases), boots `dockerd`
+detached, and polls `docker info` until ready. With `compose_file` it then
+brings the stack up with `docker compose ... up -d --wait` and runs `docker
+compose ... down -v` on Run end. Without `compose_file` it stops after
+booting the daemon — but the Compose plugin is still installed, so a repo
+that drives its own orchestration from `startup_commands` (e.g. a
+`worktree-runtime` script that calls `docker compose`) works. The
+command-list model is unchanged — `docker` is sugar over it.
 
 **Proxy-CA note.** Containers do not inherit the sandbox's per-VM proxy CA,
 so a container reaching a firewall *transform-host* (e.g. the GitHub

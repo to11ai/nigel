@@ -45,6 +45,23 @@ const COMPOSE_PLUGIN_SHA256 =
   "33b208d7e76639db742fae84b966cc01dacae58ca3fc4dabbc907045aefdf0c4";
 const COMPOSE_PLUGIN_URL = `https://github.com/docker/compose/releases/download/${COMPOSE_PLUGIN_VERSION}/docker-compose-linux-x86_64`;
 
+// The pinned + checksum-verified compose-plugin install step. Installed
+// whenever a `docker` block is present (not only when this helper drives a
+// compose_file): repos that delegate their own orchestration — e.g. a
+// `startup_commands` script that runs `docker compose` itself — still need
+// the plugin, and AL2023 never ships it. Cheap and cached by the snapshot.
+function composePluginInstallStep(): CommandStep {
+  return {
+    cmd: [
+      `sudo curl -fsSL ${COMPOSE_PLUGIN_URL} -o ${COMPOSE_PLUGIN_PATH}`,
+      `echo '${COMPOSE_PLUGIN_SHA256}  ${COMPOSE_PLUGIN_PATH}' | sha256sum -c -`,
+      `sudo chmod +x ${COMPOSE_PLUGIN_PATH}`,
+    ].join(" && "),
+    timeout_seconds: 120,
+    retry: 2,
+  };
+}
+
 // CA env vars honored by common runtimes without needing the system trust
 // store rebuilt: Node, OpenSSL/curl, Python requests.
 const CA_ENV_VARS = [
@@ -100,6 +117,12 @@ export function buildDockerStartupSteps(docker: RepoDocker): CommandStep[] {
         docker.install_timeout_seconds ?? DEFAULT_INSTALL_TIMEOUT_SECONDS,
       retry: 2,
     },
+    // `docker compose` isn't bundled on AL2023 — fetch the plugin, verify
+    // its digest, and only then make it executable. A checksum mismatch
+    // fails the step (and, after retries, the Run) rather than running an
+    // unverified root binary. Installed unconditionally so repos that drive
+    // their own `docker compose` from startup_commands still have it.
+    composePluginInstallStep(),
     `sudo sh -c 'nohup dockerd >${DOCKERD_LOG} 2>&1 &'`,
     {
       cmd: "until sudo docker info >/dev/null 2>&1; do sleep 1; done",
@@ -109,19 +132,6 @@ export function buildDockerStartupSteps(docker: RepoDocker): CommandStep[] {
   ];
 
   if (docker.compose_file) {
-    // `docker compose` isn't bundled on AL2023 — fetch the plugin, verify
-    // its digest, and only then make it executable. A checksum mismatch
-    // fails the step (and, after retries, the Run) rather than running an
-    // unverified root binary.
-    steps.push({
-      cmd: [
-        `sudo curl -fsSL ${COMPOSE_PLUGIN_URL} -o ${COMPOSE_PLUGIN_PATH}`,
-        `echo '${COMPOSE_PLUGIN_SHA256}  ${COMPOSE_PLUGIN_PATH}' | sha256sum -c -`,
-        `sudo chmod +x ${COMPOSE_PLUGIN_PATH}`,
-      ].join(" && "),
-      timeout_seconds: 120,
-      retry: 2,
-    });
     if (docker.mount_proxy_ca) {
       steps.push(buildCaOverrideCommand(docker.compose_file));
     }
