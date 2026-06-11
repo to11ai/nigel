@@ -556,10 +556,10 @@ local_stack:
 
 When `docker` is present, the runner — before any `startup_commands` —
 installs Docker, boots `dockerd` detached, polls `docker info` until ready,
-and (with `compose_file`) installs the Compose v2 CLI plugin (AL2023's repo
-ships `docker` but not `docker compose`, so the runner fetches the plugin
-binary from Docker's latest release) and brings the stack up with `docker
-compose ... up -d --wait`. On Run end it runs `docker compose ... down -v`. Without
+and (with `compose_file`) installs the Compose CLI plugin (AL2023's repo
+ships `docker` but not `docker compose`, so the runner fetches a
+pinned-version, SHA-256-verified plugin binary from Docker's releases) and
+brings the stack up with `docker compose ... up -d --wait`. On Run end it runs `docker compose ... down -v`. Without
 `compose_file`, it stops after booting the daemon so `startup_commands` can
 drive Docker directly. The command-list model is unchanged — `docker` is
 sugar over it.

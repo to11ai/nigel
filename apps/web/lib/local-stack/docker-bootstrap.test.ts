@@ -49,12 +49,15 @@ describe("buildDockerStartupSteps", () => {
     expect(steps.map(cmdOf).some((c) => c.includes("compose"))).toBe(false);
   });
 
-  test("with a compose_file it installs the compose plugin (absent on AL2023)", () => {
+  test("with a compose_file it installs the compose plugin (absent on AL2023), pinned + checksum-verified", () => {
     const cmds = buildDockerStartupSteps(withCompose).map(cmdOf);
     const plugin = cmds.find((c) => c.includes("cli-plugins/docker-compose"));
     expect(plugin).toBeDefined();
-    expect(plugin).toContain("releases/latest/download");
-    expect(plugin).toContain("chmod +x");
+    // pinned version, not a floating `latest`
+    expect(plugin).toContain("releases/download/v");
+    expect(plugin).not.toContain("releases/latest/download");
+    // digest verified before the binary is made executable
+    expect(plugin).toMatch(/sha256sum -c -[\s\S]*chmod \+x/);
   });
 
   test("with a compose_file it generates a CA override then brings the stack up", () => {
@@ -65,7 +68,7 @@ describe("buildDockerStartupSteps", () => {
     expect(override).toBeDefined();
     // enumerates services and mounts the host CA into each
     expect(override).toContain(
-      "docker compose -f docker-compose.test.yaml config --services",
+      'docker compose -f "docker-compose.test.yaml" config --services',
     );
     expect(override).toContain(PROXY_CA_HOST_PATH);
     expect(override).toContain(CA_CONTAINER_PATH);
@@ -73,8 +76,8 @@ describe("buildDockerStartupSteps", () => {
 
     const up = cmds.at(-1) ?? "";
     expect(up).toContain("up -d --wait");
-    // up uses both the base file and the generated override
-    expect(up).toContain("-f docker-compose.test.yaml");
+    // up uses both the base file (quoted) and the generated override
+    expect(up).toContain('-f "docker-compose.test.yaml"');
     expect(up).toContain(`-f ${CA_OVERRIDE_PATH}`);
   });
 
@@ -86,7 +89,7 @@ describe("buildDockerStartupSteps", () => {
     const cmds = steps.map(cmdOf);
     expect(cmds.some((c) => c.includes(CA_OVERRIDE_PATH))).toBe(false);
     const up = cmds.at(-1) ?? "";
-    expect(up).toBe("sudo docker compose -f compose.yaml up -d --wait");
+    expect(up).toBe('sudo docker compose -f "compose.yaml" up -d --wait');
   });
 });
 
@@ -94,7 +97,7 @@ describe("buildDockerTeardownSteps", () => {
   test("brings the compose stack down with volumes, using only the base file", () => {
     const steps = buildDockerTeardownSteps(withCompose);
     expect(steps).toEqual([
-      "sudo docker compose -f docker-compose.test.yaml down -v",
+      'sudo docker compose -f "docker-compose.test.yaml" down -v',
     ]);
   });
 

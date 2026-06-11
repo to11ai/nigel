@@ -270,7 +270,7 @@ describe("runLocalStackTeardown", () => {
       },
     });
     expect(calls.map((c) => c.command)).toEqual([
-      "sudo docker compose -f compose.yaml down -v",
+      'sudo docker compose -f "compose.yaml" down -v',
       "t1",
     ]);
   });
