@@ -453,9 +453,12 @@ local_stack:
   # backing infra the repo needs. Each command is responsible for its
   # own readiness — a Neon-branch provisioning script should not return
   # until the branch is reachable. There is no `wait_for` step; bake it
-  # into the command. There is no docker-compose; if a repo wants
-  # Postgres, it provisions a Neon branch (or whatever it uses in prod).
-  # Vercel Sandbox cannot host docker — see Phase 3b-2 followup.
+  # into the command. There is no first-class `docker-compose` key, but
+  # the command list is a superset: a repo can `sudo dnf install -y docker`,
+  # boot `dockerd`, and `docker compose up` here, or provision a Neon branch
+  # (or whatever it uses in prod) — its choice. Vercel Sandbox added Docker
+  # support 2026-05-29 (Firecracker microVM; full caps), so containerized
+  # backing services are viable as of then.
   #
   # Each list entry is either a plain string command or an object with
   # `cmd`, optional `timeout_seconds` (per-command cap; the outer
@@ -525,6 +528,50 @@ When `turbo.enabled` (auto-true if `turbo.json` exists), commands not explicitly
 | `monorepo.workspaces` | from root `package.json` `workspaces` field |
 
 Explicit overrides in `.nigel.yaml` always win.
+
+#### `local_stack.docker` (containerized backing services)
+
+Vercel Sandbox added Docker support 2026-05-29 (each sandbox is its own
+Firecracker microVM with a dedicated kernel and full capabilities; a
+2026-06-11 spike confirmed `dnf install -y docker`, `dockerd`, and real
+containers all work, and that filesystem snapshots cache pulled images).
+A repo can therefore run its real backing services as containers instead of
+provisioning cloud infra. **`e2e-tester` and `data-analyst` default to a
+docker-local Postgres** (and Redis/etc.) for full per-Run isolation with no
+external provisioning; a repo can still choose cloud provisioning via
+`startup_commands` when prod-parity matters more.
+
+```yaml
+local_stack:
+  docker:
+    compose_file: docker-compose.test.yaml
+    mount_proxy_ca: true          # default; see CA note below
+    install_timeout_seconds: 180  # cap for `dnf install -y docker`
+    ready_timeout_seconds: 60     # cap for the `docker info` readiness poll
+  profiles:
+    bare:
+      post_up: ["bun run db:migrate"]
+  default_profile: bare
+```
+
+When `docker` is present, the runner — before any `startup_commands` —
+installs Docker, boots `dockerd` detached, polls `docker info` until ready,
+and (with `compose_file`) installs the Compose v2 CLI plugin (AL2023's repo
+ships `docker` but not `docker compose`, so the runner fetches the plugin
+binary from Docker's latest release) and brings the stack up with `docker
+compose ... up -d --wait`. On Run end it runs `docker compose ... down -v`. Without
+`compose_file`, it stops after booting the daemon so `startup_commands` can
+drive Docker directly. The command-list model is unchanged — `docker` is
+sugar over it.
+
+**Proxy-CA note.** Containers do not inherit the sandbox's per-VM proxy CA,
+so a container reaching a firewall *transform-host* (e.g. the GitHub
+credential-brokering hosts) fails TLS. `mount_proxy_ca: true` (default)
+generates a compose override that bind-mounts `vercel-proxy-ca.pem` into
+every service and sets the standard CA env vars
+(`NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` /
+`CURL_CA_BUNDLE`). Plain container HTTPS to non-transform hosts works without
+it; opt out for stacks whose containers never call transform-hosts.
 
 #### Profile selection (no harness-level profile names)
 

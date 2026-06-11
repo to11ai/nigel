@@ -1,4 +1,12 @@
 export {
+  buildDockerStartupSteps,
+  buildDockerTeardownSteps,
+  CA_CONTAINER_PATH,
+  CA_OVERRIDE_PATH,
+  PROXY_CA_HOST_PATH,
+  type RepoDocker,
+} from "./docker-bootstrap";
+export {
   computeInvalidationKeys,
   hashInvalidationKeys,
 } from "./invalidation-keys";

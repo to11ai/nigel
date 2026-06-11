@@ -12,6 +12,7 @@ export {
 } from "./resolver";
 export { applyTurboDerivation } from "./turbo-derive";
 export {
+  type CommandStep,
   type LoadRepoConfigResult,
   type PackageJsonLike,
   type RepoConfig,
