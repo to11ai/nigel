@@ -1,4 +1,9 @@
 import type { ExecResult } from "@nigel/sandbox";
+import type { CommandStep } from "@/lib/repo-config";
+import {
+  buildDockerStartupSteps,
+  buildDockerTeardownSteps,
+} from "./docker-bootstrap";
 import type { RepoLocalStack, ResolvedProfile } from "./types";
 
 // Minimal exec interface the runner needs. Matches the signature of
@@ -74,17 +79,26 @@ export async function runLocalStackStartup(
   const defaultStartupTimeoutMs =
     (localStack.startup_timeout_seconds ?? FALLBACK_TIMEOUT_SECONDS) * 1000;
 
+  // Docker bootstrap (install + dockerd + compose up) runs before
+  // startup_commands so the latter can rely on a running daemon / stack.
+  if (localStack.docker) {
+    for (const step of buildDockerStartupSteps(localStack.docker)) {
+      await runOne({
+        exec,
+        workingDirectory,
+        phase: "startup",
+        ...stepRunArgs(step, defaultStartupTimeoutMs),
+        signal,
+      });
+    }
+  }
+
   for (const step of localStack.startup_commands) {
     await runOne({
       exec,
       workingDirectory,
       phase: "startup",
-      command: typeof step === "string" ? step : step.cmd,
-      timeoutMs:
-        typeof step === "string"
-          ? defaultStartupTimeoutMs
-          : (step.timeout_seconds ?? 0) * 1000 || defaultStartupTimeoutMs,
-      retries: typeof step === "string" ? 0 : (step.retry ?? 0),
+      ...stepRunArgs(step, defaultStartupTimeoutMs),
       signal,
     });
   }
@@ -116,18 +130,20 @@ export async function runLocalStackTeardown(
     (localStack.teardown_timeout_seconds ?? FALLBACK_TIMEOUT_SECONDS) * 1000;
   const failures: LocalStackCommandError[] = [];
 
-  for (const step of localStack.teardown_commands) {
+  // Bring the docker compose stack down first, then run the repo's own
+  // teardown_commands (which may delete cloud resources).
+  const steps: CommandStep[] = [
+    ...(localStack.docker ? buildDockerTeardownSteps(localStack.docker) : []),
+    ...localStack.teardown_commands,
+  ];
+
+  for (const step of steps) {
     try {
       await runOne({
         exec,
         workingDirectory,
         phase: "teardown",
-        command: typeof step === "string" ? step : step.cmd,
-        timeoutMs:
-          typeof step === "string"
-            ? defaultTeardownTimeoutMs
-            : (step.timeout_seconds ?? 0) * 1000 || defaultTeardownTimeoutMs,
-        retries: typeof step === "string" ? 0 : (step.retry ?? 0),
+        ...stepRunArgs(step, defaultTeardownTimeoutMs),
         signal,
       });
     } catch (err) {
@@ -142,6 +158,23 @@ export async function runLocalStackTeardown(
     }
   }
   return failures;
+}
+
+// Normalize a CommandStep (plain string or `{cmd, timeout_seconds, retry}`)
+// into the `command`/`timeoutMs`/`retries` runOne expects, applying the
+// phase default when the step omits a timeout.
+function stepRunArgs(
+  step: CommandStep,
+  defaultTimeoutMs: number,
+): { command: string; timeoutMs: number; retries: number } {
+  if (typeof step === "string") {
+    return { command: step, timeoutMs: defaultTimeoutMs, retries: 0 };
+  }
+  return {
+    command: step.cmd,
+    timeoutMs: (step.timeout_seconds ?? 0) * 1000 || defaultTimeoutMs,
+    retries: step.retry ?? 0,
+  };
 }
 
 async function runOne(input: {

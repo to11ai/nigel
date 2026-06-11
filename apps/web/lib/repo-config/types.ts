@@ -15,6 +15,34 @@ const CommandStepSchema = z.union([
   }),
 ]);
 
+export type CommandStep = z.infer<typeof CommandStepSchema>;
+
+// Opt-in Docker bootstrap. Vercel Sandbox can host Docker (Firecracker
+// microVM, full caps; added 2026-05-29), so a repo can run its real
+// containers as backing services instead of provisioning cloud infra.
+// When present, the runner installs + boots dockerd before any
+// startup_commands; with `compose_file` set it also brings the stack up
+// (and tears it down). Without `compose_file`, startup_commands drive
+// docker directly.
+const DockerSchema = z.object({
+  // Path, relative to the working directory, to a compose file the runner
+  // brings up with `docker compose ... up -d --wait` before
+  // startup_commands and tears down on Run end.
+  compose_file: z.string().optional(),
+  // Mount the per-sandbox proxy CA into every compose service and export
+  // the standard CA env vars (NODE_EXTRA_CA_CERTS / SSL_CERT_FILE /
+  // REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE). Containers do NOT inherit the
+  // host trust store, so without this a container that reaches a firewall
+  // transform-host fails TLS. Default on; opt out for stacks whose
+  // containers never make such outbound HTTPS calls.
+  mount_proxy_ca: z.boolean().optional().default(true),
+  // Per-command cap for `dnf install -y docker` (default 180s).
+  install_timeout_seconds: z.number().int().positive().optional(),
+  // Cap for the `docker info` readiness poll after dockerd boots
+  // (default 60s).
+  ready_timeout_seconds: z.number().int().positive().optional(),
+});
+
 const ProfileSchema = z.object({
   description: z.string().optional(),
   post_up: z.array(CommandStepSchema).optional().default([]),
@@ -25,11 +53,13 @@ const LocalStackSchema = z
     // Commands run once per Run, before any profile's post_up, to
     // provision the backing infra the repo needs. Each command is
     // responsible for its own readiness (no `wait_for` step; bake it
-    // into the command). Vercel Sandbox cannot host docker, so a repo
-    // wanting Postgres provisions a Neon branch (or whatever it uses in
-    // prod) via its own script rather than spinning up a container.
+    // into the command). A repo wanting Postgres can either provision a
+    // Neon branch (or whatever it uses in prod) via its own script, or —
+    // since Vercel Sandbox added Docker support 2026-05-29 — install and
+    // boot docker here and run a container. The command list supports both.
     startup_commands: z.array(CommandStepSchema).optional().default([]),
     teardown_commands: z.array(CommandStepSchema).optional().default([]),
+    docker: DockerSchema.optional(),
     env_file: z.string().optional(),
     startup_timeout_seconds: z.number().int().positive().optional(),
     teardown_timeout_seconds: z.number().int().positive().optional(),

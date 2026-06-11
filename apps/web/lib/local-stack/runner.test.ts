@@ -147,6 +147,35 @@ describe("runLocalStackStartup", () => {
       expect((err as LocalStackCommandError).phase).toBe("post_up");
     }
   });
+
+  test("runs docker bootstrap before startup_commands and post_up", async () => {
+    const { exec, calls } = makeExec(
+      Array.from({ length: 8 }, () => ({ success: true })),
+    );
+    await runLocalStackStartup({
+      exec,
+      workingDirectory: "/work",
+      localStack: {
+        ...baseStack,
+        docker: { compose_file: "compose.yaml", mount_proxy_ca: true },
+        startup_commands: ["s1"],
+      },
+      profile: {
+        ...emptyProfile,
+        postUp: [{ cmd: "p1", timeoutSeconds: null, retry: null }],
+      },
+    });
+    const cmds = calls.map((c) => c.command);
+    // 6 docker steps (install, compose-plugin, dockerd, wait, ca-override,
+    // up) precede s1, p1.
+    expect(cmds).toHaveLength(8);
+    expect(cmds[0]).toBe("sudo dnf install -y docker");
+    expect(cmds.at(-2)).toBe("s1");
+    expect(cmds.at(-1)).toBe("p1");
+    const upIdx = cmds.findIndex((c) => c.includes("up -d --wait"));
+    expect(upIdx).toBeGreaterThanOrEqual(0);
+    expect(upIdx).toBeLessThan(cmds.indexOf("s1"));
+  });
 });
 
 describe("runLocalStackTeardown", () => {
@@ -227,5 +256,22 @@ describe("runLocalStackTeardown", () => {
         },
       }),
     ).rejects.toBe(boom);
+  });
+
+  test("brings the docker compose stack down before teardown_commands", async () => {
+    const { exec, calls } = makeExec([{ success: true }, { success: true }]);
+    await runLocalStackTeardown({
+      exec,
+      workingDirectory: "/w",
+      localStack: {
+        ...baseStack,
+        docker: { compose_file: "compose.yaml", mount_proxy_ca: true },
+        teardown_commands: ["t1"],
+      },
+    });
+    expect(calls.map((c) => c.command)).toEqual([
+      'sudo docker compose -f "compose.yaml" down -v',
+      "t1",
+    ]);
   });
 });
