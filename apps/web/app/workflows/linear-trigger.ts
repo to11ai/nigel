@@ -156,23 +156,19 @@ const executeRunStep = async (input: {
   try {
     const { loadRepoConfigFromSandbox } =
       await import("@/lib/runs/repo-config-from-sandbox");
+    // No `.catch` fallback: an absent `.nigel.yaml` yields an inferred
+    // config (no pipeline → planner path below), while a *malformed* one
+    // throws — and that must fail the run loudly rather than silently
+    // running the legacy planner against a repo that declared a pipeline.
     const config = await loadRepoConfigFromSandbox({
       repoFullName: run.repoRef,
       workingDirectory: sandbox.workingDirectory,
       exec: (command, cwd, timeoutMs, options) =>
         sandbox.sandbox.exec(command, cwd, timeoutMs, options),
-    }).catch((err) => {
-      // A repo-config read failure must not wedge the run — fall back to
-      // the planner path (config === undefined → no pipeline branch).
-      console.error("[linear-trigger] repo-config load failed", {
-        agentRunId: input.agentRunId,
-        err,
-      });
-      return undefined;
     });
 
     // Declarative pipeline: execute phases deterministically with gates.
-    if (config?.pipeline) {
+    if (config.pipeline) {
       return await runRepoPipeline({
         runId: run.id,
         sandboxState: sandbox.toAgentContext().state,
@@ -271,12 +267,10 @@ async function runRepoPipeline(input: {
           agentRunId: input.runId,
           reason,
         });
-        await updateRunStatus(input.runId, status).catch((err) => {
-          console.error("[linear-trigger] block transition failed", {
-            agentRunId: input.runId,
-            err,
-          });
-        });
+        // Persist the gate reason (parity with other block paths) and let a
+        // failed transition propagate: the workflow's catch then drives the
+        // run to a terminal `failed` rather than leaving the row `running`.
+        await updateRunStatus(input.runId, status, { blockedReason: reason });
       },
     },
   });
@@ -309,7 +303,7 @@ export async function runLinearTriggeredWorkflow(
   }
 
   try {
-    const outcome = await executeRunStep({
+    const runOutcome = await executeRunStep({
       agentRunId: input.agentRunId,
       taskText: input.taskText,
       // Only forward branch when supplied; otherwise let
@@ -319,7 +313,7 @@ export async function runLinearTriggeredWorkflow(
     // A pipeline gate may have transitioned the run to `blocked` already;
     // only mark `completed` when the run actually finished. (`blocked` →
     // `completed` is an invalid transition anyway.)
-    if (outcome === "completed") {
+    if (runOutcome === "completed") {
       await markRunTerminal(input.agentRunId, "completed");
     }
   } catch (err) {

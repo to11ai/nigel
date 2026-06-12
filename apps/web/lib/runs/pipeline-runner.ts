@@ -97,6 +97,23 @@ function resolveSteps(phase: PipelinePhase): PipelinePhaseStep[] {
   ];
 }
 
+// Human-readable summary of which step(s) in a phase failed, with truncated
+// output — fed to the repair fixer so it knows what broke. Module-level (not
+// a closure inside the phase loop) to avoid capturing loop-mutable state.
+function describeFailures(
+  steps: PipelinePhaseStep[],
+  results: PhaseDispatchResult[],
+): string {
+  return steps
+    .map((step, i) => ({ step, result: results[i] }))
+    .filter((x) => !x.result?.ok)
+    .map(
+      (x) =>
+        `${x.step.specialist}: ${(x.result?.output ?? "(no output)").slice(0, 500)}`,
+    )
+    .join("\n");
+}
+
 function toDispatchArgs(
   step: PipelinePhaseStep,
   phase: PipelinePhase,
@@ -155,10 +172,12 @@ export async function runPipeline(input: {
       }
       // Repair: dispatch the fixer, then re-run the phase. The fixer's own
       // failure doesn't short-circuit — the re-run is the source of truth.
+      // Name the specific failed step(s) + their output so the fixer (for a
+      // parallel phase) knows which check broke, not just the phase id.
       if (attempt < maxRepairs && phase.gate?.repair_with) {
         await deps.dispatch({
           specialistName: phase.gate.repair_with,
-          task: `Repair the failures from phase "${phase.id}" so it can pass, then stop.`,
+          task: `Repair the failure(s) in phase "${phase.id}" so it can pass, then stop.\n\nFailing step(s):\n${describeFailures(steps, results)}`,
         });
       }
     }

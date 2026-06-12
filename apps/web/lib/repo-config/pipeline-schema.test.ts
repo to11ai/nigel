@@ -128,6 +128,31 @@ pipeline:
     ).toThrow(RepoConfigParseError);
   });
 
+  test('rejects on_fail: "repair" without repair_with', () => {
+    expect(() =>
+      parseNigelYaml(`
+version: 1
+pipeline:
+  phases:
+    - id: checks
+      specialist: linter
+      gate: { on_fail: repair, max_repairs: 2 }
+`),
+    ).toThrow(RepoConfigParseError);
+  });
+
+  test('accepts on_fail: "repair" when repair_with is set', () => {
+    const cfg = parseNigelYaml(`
+version: 1
+pipeline:
+  phases:
+    - id: checks
+      specialist: linter
+      gate: { on_fail: repair, max_repairs: 2, repair_with: coder }
+`);
+    expect(cfg.pipeline?.phases[0]?.gate?.repair_with).toBe("coder");
+  });
+
   test("rejects an empty phases array", () => {
     expect(() =>
       parseNigelYaml(`

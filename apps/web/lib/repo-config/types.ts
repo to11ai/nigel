@@ -76,12 +76,20 @@ const PHASE_SANDBOX_POLICIES = ["inherit", "fresh", "fresh_clean"] as const;
 // - `continue`: record the failure and proceed to the next phase.
 // - `repair`: dispatch `repair_with` to fix, then re-run the phase, up to
 //   `max_repairs` times before treating it as a `stop`.
-const GateSchema = z.object({
-  required: z.boolean().optional().default(true),
-  on_fail: z.enum(["stop", "continue", "repair"]).optional().default("stop"),
-  max_repairs: z.number().int().positive().optional(),
-  repair_with: z.string().optional(),
-});
+const GateSchema = z
+  .object({
+    required: z.boolean().optional().default(true),
+    on_fail: z.enum(["stop", "continue", "repair"]).optional().default("stop"),
+    max_repairs: z.number().int().positive().optional(),
+    repair_with: z.string().min(1).optional(),
+  })
+  // `repair` is meaningless without a fixer to dispatch — the runner guards
+  // the repair dispatch on `repair_with`, so a missing one would silently
+  // degrade to re-running the same failing steps. Reject it at parse time.
+  .refine((g) => g.on_fail !== "repair" || g.repair_with !== undefined, {
+    message: 'gate.on_fail "repair" requires gate.repair_with',
+    path: ["repair_with"],
+  });
 
 // A single specialist dispatch within a phase. `budget_usd` is authored in
 // dollars (human-friendly); the runner converts to the micros the dispatch

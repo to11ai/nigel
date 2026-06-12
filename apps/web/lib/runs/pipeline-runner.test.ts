@@ -208,6 +208,9 @@ describe("runPipeline", () => {
     // linter ×2 (fail, pass) + coder repair ×1
     expect(calls.filter((c) => c.specialistName === "linter")).toHaveLength(2);
     expect(calls.filter((c) => c.specialistName === "coder")).toHaveLength(1);
+    // the repair task names the failed step (not just the phase id)
+    const repairCall = calls.find((c) => c.specialistName === "coder");
+    expect(repairCall?.task).toContain("linter");
   });
 
   test("when predicate skips a phase; sets feeds later predicates", async () => {
