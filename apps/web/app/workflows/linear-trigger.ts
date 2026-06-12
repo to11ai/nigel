@@ -16,6 +16,9 @@
 // workflow uses — to keep the workflow module's top-level surface
 // small so the SDK's serialization works.
 
+import type { Pipeline } from "@/lib/repo-config";
+import type { ProvisionedSandbox } from "@/lib/runs/sandbox-coordinator";
+
 export type LinearTriggerWorkflowInput = {
   agentRunId: string;
   // The task description handed to the planner. Built by the
@@ -101,11 +104,15 @@ const markRunTerminal = async (
 // up the existing sandbox. That refactor requires `ProvisionedSandbox`
 // to return a serializable handle shape and is deferred to the
 // Phase 9 failure-mode drills.
-const executePlannerStep = async (input: {
+// Returns the terminal status the run should land in: "completed" when the
+// work finished, "blocked" when a declarative-pipeline gate halted it (the
+// run was already transitioned to `blocked` here; the caller must NOT then
+// mark it `completed`).
+const executeRunStep = async (input: {
   agentRunId: string;
   taskText: string;
   branch?: string;
-}): Promise<void> => {
+}): Promise<"completed" | "blocked"> => {
   "use step";
   const { getRun } = await import("@/lib/runs/repository");
   const { provisionFreshSandboxForRun, teardownSandboxForRun } =
@@ -123,10 +130,6 @@ const executePlannerStep = async (input: {
   }
   if (!run.humanOwnerId) {
     throw new Error(`agent_run ${input.agentRunId} has no humanOwnerId`);
-  }
-  const planner = await getSpecialist("planner");
-  if (!planner) {
-    throw new Error("planner specialist not found in registry");
   }
 
   // Phase-marker thought before sandbox provisioning: a fresh
@@ -151,12 +154,43 @@ const executePlannerStep = async (input: {
     humanOwnerId: run.humanOwnerId,
   });
   try {
+    const { loadRepoConfigFromSandbox } =
+      await import("@/lib/runs/repo-config-from-sandbox");
+    // No `.catch` fallback: an absent `.nigel.yaml` yields an inferred
+    // config (no pipeline → planner path below), while a *malformed* one
+    // throws — and that must fail the run loudly rather than silently
+    // running the legacy planner against a repo that declared a pipeline.
+    const config = await loadRepoConfigFromSandbox({
+      repoFullName: run.repoRef,
+      workingDirectory: sandbox.workingDirectory,
+      exec: (command, cwd, timeoutMs, options) =>
+        sandbox.sandbox.exec(command, cwd, timeoutMs, options),
+    });
+
+    // Declarative pipeline: execute phases deterministically with gates.
+    if (config.pipeline) {
+      return await runRepoPipeline({
+        runId: run.id,
+        sandbox,
+        pipeline: config.pipeline,
+        task: input.taskText,
+      });
+    }
+
+    // Default path (no `pipeline` in .nigel.yaml): the single planner agent,
+    // exactly as before — preserves backward compatibility for every repo
+    // that hasn't opted into a pipeline.
+    const planner = await getSpecialist("planner");
+    if (!planner) {
+      throw new Error("planner specialist not found in registry");
+    }
     await executeSpecialistViaLLM({
       run,
       sandbox: sandbox.toAgentContext(),
       specialist: planner,
       task: input.taskText,
     });
+    return "completed";
   } finally {
     await teardownSandboxForRun(sandbox).catch((err) => {
       console.error("[linear-trigger] sandbox teardown failed", {
@@ -166,6 +200,125 @@ const executePlannerStep = async (input: {
     });
   }
 };
+
+// Adapter: run the repo's declarative pipeline by dispatching each phase as
+// a child Run via `dispatchSpecialist` (the same primitive the planner's
+// `dispatch_specialist` tool uses). A phase passes iff its child Run reaches
+// `completed`; a thrown dispatch error maps to a failed phase, not a crash.
+//
+// State handoff: `inherit` phases run in (and mutate) the top-level work
+// sandbox. The first `fresh`/`fresh_clean` phase snapshots that sandbox once
+// — which STOPS it — and every isolated phase boots from that snapshot, so it
+// sees the implemented diff and each gets its own sandbox (parallel-safe).
+// Because the snapshot stops the work sandbox, an `inherit` phase after a
+// fresh one is rejected: order all mutating phases before isolated ones.
+//
+// v1 limitations (tracked for follow-up):
+//  - `signals` is seeded empty, so `when` predicates that depend on the diff
+//    (e.g. `touches_frontend`) evaluate false and those phases are skipped —
+//    logged, not silent. Seeding from the post-implement diff is follow-up.
+//  - per-phase `local_stack_profile` is not yet plumbed (dispatchSpecialist
+//    has no such override); the profile falls back to resolver defaults.
+//  - `on_terminal` (babysit / finalize) is not yet wired here.
+async function runRepoPipeline(input: {
+  runId: string;
+  sandbox: ProvisionedSandbox;
+  pipeline: Pipeline;
+  task: string;
+}): Promise<"completed" | "blocked"> {
+  const { runPipeline } = await import("@/lib/runs/pipeline-runner");
+  const { dispatchSpecialist } = await import("@/lib/runs/dispatch");
+  const { snapshotProvisionedSandbox } =
+    await import("@/lib/runs/sandbox-coordinator");
+  const { getSpecialist } = await import("@/lib/specialists");
+  const { updateRunStatus } = await import("@/lib/runs/repository");
+
+  const workState = input.sandbox.toAgentContext().state;
+  // Memoized snapshot of the work sandbox, taken lazily at the first fresh
+  // phase. Concurrent parallel fresh steps share this one promise.
+  let workSnapshot: Promise<string> | null = null;
+  const ensureWorkSnapshot = (): Promise<string> => {
+    workSnapshot ??= snapshotProvisionedSandbox(input.sandbox);
+    return workSnapshot;
+  };
+
+  const result = await runPipeline({
+    pipeline: input.pipeline,
+    task: input.task,
+    signals: {},
+    deps: {
+      dispatch: async (args) => {
+        try {
+          // Resolve the effective policy (override → specialist default →
+          // inherit) so the adapter knows whether to snapshot.
+          const effectivePolicy =
+            args.sandboxPolicyOverride ??
+            (await getSpecialist(args.specialistName))?.sandboxPolicy ??
+            "inherit";
+
+          let baseSnapshotId: string | undefined;
+          if (effectivePolicy === "inherit") {
+            if (workSnapshot !== null) {
+              return {
+                ok: false,
+                output:
+                  "pipeline ordering error: an `inherit` phase cannot run after a `fresh`/`fresh_clean` phase — the work sandbox was snapshotted and stopped. Order all mutating (inherit) phases before isolated ones.",
+                runId: "",
+              };
+            }
+          } else {
+            baseSnapshotId = await ensureWorkSnapshot();
+          }
+
+          const dispatched = await dispatchSpecialist({
+            parentRunId: input.runId,
+            specialistName: args.specialistName,
+            task: args.task,
+            ...(args.budgetUsdMicros !== undefined
+              ? { budgetUsdMicros: args.budgetUsdMicros }
+              : {}),
+            ...(args.sandboxPolicyOverride !== undefined
+              ? { sandboxPolicyOverride: args.sandboxPolicyOverride }
+              : {}),
+            ...(effectivePolicy === "inherit"
+              ? { inheritSandboxState: workState }
+              : {}),
+            ...(baseSnapshotId !== undefined ? { baseSnapshotId } : {}),
+          });
+          return {
+            ok: dispatched.childRun.status === "completed",
+            output: dispatched.output,
+            runId: dispatched.childRun.id,
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            output: err instanceof Error ? err.message : String(err),
+            runId: "",
+          };
+        }
+      },
+      onBlocked: async ({ status, reason }) => {
+        console.warn("[linear-trigger] pipeline gate blocked the run", {
+          agentRunId: input.runId,
+          reason,
+        });
+        // Persist the gate reason (parity with other block paths) and let a
+        // failed transition propagate: the workflow's catch then drives the
+        // run to a terminal `failed` rather than leaving the row `running`.
+        await updateRunStatus(input.runId, status, { blockedReason: reason });
+      },
+    },
+  });
+
+  if (result.skippedPhases.length > 0) {
+    console.log("[linear-trigger] pipeline skipped phases", {
+      agentRunId: input.runId,
+      skipped: result.skippedPhases,
+    });
+  }
+  return result.status;
+}
 
 export async function runLinearTriggeredWorkflow(
   input: LinearTriggerWorkflowInput,
@@ -186,14 +339,19 @@ export async function runLinearTriggeredWorkflow(
   }
 
   try {
-    await executePlannerStep({
+    const runOutcome = await executeRunStep({
       agentRunId: input.agentRunId,
       taskText: input.taskText,
       // Only forward branch when supplied; otherwise let
       // `provisionFreshSandboxForRun` resolve the repo's default.
       ...(input.branch !== undefined ? { branch: input.branch } : {}),
     });
-    await markRunTerminal(input.agentRunId, "completed");
+    // A pipeline gate may have transitioned the run to `blocked` already;
+    // only mark `completed` when the run actually finished. (`blocked` →
+    // `completed` is an invalid transition anyway.)
+    if (runOutcome === "completed") {
+      await markRunTerminal(input.agentRunId, "completed");
+    }
   } catch (err) {
     console.error("[linear-trigger] workflow failed", {
       agentRunId: input.agentRunId,

@@ -51,6 +51,13 @@ export type ProvisionFreshInput = {
   // For Linear-triggered runs this is the `humanOwnerId` resolved by
   // the webhook handler.
   humanOwnerId: string;
+  // Bootstrap from this native snapshot instead of a pristine git clone.
+  // Pipeline `fresh`/`fresh_clean` phases pass the snapshot of the work
+  // sandbox an earlier `inherit` phase produced, so the isolated sandbox
+  // sees the implemented diff (the snapshot already contains the repo +
+  // working tree, so the git source is ignored when this is set). See
+  // `snapshotProvisionedSandbox`.
+  baseSnapshotId?: string;
 };
 
 // Single error class for every sandbox-coordinator failure mode so
@@ -198,6 +205,12 @@ export async function provisionFreshSandboxForRun(
       options: {
         githubToken: token,
         ports: DEFAULT_SANDBOX_PORTS,
+        // When set, the sandbox boots from this snapshot (which already
+        // contains the repo + working tree); the git `source` above is
+        // ignored. Used for pipeline fresh/fresh_clean phases.
+        ...(input.baseSnapshotId !== undefined
+          ? { baseSnapshotId: input.baseSnapshotId }
+          : {}),
       },
     });
   } catch (err) {
@@ -251,6 +264,25 @@ export async function teardownSandboxForRun(
   if (handle.ownedByThisRun) {
     await handle.stop();
   }
+}
+
+// Capture a native snapshot of a provisioned sandbox's filesystem and return
+// its id, for seeding `fresh`/`fresh_clean` pipeline phases from the work an
+// earlier `inherit` phase produced. NOTE: the underlying SDK STOPS the
+// sandbox as part of snapshotting — so this is a one-way handoff. The
+// pipeline runs all mutating (`inherit`) phases first, snapshots once at the
+// inherit→fresh boundary, then runs the isolated phases from the snapshot.
+export async function snapshotProvisionedSandbox(
+  handle: ProvisionedSandbox,
+): Promise<string> {
+  if (typeof handle.sandbox.snapshot !== "function") {
+    throw new SandboxCoordinatorError(
+      "sandbox_create_failed",
+      "sandbox handle does not support snapshot() — cannot hand off state to a fresh phase",
+    );
+  }
+  const result = await handle.sandbox.snapshot();
+  return result.snapshotId;
 }
 
 // Pull the reconnection-capable state from a freshly-created

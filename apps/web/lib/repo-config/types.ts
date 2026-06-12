@@ -95,6 +95,93 @@ const TurboSchema = z.object({
     .optional(),
 });
 
+// Sandbox isolation for a phase. Mirrors `sandboxPolicySchema` in
+// `@/lib/runs/types` (duplicated as a plain literal set so this pure-data
+// module doesn't import the Drizzle-backed runs types). Keep in sync.
+const PHASE_SANDBOX_POLICIES = ["inherit", "fresh", "fresh_clean"] as const;
+
+// What happens when a phase's gate is not satisfied:
+// - `stop`: halt the pipeline; the Run transitions to blocked /
+//   awaiting_approval (a required gate the runner refuses to skip).
+// - `continue`: record the failure and proceed to the next phase.
+// - `repair`: dispatch `repair_with` to fix, then re-run the phase, up to
+//   `max_repairs` times before treating it as a `stop`.
+const GateSchema = z
+  .object({
+    required: z.boolean().optional().default(true),
+    on_fail: z.enum(["stop", "continue", "repair"]).optional().default("stop"),
+    max_repairs: z.number().int().positive().optional(),
+    repair_with: z.string().min(1).optional(),
+  })
+  // `repair` is meaningless without a fixer to dispatch — the runner guards
+  // the repair dispatch on `repair_with`, so a missing one would silently
+  // degrade to re-running the same failing steps. Reject it at parse time.
+  .refine((g) => g.on_fail !== "repair" || g.repair_with !== undefined, {
+    message: 'gate.on_fail "repair" requires gate.repair_with',
+    path: ["repair_with"],
+  });
+
+// A single specialist dispatch within a phase. `budget_usd` is authored in
+// dollars (human-friendly); the runner converts to the micros the dispatch
+// layer expects.
+const PhaseStepSchema = z.object({
+  specialist: z.string().min(1),
+  sandbox_policy: z.enum(PHASE_SANDBOX_POLICIES).optional(),
+  local_stack_profile: z.string().optional(),
+  budget_usd: z.number().positive().optional(),
+});
+
+// One phase of the pipeline. Either a single specialist (fields inline) or a
+// `parallel` fan-out of 2+ steps dispatched as concurrent child Runs. The
+// `gate`/`when`/`independent` fields are the orchestration contract the
+// pipeline runner enforces deterministically — they replace the planner's
+// LLM discretion with code-enforced sequencing and gates.
+const PhaseSchema = z
+  .object({
+    id: z.string().min(1),
+    specialist: z.string().min(1).optional(),
+    sandbox_policy: z.enum(PHASE_SANDBOX_POLICIES).optional(),
+    local_stack_profile: z.string().optional(),
+    budget_usd: z.number().positive().optional(),
+    parallel: z.array(PhaseStepSchema).min(2).optional(),
+    // Force an isolated, context-free sandbox (fresh_clean) regardless of
+    // sandbox_policy — the in-code guarantee behind independent validation.
+    independent: z.boolean().optional().default(false),
+    // Predicate gating whether this phase runs at all (e.g.
+    // `touches_frontend`, `classification:bug`). Evaluated by the runner's
+    // predicate registry; unknown predicates fail closed (phase skipped).
+    when: z.string().optional(),
+    // Store this phase's output under the runner context for later `when`
+    // checks and task templating.
+    sets: z.string().optional(),
+    gate: GateSchema.optional(),
+  })
+  .refine((p) => (p.specialist === undefined) !== (p.parallel === undefined), {
+    message: "phase must set exactly one of `specialist` or `parallel`",
+    path: ["specialist"],
+  });
+
+const PipelineSchema = z
+  .object({
+    phases: z.array(PhaseSchema).min(1),
+    on_terminal: z
+      .object({
+        babysit: z.boolean().optional().default(false),
+        finalize: z
+          .object({
+            teardown: z.boolean().optional().default(false),
+            linear_done: z.boolean().optional().default(false),
+            delete_branch: z.boolean().optional().default(false),
+          })
+          .optional(),
+      })
+      .optional(),
+  })
+  .refine(
+    (p) => new Set(p.phases.map((ph) => ph.id)).size === p.phases.length,
+    { message: "pipeline phase ids must be unique", path: ["phases"] },
+  );
+
 export const RepoConfigSchema = z.object({
   version: z.literal(1),
   setup: z.array(z.string()).optional().default([]),
@@ -118,6 +205,10 @@ export const RepoConfigSchema = z.object({
     .strict()
     .optional(),
   local_stack: LocalStackSchema.optional(),
+  // Declarative phase pipeline. When present, the Run executes these phases
+  // in order (with gates) instead of handing the whole task to the planner.
+  // Omitted → the runtime falls back to the single-planner default.
+  pipeline: PipelineSchema.optional(),
   routes_for_visual_prover: z
     .array(z.object({ path: z.string(), auth: z.enum(["none", "required"]) }))
     .optional(),
@@ -141,6 +232,9 @@ export const RepoConfigSchema = z.object({
 });
 
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
+export type Pipeline = z.infer<typeof PipelineSchema>;
+export type PipelinePhase = z.infer<typeof PhaseSchema>;
+export type PipelinePhaseStep = z.infer<typeof PhaseStepSchema>;
 
 export type PackageJsonLike = {
   name?: string;
