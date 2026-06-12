@@ -234,6 +234,48 @@ describe("dispatchSpecialist — LLM specialists", () => {
     expect(child?.status).toBe("completed");
   });
 
+  test("fresh policy provisions a FRESH sandbox (not inherit) and forwards baseSnapshotId", async () => {
+    const parent = await Run.create({
+      triggerSource: "linear",
+      humanOwnerId: TEST_USER_ID,
+      repoRef: "owner/repo",
+      budgetUsdCapMicros: 5_000_000,
+    });
+    await updateRunStatus(parent.id, "running");
+
+    let inheritCalls = 0;
+    let freshCalls = 0;
+    let freshInput: { repoRef?: string; baseSnapshotId?: string } = {};
+    const result = await dispatchSpecialist({
+      parentRunId: parent.id,
+      specialistName: "coder",
+      task: "validate the diff",
+      sandboxPolicyOverride: "fresh_clean",
+      baseSnapshotId: "snap_work_123",
+      deps: {
+        provisionSandboxForRun: async () => {
+          inheritCalls++;
+          return stubbedSandbox();
+        },
+        provisionFreshSandboxForRun: async (i) => {
+          freshCalls++;
+          freshInput = i;
+          return stubbedSandbox();
+        },
+        teardownSandboxForRun: async () => undefined,
+        executeSpecialistViaLLM: async () => ({ output: "reviewed" }),
+      },
+    });
+
+    expect(result.output).toBe("reviewed");
+    expect(freshCalls).toBe(1);
+    expect(inheritCalls).toBe(0);
+    expect(freshInput.repoRef).toBe("owner/repo");
+    expect(freshInput.baseSnapshotId).toBe("snap_work_123");
+    const child = await getRun(result.childRun.id);
+    expect(child?.sandboxPolicy).toBe("fresh_clean");
+  });
+
   test("transitions child to failed and runs teardown when LLM throws", async () => {
     const parent = await Run.create({
       triggerSource: "chat",

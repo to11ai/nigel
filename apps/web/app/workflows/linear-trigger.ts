@@ -17,7 +17,7 @@
 // small so the SDK's serialization works.
 
 import type { Pipeline } from "@/lib/repo-config";
-import type { SandboxState } from "@nigel/sandbox";
+import type { ProvisionedSandbox } from "@/lib/runs/sandbox-coordinator";
 
 export type LinearTriggerWorkflowInput = {
   agentRunId: string;
@@ -171,7 +171,7 @@ const executeRunStep = async (input: {
     if (config.pipeline) {
       return await runRepoPipeline({
         runId: run.id,
-        sandboxState: sandbox.toAgentContext().state,
+        sandbox,
         pipeline: config.pipeline,
         task: input.taskText,
       });
@@ -206,6 +206,13 @@ const executeRunStep = async (input: {
 // `dispatch_specialist` tool uses). A phase passes iff its child Run reaches
 // `completed`; a thrown dispatch error maps to a failed phase, not a crash.
 //
+// State handoff: `inherit` phases run in (and mutate) the top-level work
+// sandbox. The first `fresh`/`fresh_clean` phase snapshots that sandbox once
+// — which STOPS it — and every isolated phase boots from that snapshot, so it
+// sees the implemented diff and each gets its own sandbox (parallel-safe).
+// Because the snapshot stops the work sandbox, an `inherit` phase after a
+// fresh one is rejected: order all mutating phases before isolated ones.
+//
 // v1 limitations (tracked for follow-up):
 //  - `signals` is seeded empty, so `when` predicates that depend on the diff
 //    (e.g. `touches_frontend`) evaluate false and those phases are skipped —
@@ -215,15 +222,25 @@ const executeRunStep = async (input: {
 //  - `on_terminal` (babysit / finalize) is not yet wired here.
 async function runRepoPipeline(input: {
   runId: string;
-  sandboxState: SandboxState;
+  sandbox: ProvisionedSandbox;
   pipeline: Pipeline;
   task: string;
 }): Promise<"completed" | "blocked"> {
   const { runPipeline } = await import("@/lib/runs/pipeline-runner");
   const { dispatchSpecialist } = await import("@/lib/runs/dispatch");
-  const { shouldForwardInheritedSandbox } =
-    await import("@/lib/runs/specialist-execution");
+  const { snapshotProvisionedSandbox } =
+    await import("@/lib/runs/sandbox-coordinator");
+  const { getSpecialist } = await import("@/lib/specialists");
   const { updateRunStatus } = await import("@/lib/runs/repository");
+
+  const workState = input.sandbox.toAgentContext().state;
+  // Memoized snapshot of the work sandbox, taken lazily at the first fresh
+  // phase. Concurrent parallel fresh steps share this one promise.
+  let workSnapshot: Promise<string> | null = null;
+  const ensureWorkSnapshot = (): Promise<string> => {
+    workSnapshot ??= snapshotProvisionedSandbox(input.sandbox);
+    return workSnapshot;
+  };
 
   const result = await runPipeline({
     pipeline: input.pipeline,
@@ -232,6 +249,27 @@ async function runRepoPipeline(input: {
     deps: {
       dispatch: async (args) => {
         try {
+          // Resolve the effective policy (override → specialist default →
+          // inherit) so the adapter knows whether to snapshot.
+          const effectivePolicy =
+            args.sandboxPolicyOverride ??
+            (await getSpecialist(args.specialistName))?.sandboxPolicy ??
+            "inherit";
+
+          let baseSnapshotId: string | undefined;
+          if (effectivePolicy === "inherit") {
+            if (workSnapshot !== null) {
+              return {
+                ok: false,
+                output:
+                  "pipeline ordering error: an `inherit` phase cannot run after a `fresh`/`fresh_clean` phase — the work sandbox was snapshotted and stopped. Order all mutating (inherit) phases before isolated ones.",
+                runId: "",
+              };
+            }
+          } else {
+            baseSnapshotId = await ensureWorkSnapshot();
+          }
+
           const dispatched = await dispatchSpecialist({
             parentRunId: input.runId,
             specialistName: args.specialistName,
@@ -242,12 +280,10 @@ async function runRepoPipeline(input: {
             ...(args.sandboxPolicyOverride !== undefined
               ? { sandboxPolicyOverride: args.sandboxPolicyOverride }
               : {}),
-            ...(shouldForwardInheritedSandbox(
-              input.sandboxState,
-              args.sandboxPolicyOverride,
-            )
-              ? { inheritSandboxState: input.sandboxState }
+            ...(effectivePolicy === "inherit"
+              ? { inheritSandboxState: workState }
               : {}),
+            ...(baseSnapshotId !== undefined ? { baseSnapshotId } : {}),
           });
           return {
             ok: dispatched.childRun.status === "completed",

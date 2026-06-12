@@ -10,6 +10,8 @@ import {
 import { getRun, listChildren, updateRunStatus } from "./repository";
 import {
   type ProvisionedSandbox,
+  type ProvisionFreshInput,
+  provisionFreshSandboxForRun as defaultProvisionFreshSandboxForRun,
   type ProvisionInput,
   provisionSandboxForRun as defaultProvisionSandboxForRun,
   teardownSandboxForRun as defaultTeardownSandboxForRun,
@@ -41,10 +43,17 @@ export type DispatchSpecialistInput = {
   // omitted for an LLM specialist, `provisionSandboxForRun` throws
   // `SandboxCoordinatorError`. Scripted specialists ignore this field.
   inheritSandboxState?: SandboxState;
+  // For `fresh`/`fresh_clean` specialists: bootstrap the fresh sandbox from
+  // this snapshot (the work an earlier `inherit` phase produced) instead of
+  // a pristine clone. Ignored for `inherit` policy. See the pipeline runner.
+  baseSnapshotId?: string;
   // Test-only injection seam (same pattern as ExecuteSpecialistInput.deps).
   deps?: {
     provisionSandboxForRun?: (
       input: ProvisionInput,
+    ) => Promise<ProvisionedSandbox>;
+    provisionFreshSandboxForRun?: (
+      input: ProvisionFreshInput,
     ) => Promise<ProvisionedSandbox>;
     teardownSandboxForRun?: (handle: ProvisionedSandbox) => Promise<void>;
     executeSpecialistViaLLM?: (
@@ -165,6 +174,9 @@ export async function dispatchSpecialist(
 
   const provisionSandboxForRun =
     input.deps?.provisionSandboxForRun ?? defaultProvisionSandboxForRun;
+  const provisionFreshSandboxForRun =
+    input.deps?.provisionFreshSandboxForRun ??
+    defaultProvisionFreshSandboxForRun;
   const teardownSandboxForRun =
     input.deps?.teardownSandboxForRun ?? defaultTeardownSandboxForRun;
   const executeSpecialistViaLLM =
@@ -176,9 +188,28 @@ export async function dispatchSpecialist(
   let runLocalStackTeardown: LocalStackTeardown | null = null;
   try {
     await updateRunStatus(childRun.id, "running");
-    provisioned = await provisionSandboxForRun({
-      inheritFrom: input.inheritSandboxState ?? null,
-    });
+    // Provision per the child Run's resolved sandbox policy. `inherit`
+    // attaches to the ancestor's sandbox; `fresh`/`fresh_clean` create a
+    // brand-new sandbox — from `baseSnapshotId` (the work a prior inherit
+    // phase produced) when supplied, otherwise a pristine clone.
+    if (childRun.sandboxPolicy === "inherit") {
+      provisioned = await provisionSandboxForRun({
+        inheritFrom: input.inheritSandboxState ?? null,
+      });
+    } else {
+      if (!(parent.repoRef && parent.humanOwnerId)) {
+        throw new SpecialistDispatchError(
+          `cannot provision a fresh sandbox for '${specialist.name}': parent run ${parent.id} is missing repoRef/humanOwnerId`,
+        );
+      }
+      provisioned = await provisionFreshSandboxForRun({
+        repoRef: parent.repoRef,
+        humanOwnerId: parent.humanOwnerId,
+        ...(input.baseSnapshotId !== undefined
+          ? { baseSnapshotId: input.baseSnapshotId }
+          : {}),
+      });
+    }
     runLocalStackTeardown = await localStackLifecycle.prepare({
       specialist,
       provisioned,
