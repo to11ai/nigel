@@ -16,6 +16,9 @@
 // workflow uses — to keep the workflow module's top-level surface
 // small so the SDK's serialization works.
 
+import type { Pipeline } from "@/lib/repo-config";
+import type { SandboxState } from "@nigel/sandbox";
+
 export type LinearTriggerWorkflowInput = {
   agentRunId: string;
   // The task description handed to the planner. Built by the
@@ -101,11 +104,15 @@ const markRunTerminal = async (
 // up the existing sandbox. That refactor requires `ProvisionedSandbox`
 // to return a serializable handle shape and is deferred to the
 // Phase 9 failure-mode drills.
-const executePlannerStep = async (input: {
+// Returns the terminal status the run should land in: "completed" when the
+// work finished, "blocked" when a declarative-pipeline gate halted it (the
+// run was already transitioned to `blocked` here; the caller must NOT then
+// mark it `completed`).
+const executeRunStep = async (input: {
   agentRunId: string;
   taskText: string;
   branch?: string;
-}): Promise<void> => {
+}): Promise<"completed" | "blocked"> => {
   "use step";
   const { getRun } = await import("@/lib/runs/repository");
   const { provisionFreshSandboxForRun, teardownSandboxForRun } =
@@ -123,10 +130,6 @@ const executePlannerStep = async (input: {
   }
   if (!run.humanOwnerId) {
     throw new Error(`agent_run ${input.agentRunId} has no humanOwnerId`);
-  }
-  const planner = await getSpecialist("planner");
-  if (!planner) {
-    throw new Error("planner specialist not found in registry");
   }
 
   // Phase-marker thought before sandbox provisioning: a fresh
@@ -151,12 +154,47 @@ const executePlannerStep = async (input: {
     humanOwnerId: run.humanOwnerId,
   });
   try {
+    const { loadRepoConfigFromSandbox } =
+      await import("@/lib/runs/repo-config-from-sandbox");
+    const config = await loadRepoConfigFromSandbox({
+      repoFullName: run.repoRef,
+      workingDirectory: sandbox.workingDirectory,
+      exec: (command, cwd, timeoutMs, options) =>
+        sandbox.sandbox.exec(command, cwd, timeoutMs, options),
+    }).catch((err) => {
+      // A repo-config read failure must not wedge the run — fall back to
+      // the planner path (config === undefined → no pipeline branch).
+      console.error("[linear-trigger] repo-config load failed", {
+        agentRunId: input.agentRunId,
+        err,
+      });
+      return undefined;
+    });
+
+    // Declarative pipeline: execute phases deterministically with gates.
+    if (config?.pipeline) {
+      return await runRepoPipeline({
+        runId: run.id,
+        sandboxState: sandbox.toAgentContext().state,
+        pipeline: config.pipeline,
+        task: input.taskText,
+      });
+    }
+
+    // Default path (no `pipeline` in .nigel.yaml): the single planner agent,
+    // exactly as before — preserves backward compatibility for every repo
+    // that hasn't opted into a pipeline.
+    const planner = await getSpecialist("planner");
+    if (!planner) {
+      throw new Error("planner specialist not found in registry");
+    }
     await executeSpecialistViaLLM({
       run,
       sandbox: sandbox.toAgentContext(),
       specialist: planner,
       task: input.taskText,
     });
+    return "completed";
   } finally {
     await teardownSandboxForRun(sandbox).catch((err) => {
       console.error("[linear-trigger] sandbox teardown failed", {
@@ -166,6 +204,91 @@ const executePlannerStep = async (input: {
     });
   }
 };
+
+// Adapter: run the repo's declarative pipeline by dispatching each phase as
+// a child Run via `dispatchSpecialist` (the same primitive the planner's
+// `dispatch_specialist` tool uses). A phase passes iff its child Run reaches
+// `completed`; a thrown dispatch error maps to a failed phase, not a crash.
+//
+// v1 limitations (tracked for follow-up):
+//  - `signals` is seeded empty, so `when` predicates that depend on the diff
+//    (e.g. `touches_frontend`) evaluate false and those phases are skipped —
+//    logged, not silent. Seeding from the post-implement diff is follow-up.
+//  - per-phase `local_stack_profile` is not yet plumbed (dispatchSpecialist
+//    has no such override); the profile falls back to resolver defaults.
+//  - `on_terminal` (babysit / finalize) is not yet wired here.
+async function runRepoPipeline(input: {
+  runId: string;
+  sandboxState: SandboxState;
+  pipeline: Pipeline;
+  task: string;
+}): Promise<"completed" | "blocked"> {
+  const { runPipeline } = await import("@/lib/runs/pipeline-runner");
+  const { dispatchSpecialist } = await import("@/lib/runs/dispatch");
+  const { shouldForwardInheritedSandbox } =
+    await import("@/lib/runs/specialist-execution");
+  const { updateRunStatus } = await import("@/lib/runs/repository");
+
+  const result = await runPipeline({
+    pipeline: input.pipeline,
+    task: input.task,
+    signals: {},
+    deps: {
+      dispatch: async (args) => {
+        try {
+          const dispatched = await dispatchSpecialist({
+            parentRunId: input.runId,
+            specialistName: args.specialistName,
+            task: args.task,
+            ...(args.budgetUsdMicros !== undefined
+              ? { budgetUsdMicros: args.budgetUsdMicros }
+              : {}),
+            ...(args.sandboxPolicyOverride !== undefined
+              ? { sandboxPolicyOverride: args.sandboxPolicyOverride }
+              : {}),
+            ...(shouldForwardInheritedSandbox(
+              input.sandboxState,
+              args.sandboxPolicyOverride,
+            )
+              ? { inheritSandboxState: input.sandboxState }
+              : {}),
+          });
+          return {
+            ok: dispatched.childRun.status === "completed",
+            output: dispatched.output,
+            runId: dispatched.childRun.id,
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            output: err instanceof Error ? err.message : String(err),
+            runId: "",
+          };
+        }
+      },
+      onBlocked: async ({ status, reason }) => {
+        console.warn("[linear-trigger] pipeline gate blocked the run", {
+          agentRunId: input.runId,
+          reason,
+        });
+        await updateRunStatus(input.runId, status).catch((err) => {
+          console.error("[linear-trigger] block transition failed", {
+            agentRunId: input.runId,
+            err,
+          });
+        });
+      },
+    },
+  });
+
+  if (result.skippedPhases.length > 0) {
+    console.log("[linear-trigger] pipeline skipped phases", {
+      agentRunId: input.runId,
+      skipped: result.skippedPhases,
+    });
+  }
+  return result.status;
+}
 
 export async function runLinearTriggeredWorkflow(
   input: LinearTriggerWorkflowInput,
@@ -186,14 +309,19 @@ export async function runLinearTriggeredWorkflow(
   }
 
   try {
-    await executePlannerStep({
+    const outcome = await executeRunStep({
       agentRunId: input.agentRunId,
       taskText: input.taskText,
       // Only forward branch when supplied; otherwise let
       // `provisionFreshSandboxForRun` resolve the repo's default.
       ...(input.branch !== undefined ? { branch: input.branch } : {}),
     });
-    await markRunTerminal(input.agentRunId, "completed");
+    // A pipeline gate may have transitioned the run to `blocked` already;
+    // only mark `completed` when the run actually finished. (`blocked` →
+    // `completed` is an invalid transition anyway.)
+    if (outcome === "completed") {
+      await markRunTerminal(input.agentRunId, "completed");
+    }
   } catch (err) {
     console.error("[linear-trigger] workflow failed", {
       agentRunId: input.agentRunId,

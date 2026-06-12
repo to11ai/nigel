@@ -14,6 +14,9 @@ export { applyTurboDerivation } from "./turbo-derive";
 export {
   type LoadRepoConfigResult,
   type PackageJsonLike,
+  type Pipeline,
+  type PipelinePhase,
+  type PipelinePhaseStep,
   type RepoConfig,
   RepoConfigSchema,
   type RepoConfigSource,
